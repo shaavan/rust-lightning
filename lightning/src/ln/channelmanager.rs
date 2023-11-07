@@ -11338,6 +11338,31 @@ mod tests {
 	}
 
 	#[test]
+	fn test_close_channel_with_disconnected_peers() {
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+		create_announced_chan_between_nodes(&nodes, 0, 1);
+
+		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+		create_announced_chan_between_nodes(&nodes, 0, 1);
+
+		// nodes[0].node.timer_tick_occurred();
+		// nodes[0].node.timer_tick_occurred();
+
+		let nodes_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+		let per_state_mutex = nodes_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap();
+		let peer_state = per_state_mutex.lock().unwrap();
+
+		// assert_eq!(peer_state.channel_by_id.len(), 1);
+		
+	}
+
+	#[test]
 	fn bad_inbound_payment_hash() {
 		// Add coverage for checking that a user-provided payment hash matches the payment secret.
 		let chanmon_cfgs = create_chanmon_cfgs(2);
