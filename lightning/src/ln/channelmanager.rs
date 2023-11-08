@@ -2460,18 +2460,18 @@ where
 			hash_map::Entry::Vacant(entry) => { entry.insert(ChannelPhase::UnfundedOutboundV1(channel)); }
 		}
 
-		let msg = events::MessageSendEvent::SendOpenChannel {
+		let msg_event = events::MessageSendEvent::SendOpenChannel {
 			node_id: their_network_key,
 			msg: res,
 		};
 
 		if peer_state.is_connected {
-			peer_state.pending_msg_events.push(msg);
+			peer_state.pending_msg_events.push(msg_event);
 		}
 
 		else {
 			peer_state.outbound_channel_unsent_by_id.insert(temporary_channel_id, OutboundChannelRequest {
-				open_channel_msg: msg,
+				open_channel_msg: msg_event,
 				ticks_remaining: UNSENT_OUTBOUND_CHANNEL_AGE_LIMIT_TICKS,
 			});
 		}
@@ -8767,6 +8767,13 @@ where
 				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 				let peer_state = &mut *peer_state_lock;
 				let pending_msg_events = &mut peer_state.pending_msg_events;
+
+				// For the pending OpenChannelMessage that were not sent due to peer disconnecting at time of channel creation
+				for (_, chan_request) in peer_state.outbound_channel_unsent_by_id.iter_mut() {
+					pending_msg_events.push(chan_request.open_channel_msg.clone());
+				}
+				// And now the request are sent to pending_msg_events, we can clear the vector
+				peer_state.outbound_channel_unsent_by_id.clear();
 
 				peer_state.channel_by_id.iter_mut().filter_map(|(_, phase)|
 					if let ChannelPhase::Funded(chan) = phase { Some(chan) } else {
