@@ -742,6 +742,9 @@ pub(super) struct PeerState<SP: Deref> where SP::Target: SignerProvider {
 	/// removed, and an InboundV1Channel is created and placed in the `inbound_v1_channel_by_id` table. If
 	/// the channel is rejected, then the entry is simply removed.
 	pub(super) inbound_channel_request_by_id: HashMap<ChannelId, InboundChannelRequest>,
+	///
+	/// Channels that were created but not notified about by sending SendOpenChannel Message
+	pub(super) unnotified_outbound_channel: HashMap<ChannelId, OutboundChannelTimer>,
 	/// The latest `InitFeatures` we heard from the peer.
 	latest_features: InitFeatures,
 	/// Messages to send to the peer - pushed to in the same lock that they are generated in (except
@@ -817,6 +820,15 @@ pub(super) struct InboundChannelRequest {
 /// The number of ticks that may elapse while we're waiting for an unaccepted inbound channel to be
 /// accepted. An unaccepted channel that exceeds this limit will be abandoned.
 const UNACCEPTED_INBOUND_CHANNEL_AGE_LIMIT_TICKS: i32 = 2;
+
+/// A timer to retain outbound channels that haven't been notified of their creation yet.
+pub(super) struct OutboundChannelTimer {
+	pub ticks_remaining: i32,
+}
+
+/// The maximum number of ticks allowed for waiting to notify an unnotified outbound channel.
+/// If an unnotified channel exceeds this limit, it will be abandoned.
+const UNSENT_OUTBOUND_CHANNEL_AGE_LIMIT_TICKS: i32 = 2;
 
 /// Stores a PaymentSecret and any other data we may need to validate an inbound payment is
 /// actually ours and not some duplicate HTLC sent to us by a node along the route.
@@ -2475,10 +2487,19 @@ where
 			hash_map::Entry::Vacant(entry) => { entry.insert(ChannelPhase::UnfundedOutboundV1(channel)); }
 		}
 
-		peer_state.pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
-			node_id: their_network_key,
-			msg: res,
-		});
+		if peer_state.is_connected {
+			peer_state.pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
+				node_id: their_network_key,
+				msg: res
+			});
+		}
+
+		else {
+			peer_state.unnotified_outbound_channel.insert(temporary_channel_id, OutboundChannelTimer {
+				ticks_remaining: UNSENT_OUTBOUND_CHANNEL_AGE_LIMIT_TICKS,
+			});
+		}
+
 		Ok(temporary_channel_id)
 	}
 
@@ -4830,6 +4851,14 @@ where
 						}
 					}
 					peer_state.inbound_channel_request_by_id.retain(|_, req| req.ticks_remaining > 0);
+
+					// Force close the unnotified outbound channel, for which SendOpenChannel was not sent in timely manner.
+					for (chan_id, timer) in peer_state.unnotified_outbound_channel.iter_mut() {
+						if { timer.ticks_remaining -= 1 ; timer.ticks_remaining } <= 0 {
+							let _ = self.force_close_sending_error(&chan_id, &counterparty_node_id, true);
+						}
+					}
+					peer_state.unnotified_outbound_channel.retain(|_, timer| timer.ticks_remaining > 0);
 
 					if peer_state.ok_to_remove(true) {
 						pending_peers_awaiting_removal.push(counterparty_node_id);
@@ -8950,6 +8979,7 @@ where
 						e.insert(Mutex::new(PeerState {
 							channel_by_id: HashMap::new(),
 							inbound_channel_request_by_id: HashMap::new(),
+							unnotified_outbound_channel: HashMap::new(),
 							latest_features: init_msg.features.clone(),
 							pending_msg_events: Vec::new(),
 							in_flight_monitor_updates: BTreeMap::new(),
@@ -8985,11 +9015,33 @@ where
 				let peer_state = &mut *peer_state_lock;
 				let pending_msg_events = &mut peer_state.pending_msg_events;
 
+				// Notify channels that were left unnotified of their creation because
+				// the peer disconnected at that time, even though the channels were open.
+				for (chan_id, _) in peer_state.unnotified_outbound_channel.iter_mut() {
+					let channel = peer_state.channel_by_id.get(chan_id).and_then(|channel_phase| {
+						if let ChannelPhase::UnfundedOutboundV1(channel) = channel_phase {
+							Some(channel)
+						} else {
+							None
+						}
+					}).unwrap();
+
+					let res = channel.get_open_channel(self.chain_hash);
+
+					pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
+						node_id: *counterparty_node_id,
+						msg: res,
+					});
+				}
+
+				peer_state.unnotified_outbound_channel.clear();
+
 				peer_state.channel_by_id.iter_mut().filter_map(|(_, phase)|
 					if let ChannelPhase::Funded(chan) = phase { Some(chan) } else {
 						// Since unfunded channel maps are cleared upon disconnecting a peer, and they're not persisted
 						// (so won't be recovered after a crash), they shouldn't exist here and we would never need to
 						// worry about closing and removing them.
+
 						debug_assert!(false);
 						None
 					}
@@ -10346,6 +10398,7 @@ where
 			PeerState {
 				channel_by_id,
 				inbound_channel_request_by_id: HashMap::new(),
+				unnotified_outbound_channel: HashMap::new(),
 				latest_features: InitFeatures::empty(),
 				pending_msg_events: Vec::new(),
 				in_flight_monitor_updates: BTreeMap::new(),
