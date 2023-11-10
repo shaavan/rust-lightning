@@ -8772,15 +8772,19 @@ where
 				for (_, chan_request) in peer_state.outbound_channel_unsent_by_id.iter_mut() {
 					pending_msg_events.push(chan_request.open_channel_msg.clone());
 				}
-				// And now the request are sent to pending_msg_events, we can clear the vector
-				peer_state.outbound_channel_unsent_by_id.clear();
 
-				peer_state.channel_by_id.iter_mut().filter_map(|(_, phase)|
+				let chan_unsent_by_id = &peer_state.outbound_channel_unsent_by_id;
+
+				peer_state.channel_by_id.iter_mut().filter_map(|(chan_id, phase)|
 					if let ChannelPhase::Funded(chan) = phase { Some(chan) } else {
 						// Since unfunded channel maps are cleared upon disconnecting a peer, and they're not persisted
 						// (so won't be recovered after a crash), they shouldn't exist here and we would never need to
 						// worry about closing and removing them.
-						debug_assert!(false);
+						// An exception are the channel created just when peer was disconnected, so the process of
+						// channel creation was held mid way.
+						if !chan_unsent_by_id.contains_key(chan_id) {
+							debug_assert!(false);
+						}
 						None
 					}
 				).for_each(|chan| {
@@ -8789,6 +8793,9 @@ where
 						msg: chan.get_channel_reestablish(&self.logger),
 					});
 				});
+
+				// And now the request are sent to pending_msg_events, we can clear the vector
+				peer_state.outbound_channel_unsent_by_id.clear();
 			}
 
 			return NotifyOption::SkipPersistHandleEvents;
@@ -11344,31 +11351,105 @@ mod tests {
 		}
 	}
 
-	#[test]
-	fn test_close_channel_with_disconnected_peers() {
+	// #[test]
+	// fn test_close_channel_with_disconnected_peers() {
+	// 	let chanmon_cfgs = create_chanmon_cfgs(2);
+	// 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	// 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	// 	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	// 	create_announced_chan_between_nodes(&nodes, 0, 1);
+
+	// 	nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+	// 	nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+	// 	create_announced_chan_between_nodes(&nodes, 0, 1);
+
+	// 	// nodes[0].node.timer_tick_occurred();
+	// 	// nodes[0].node.timer_tick_occurred();
+
+	// 	let nodes_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+	// 	let per_state_mutex = nodes_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap();
+	// 	let peer_state = per_state_mutex.lock().unwrap();
+
+	// 	// assert_eq!(peer_state.channel_by_id.len(), 1);
+		
+	// }
+
+	fn do_test_peer_disconnect_just_before_create_channel(reconnect_on_time: bool) {
 		let chanmon_cfgs = create_chanmon_cfgs(2);
 		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
 		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
 		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 
-		create_announced_chan_between_nodes(&nodes, 0, 1);
+		// Create a channel to prevent removal of peer when disconnected.
+		let _ = create_announced_chan_between_nodes(&nodes, 0, 1);
 
+		// Disconnect Peers
 		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
 		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
 
-		create_announced_chan_between_nodes(&nodes, 0, 1);
+		// Call create_channel from node_0 to node_1
+		let _chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None).unwrap();
 
-		// nodes[0].node.timer_tick_occurred();
-		// nodes[0].node.timer_tick_occurred();
-
+		// Accquire the peer state from node_0 perspective
 		let nodes_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
 		let per_state_mutex = nodes_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap();
 		let peer_state = per_state_mutex.lock().unwrap();
 
-		// assert_eq!(peer_state.channel_by_id.len(), 1);
+		// Check that SendOpenChannel message is not added to pending_msg_events
+		assert_eq!(peer_state.pending_msg_events.len(), 0);
+
+		// Check that the number of channels from node_0 to node_1 is two: from previously created channel and the unsend channel
+		assert_eq!(peer_state.channel_by_id.len(), 2);
+
+		// Simulate not reconnected on time by ticking the timer
+		if !reconnect_on_time {
+			// Run timer twice
+			nodes[0].node.timer_tick_occurred();
+			nodes[0].node.timer_tick_occurred();
+		}
+		// If not reconnected on time..
+		if !reconnect_on_time {
+			// the pending_msg_events should not contain SendOpenChannel msg
+			assert_eq!(peer_state.pending_msg_events.len(), 0);
+			// And the number of channels from node_0 perspective should be reduced to 1
+			assert_eq!(peer_state.channel_by_id.len(), 1);
+		}
+		
+
+		// TODO: Make the test part for reconnect work.
+		// // Now Reconnect
+		// {
+		// 	nodes[0].node.peer_connected(&nodes[1].node.get_our_node_id(), &msgs::Init {
+		// 		features: nodes[1].node.init_features(), networks: None, remote_network_address: None
+		// 	}, true).unwrap();
+		// 	let reestablish_1 = get_chan_reestablish_msgs!(nodes[0], nodes[1]);
+		// 	assert_eq!(reestablish_1.len(), 1);
+		// 	nodes[1].node.peer_connected(&nodes[0].node.get_our_node_id(), &msgs::Init {
+		// 		features: nodes[0].node.init_features(), networks: None, remote_network_address: None
+		// 	}, false).unwrap();
+		// 	let reestablish_2 = get_chan_reestablish_msgs!(nodes[1], nodes[0]);
+		// 	assert_eq!(reestablish_2.len(), 1);
+		// }
+
+		// // If reconnected on time..
+		// if reconnect_on_time {
+		// 	// the pending_msg_events should contain SendOpenChannel msg
+		// 	assert_eq!(peer_state.pending_msg_events.len(), 1);
+		// 	// the number of channels from node_0 perspective should be 2
+		// 	assert_eq!(peer_state.channel_by_id.len(), 2);
+		// }
+		
 		
 	}
 
+	#[test]
+	fn test_peer_disconnect_just_before_create_channel() {
+		// do_test_peer_disconnect_just_before_create_channel(false);
+		do_test_peer_disconnect_just_before_create_channel(true);
+	}
+	
 	#[test]
 	fn bad_inbound_payment_hash() {
 		// Add coverage for checking that a user-provided payment hash matches the payment secret.
