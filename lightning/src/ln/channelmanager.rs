@@ -4185,10 +4185,15 @@ where
 					err: format!("Channel with id {} for the passed counterparty node_id {} is still opening.",
 						next_hop_channel_id, next_node_id)
 				}),
-				None => return Err(APIError::ChannelUnavailable {
-					err: format!("Channel with id {} not found for the passed counterparty node_id {}",
-						next_hop_channel_id, next_node_id)
-				})
+				None => {
+					let error = format!("Channel with id {} not found for the passed counterparty node_id {}",
+					next_hop_channel_id, next_node_id);
+					// Log the Error
+					log_error!(self.logger, "{}", error);
+					return Err(APIError::ChannelUnavailable {
+						err: error
+					})
+				}
 			}
 		};
 
