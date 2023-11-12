@@ -1392,6 +1392,10 @@ where
 
 	pending_offers_messages: Mutex<Vec<PendingOnionMessage<OffersMessage>>>,
 
+	/// Tracks the channel_update message that were not broadcasted because
+	/// we were not connected to any peers.
+	pending_broadcast_messages: Mutex<Vec<MessageSendEvent>>,
+
 	entropy_source: ES,
 	node_signer: NS,
 	signer_provider: SP,
@@ -2466,6 +2470,7 @@ where
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_broadcast_messages: Mutex::new(Vec::new()),
 
 			entropy_source,
 			node_signer,
@@ -2957,17 +2962,11 @@ where
 			}
 		};
 		if let Some(update) = update_opt {
-			// Try to send the `BroadcastChannelUpdate` to the peer we just force-closed on, but if
-			// not try to broadcast it via whatever peer we have.
-			let per_peer_state = self.per_peer_state.read().unwrap();
-			let a_peer_state_opt = per_peer_state.get(peer_node_id)
-				.ok_or(per_peer_state.values().next());
-			if let Ok(a_peer_state_mutex) = a_peer_state_opt {
-				let mut a_peer_state = a_peer_state_mutex.lock().unwrap();
-				a_peer_state.pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
-					msg: update
-				});
-			}
+			// If we have some Channel Update to broadcast, we cache it and broadcast it later.
+			let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+			pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
+				msg: update
+			});
 		}
 
 		Ok(counterparty_node_id)
@@ -8209,7 +8208,7 @@ where
 	/// will randomly be placed first or last in the returned array.
 	///
 	/// Note that even though `BroadcastChannelAnnouncement` and `BroadcastChannelUpdate`
-	/// `MessageSendEvent`s are intended to be broadcasted to all peers, they will be pleaced among
+	/// `MessageSendEvent`s are intended to be broadcasted to all peers, they will be placed among
 	/// the `MessageSendEvent`s to the specific peer they were generated under.
 	fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
 		let events = RefCell::new(Vec::new());
@@ -8229,6 +8228,7 @@ where
 				result = NotifyOption::DoPersist;
 			}
 
+			let mut is_some_peer_connected = false;
 			let mut pending_events = Vec::new();
 			let per_peer_state = self.per_peer_state.read().unwrap();
 			for (_cp_id, peer_state_mutex) in per_peer_state.iter() {
@@ -8237,6 +8237,15 @@ where
 				if peer_state.pending_msg_events.len() > 0 {
 					pending_events.append(&mut peer_state.pending_msg_events);
 				}
+				if peer_state.is_connected {
+					is_some_peer_connected = true
+				}
+			}
+
+			// Ensure that we are connected to some peers before getting broadcast messages.
+			if is_some_peer_connected {
+				let mut broadcast_msgs = self.pending_broadcast_messages.lock().unwrap();
+				pending_events.append(&mut broadcast_msgs);
 			}
 
 			if !pending_events.is_empty() {
@@ -11149,6 +11158,8 @@ where
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 
+			pending_broadcast_messages: Mutex::new(Vec::new()),
+
 			entropy_source: args.entropy_source,
 			node_signer: args.node_signer,
 			signer_provider: args.signer_provider,
@@ -11679,11 +11690,61 @@ mod tests {
 	}
 
 	#[test]
+	fn test_channel_update_cached() {
+		let chanmon_cfgs = create_chanmon_cfgs(3);
+		let node_cfgs = create_node_cfgs(3, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(3, &node_cfgs, &[None, None, None]);
+		let nodes = create_network(3, &node_cfgs, &node_chanmgrs);
+
+		let chan = create_announced_chan_between_nodes(&nodes, 0, 1);
+
+		nodes[0].node.force_close_channel_with_peer(&chan.2, &nodes[1].node.get_our_node_id(), None, true).unwrap();
+		check_added_monitors!(nodes[0], 1);
+		check_closed_event!(nodes[0], 1, ClosureReason::HolderForceClosed, [nodes[1].node.get_our_node_id()], 100000);
+
+		{
+			// Assert that ChannelUpdate message has been added to node[0] pending broadcast messages
+			let pending_broadcast_messages= nodes[0].node.pending_broadcast_messages.lock().unwrap();
+			assert_eq!(pending_broadcast_messages.len(), 1);
+		}
+
+		// Confirm that the channel_update was not sent immediately to node[1] but was cached.
+		let node_1_events = nodes[1].node.get_and_clear_pending_msg_events();
+		assert_eq!(node_1_events.len(), 0);
+
+		// Test that we do not retrieve the pending broadcast messages when we are not connected to any peer
+		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+		nodes[0].node.peer_disconnected(&nodes[2].node.get_our_node_id());
+		nodes[2].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+		let node_0_events = nodes[0].node.get_and_clear_pending_msg_events();
+		assert_eq!(node_0_events.len(), 0);
+
+		// Now we reconnect to a peer
+		nodes[0].node.peer_connected(&nodes[2].node.get_our_node_id(), &msgs::Init {
+			features: nodes[2].node.init_features(), networks: None, remote_network_address: None
+		}, true).unwrap();
+		nodes[2].node.peer_connected(&nodes[0].node.get_our_node_id(), &msgs::Init {
+			features: nodes[0].node.init_features(), networks: None, remote_network_address: None
+		}, false).unwrap();
+
+		// Confirm that get_and_clear_pending_msg_events correctly captures pending broadcast messages
+		let node_0_events = nodes[0].node.get_and_clear_pending_msg_events();
+		assert_eq!(node_0_events.len(), 1);
+		match &node_0_events[0] {
+			MessageSendEvent::BroadcastChannelUpdate { .. } => (),
+			_ => panic!("Unexpected event"),
+		}
+	}
+
+	#[test]
 	fn test_drop_disconnected_peers_when_removing_channels() {
-		let chanmon_cfgs = create_chanmon_cfgs(2);
-		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
-		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+		let chanmon_cfgs = create_chanmon_cfgs(3);
+		let node_cfgs = create_node_cfgs(3, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(3, &node_cfgs, &[None, None, None]);
+		let nodes = create_network(3, &node_cfgs, &node_chanmgrs);
 
 		let chan = create_announced_chan_between_nodes(&nodes, 0, 1);
 
@@ -11700,7 +11761,7 @@ mod tests {
 			// disconnected and the channel between has been force closed.
 			let nodes_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
 			// Assert that nodes[1] isn't removed before `timer_tick_occurred` has been executed.
-			assert_eq!(nodes_0_per_peer_state.len(), 1);
+			assert_eq!(nodes_0_per_peer_state.len(), 2);
 			assert!(nodes_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).is_some());
 		}
 
@@ -11708,7 +11769,7 @@ mod tests {
 
 		{
 			// Assert that nodes[1] has now been removed.
-			assert_eq!(nodes[0].node.per_peer_state.read().unwrap().len(), 0);
+			assert_eq!(nodes[0].node.per_peer_state.read().unwrap().len(), 1);
 		}
 	}
 
@@ -12412,11 +12473,11 @@ mod tests {
 
 	#[test]
 	fn test_trigger_lnd_force_close() {
-		let chanmon_cfg = create_chanmon_cfgs(2);
-		let node_cfg = create_node_cfgs(2, &chanmon_cfg);
+		let chanmon_cfg = create_chanmon_cfgs(3);
+		let node_cfg = create_node_cfgs(3, &chanmon_cfg);
 		let user_config = test_default_channel_config();
-		let node_chanmgr = create_node_chanmgrs(2, &node_cfg, &[Some(user_config), Some(user_config)]);
-		let nodes = create_network(2, &node_cfg, &node_chanmgr);
+		let node_chanmgr = create_node_chanmgrs(3, &node_cfg, &[Some(user_config), Some(user_config), Some(user_config)]);
+		let nodes = create_network(3, &node_cfg, &node_chanmgr);
 
 		// Open a channel, immediately disconnect each other, and broadcast Alice's latest state.
 		let (_, _, chan_id, funding_tx) = create_announced_chan_between_nodes(&nodes, 0, 1);
