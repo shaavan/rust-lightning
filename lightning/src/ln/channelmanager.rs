@@ -1257,12 +1257,27 @@ where
 
 	pending_offers_messages: Mutex<Vec<PendingOnionMessage<OffersMessage>>>,
 
+	/// Tracks the channel_update message that were not broadcasted because
+	/// we were not connected to any peers.
+	pending_broadcast_messages: Mutex<PendingBroadcastMessages>,
+
 	entropy_source: ES,
 	node_signer: NS,
 	signer_provider: SP,
 
 	logger: L,
 }
+
+pub struct PendingBroadcastMessages {
+	/// The original broadcast events
+	pub broadcast_message: Vec<MessageSendEvent>,
+	/// The number of ticks before retry broadcasting
+	pub ticks_remaining: Option<i32>,
+}
+
+/// The number of ticks that may elapse before trying to rebroadcast
+/// the pending broadcast messages
+const PENDING_BROADCAST_MESSAGES_TIMER_TICKS: i32 = 2;
 
 /// Chain-related parameters used to construct a new `ChannelManager`.
 ///
@@ -2338,6 +2353,7 @@ where
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_broadcast_messages: Mutex::new(PendingBroadcastMessages { broadcast_message: Vec::new(), ticks_remaining: None }),
 
 			entropy_source,
 			node_signer,
@@ -2841,15 +2857,44 @@ where
 		if let Some(update) = update_opt {
 			// Try to send the `BroadcastChannelUpdate` to the peer we just force-closed on, but if
 			// not try to broadcast it via whatever peer we have.
+			let brodcast_message_evt = events::MessageSendEvent::BroadcastChannelUpdate {
+				msg: update
+			};
+
 			let per_peer_state = self.per_peer_state.read().unwrap();
 			let a_peer_state_opt = per_peer_state.get(peer_node_id)
 				.ok_or(per_peer_state.values().next());
+
+			// if we were able to get the peer we just force closed on.
 			if let Ok(a_peer_state_mutex) = a_peer_state_opt {
 				let mut a_peer_state = a_peer_state_mutex.lock().unwrap();
-				a_peer_state.pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
-					msg: update
-				});
+				a_peer_state.pending_msg_events.push(brodcast_message_evt);
 			}
+
+			// if we connected to some other random peer.
+			else if let Err(a_peer_state_mutex) = a_peer_state_opt {
+				match a_peer_state_mutex {
+					// if we were able to connect to Some peer.
+					Some(val) => {
+						let mut a_peer_state = val.lock().unwrap();
+						a_peer_state.pending_msg_events.push(brodcast_message_evt);
+						log_info!(self.logger,
+							"Not able to broadcast channel update to peer we force-closed on. Broadcasting to some random peer.");
+					},
+
+					// If we connected to no one.
+					None => {
+						let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+						if pending_broadcast_messages.broadcast_message.len() == 0 {
+							pending_broadcast_messages.ticks_remaining = Some(PENDING_BROADCAST_MESSAGES_TIMER_TICKS);
+						}
+						pending_broadcast_messages.broadcast_message.push(brodcast_message_evt);
+						log_info!(self.logger, "Not able to broadcast channel_update of force-closed channel right now.
+							Will try rebroadcasting later.");
+					}
+				}
+			}
+
 		}
 
 		Ok(counterparty_node_id)
@@ -4915,6 +4960,45 @@ where
 
 			{
 				let per_peer_state = self.per_peer_state.read().unwrap();
+
+				{
+					// Get pending messages to be broadcasted.
+					let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+
+					// If we have pending broadcast events
+					if pending_broadcast_messages.ticks_remaining != None {
+						// And it is time to broadcast
+						if pending_broadcast_messages.ticks_remaining == Some(0) {
+							// And we are connected to non-zero number of peers, we can broadcast successfully
+							if per_peer_state.len() > 0 {
+								let a_peer_state_mutex = per_peer_state.values().next().unwrap();
+								let mut a_peer_state = a_peer_state_mutex.lock().unwrap();
+
+								for broadcast_evts in pending_broadcast_messages.broadcast_message.iter() {
+									a_peer_state.pending_msg_events.push(broadcast_evts.clone());
+								}
+								// After broadcasting, we clear the event vector.
+								// And set the timer to None.
+								pending_broadcast_messages.broadcast_message.clear();
+								pending_broadcast_messages.ticks_remaining = None;
+
+								log_info!(self.logger, "Successfully broadcasted the pending channel update messages.");
+							}
+							// Else we restart the counter, waiting for next time to try rebroadcasting
+							else {
+								pending_broadcast_messages.ticks_remaining = Some(PENDING_BROADCAST_MESSAGES_TIMER_TICKS);
+							}
+						}
+						// Else we decrement the counter
+						else {
+							pending_broadcast_messages.ticks_remaining = match pending_broadcast_messages.ticks_remaining {
+								Some(val) => Some(val - 1),
+								None => None
+							}
+						}
+					}
+				}
+
 				for (counterparty_node_id, peer_state_mutex) in per_peer_state.iter() {
 					let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 					let peer_state = &mut *peer_state_lock;
@@ -10809,6 +10893,8 @@ where
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+
+			pending_broadcast_messages: Mutex::new(PendingBroadcastMessages { broadcast_message: Vec::new(), ticks_remaining: None}),
 
 			entropy_source: args.entropy_source,
 			node_signer: args.node_signer,
