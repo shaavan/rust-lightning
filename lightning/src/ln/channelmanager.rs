@@ -8027,7 +8027,7 @@ where
 	/// will randomly be placed first or last in the returned array.
 	///
 	/// Note that even though `BroadcastChannelAnnouncement` and `BroadcastChannelUpdate`
-	/// `MessageSendEvent`s are intended to be broadcasted to all peers, they will be pleaced among
+	/// `MessageSendEvent`s are intended to be broadcasted to all peers, they will be placed among
 	/// the `MessageSendEvent`s to the specific peer they were generated under.
 	fn get_and_clear_pending_msg_events(&self) -> Vec<MessageSendEvent> {
 		let events = RefCell::new(Vec::new());
