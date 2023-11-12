@@ -763,11 +763,11 @@ fn test_htlc_preimage_claim_prev_counterparty_commitment_after_current_counterpa
 fn do_test_retries_own_commitment_broadcast_after_reorg(anchors: bool, revoked_counterparty_commitment: bool) {
 	// Tests that a node will retry broadcasting its own commitment after seeing a confirmed
 	// counterparty commitment be reorged out.
-	let mut chanmon_cfgs = create_chanmon_cfgs(2);
+	let mut chanmon_cfgs = create_chanmon_cfgs(3);
 	if revoked_counterparty_commitment {
 		chanmon_cfgs[1].keys_manager.disable_revocation_policy_check = true;
 	}
-	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_cfgs = create_node_cfgs(3, &chanmon_cfgs);
 	let mut config = test_default_channel_config();
 	if anchors {
 		config.channel_handshake_config.negotiate_anchors_zero_fee_htlc_tx = true;
@@ -775,9 +775,9 @@ fn do_test_retries_own_commitment_broadcast_after_reorg(anchors: bool, revoked_c
 	}
 	let persister;
 	let new_chain_monitor;
-	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[Some(config), Some(config)]);
+	let node_chanmgrs = create_node_chanmgrs(3, &node_cfgs, &[Some(config), Some(config), Some(config)]);
 	let nodes_1_deserialized;
-	let mut nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let mut nodes = create_network(3, &node_cfgs, &node_chanmgrs);
 
 	let (_, _, chan_id, funding_tx) = create_announced_chan_between_nodes(&nodes, 0, 1);
 
@@ -801,6 +801,11 @@ fn do_test_retries_own_commitment_broadcast_after_reorg(anchors: bool, revoked_c
 		reload_node!(
 			nodes[1], config, &serialized_node, &[&serialized_monitor], persister, new_chain_monitor, nodes_1_deserialized
 		);
+
+		// Reconnect node[1] with node[2] to allow successful channel_update broadcast later
+		nodes[1].node.peer_connected(&nodes[2].node.get_our_node_id(), &Init {
+			features: nodes[2].node.init_features(), networks: None, remote_network_address: None
+		}, true).unwrap();
 	}
 
 	// Connect blocks until the HTLC expiry is met, prompting a commitment broadcast by A.
