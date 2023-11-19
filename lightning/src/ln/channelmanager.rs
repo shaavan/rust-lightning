@@ -2844,33 +2844,40 @@ where
 			}
 		};
 		if let Some(update) = update_opt {
-			// Try to send the `BroadcastChannelUpdate` to the peer we just force-closed on, but if
-			// not try to broadcast it via whatever peer we have.
-			let brodcast_message_evt = events::MessageSendEvent::BroadcastChannelUpdate {
-				msg: update
-			};
+			PersistenceNotifierGuard::optionally_notify(self, || {
+				let mut should_persist = NotifyOption::SkipPersistNoEvents;
 
-			let per_peer_state = self.per_peer_state.read().unwrap();
+				// Try to send the `BroadcastChannelUpdate` to the peer we just force-closed on, but if
+				// not try to broadcast it via whatever peer we have.
+				let brodcast_message_evt = events::MessageSendEvent::BroadcastChannelUpdate {
+					msg: update.clone()
+				};
 
-			// Attempt to get the a_peer_state_mutex for the peer we disconnected on.
-			let a_peer_state_mutex_opt = per_peer_state.get(peer_node_id).map(|v| v);
+				let per_peer_state = self.per_peer_state.read().unwrap();
 
-			// If the particular peer is not present. Select any random peer from the ones we are connected on.
-			let a_peer_state_mutex_opt = a_peer_state_mutex_opt.or_else(|| per_peer_state.iter().next().map(|(_, v)| v));
+				// Attempt to get the a_peer_state_mutex for the peer we disconnected on.
+				let a_peer_state_mutex_opt = per_peer_state.get(peer_node_id).map(|v| v);
 
-			match a_peer_state_mutex_opt {
-				Some(a_peer_state_mutex) => {
-					let mut a_peer_state = a_peer_state_mutex.lock().unwrap();
-					a_peer_state.pending_msg_events.push(brodcast_message_evt);
+				// If the particular peer is not present. Select any random peer from the ones we are connected on.
+				let a_peer_state_mutex_opt = a_peer_state_mutex_opt.or_else(|| per_peer_state.iter().next().map(|(_, v)| v));
+
+				match a_peer_state_mutex_opt {
+					Some(a_peer_state_mutex) => {
+						let mut a_peer_state = a_peer_state_mutex.lock().unwrap();
+						a_peer_state.pending_msg_events.push(brodcast_message_evt);
+					}
+					// If we are connected to no peer.
+					None => {
+						let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+						pending_broadcast_messages.push(brodcast_message_evt);
+						log_info!(self.logger, "Not able to broadcast channel_update of force-closed channel right now.
+							Will try rebroadcasting later.");
+						should_persist = NotifyOption::DoPersist;
+					}
 				}
-				// If we are connected to no peer.
-				None => {
-					let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
-					pending_broadcast_messages.push(brodcast_message_evt);
-					log_info!(self.logger, "Not able to broadcast channel_update of force-closed channel right now.
-						Will try rebroadcasting later.");
-				}
-			}
+				should_persist
+			});
+
 		}
 
 		Ok(counterparty_node_id)
@@ -4949,6 +4956,8 @@ where
 						a_peer_state.pending_msg_events.extend(broadcast_evts.iter().cloned());
 
 						self.pending_broadcast_messages.lock().unwrap().clear();
+
+						should_persist = NotifyOption::DoPersist;
 					}
 				}
 
