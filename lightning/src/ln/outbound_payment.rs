@@ -1337,6 +1337,13 @@ impl OutboundPayments {
 					continue 'path_check;
 				}
 			}
+			let mut channel_id_set = std::collections::HashSet::new();
+			for hop in path.hops.iter() {
+				if !channel_id_set.insert(hop.short_channel_id) {
+					path_errs.push(Err(APIError::InvalidRoute{err: "Path went through the same channel twice".to_owned()}));
+					continue 'path_check;
+				}
+			}
 			total_value += path.final_value_msat();
 			path_errs.push(Ok(()));
 		}
