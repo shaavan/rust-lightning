@@ -8863,29 +8863,45 @@ where
 				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 				let peer_state = &mut *peer_state_lock;
 				let pending_msg_events = &mut peer_state.pending_msg_events;
-				peer_state.channel_by_id.retain(|_, phase| {
+
+				let mut remove_keys = Vec::new();
+
+				for (chan_id, phase) in peer_state.channel_by_id.iter_mut() {
 					let context = match phase {
 						ChannelPhase::Funded(chan) => {
 							if chan.remove_uncommitted_htlcs_and_mark_paused(&self.logger).is_ok() {
 								// We only retain funded channels that are not shutdown.
-								return true;
+								continue;
 							}
 							&mut chan.context
 						},
-						// Unfunded channels will always be removed.
 						ChannelPhase::UnfundedOutboundV1(chan) => {
+							if peer_state.unnotified_outbound_channel.contains_key(chan_id) {
+								// We also retain channel that were created but not broadcasted
+								// due to peer disconnecting
+								continue;
+							}
 							&mut chan.context
 						},
 						ChannelPhase::UnfundedInboundV1(chan) => {
 							&mut chan.context
 						},
 					};
+
 					// Clean up for removal.
 					update_maps_on_chan_removal!(self, &context);
 					self.issue_channel_close_events(&context, ClosureReason::DisconnectedPeer);
 					failed_channels.push(context.force_shutdown(false));
-					false
-				});
+
+					// Mark the channels for removal that didn't satisfy the "continue" conditions.
+					remove_keys.push(chan_id.clone()); // Collect keys to remove
+				}
+
+				// Remove channels based on the keys collected.
+				for key in remove_keys {
+					peer_state.channel_by_id.remove(&key);
+				}
+
 				// Note that we don't bother generating any events for pre-accept channels -
 				// they're not considered "channels" yet from the PoV of our events interface.
 				peer_state.inbound_channel_request_by_id.clear();
@@ -9034,23 +9050,28 @@ where
 					});
 				}
 
-				peer_state.unnotified_outbound_channel.clear();
-
-				peer_state.channel_by_id.iter_mut().filter_map(|(_, phase)|
-					if let ChannelPhase::Funded(chan) = phase { Some(chan) } else {
-						// Since unfunded channel maps are cleared upon disconnecting a peer, and they're not persisted
-						// (so won't be recovered after a crash), they shouldn't exist here and we would never need to
-						// worry about closing and removing them.
-
-						debug_assert!(false);
-						None
+				for (chan_id, phase) in peer_state.channel_by_id.iter_mut() {
+					if let ChannelPhase::Funded(chan) = phase {
+						pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
+							node_id: chan.context.get_counterparty_node_id(),
+							msg: chan.get_channel_reestablish(&self.logger),
+						});
 					}
-				).for_each(|chan| {
-					pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
-						node_id: chan.context.get_counterparty_node_id(),
-						msg: chan.get_channel_reestablish(&self.logger),
-					});
-				});
+					else if peer_state.unnotified_outbound_channel.contains_key(chan_id) {
+						// That means the channel is notified about just now.
+						continue;
+					}
+					else {
+						// Since unfunded channel maps are cleared upon disconnecting a peer and they're not persisted
+						// (so won't be recovered after a crash), they shouldn't exist here, and we would never need to
+						// worry about closing and removing them. However, it's important to note that if we were able to
+						// create a channel but failed to send the `SendOpenChannel` message, the channel information would
+						// be persisted.
+						debug_assert!(false);
+					}
+				}
+
+				peer_state.unnotified_outbound_channel.clear();
 			}
 
 			return NotifyOption::SkipPersistHandleEvents;
