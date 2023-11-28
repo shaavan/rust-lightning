@@ -11633,6 +11633,34 @@ mod tests {
 	}
 
 	#[test]
+	fn test_channel_update_cached() {
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+		let chan = create_announced_chan_between_nodes(&nodes, 0, 1);
+
+		nodes[0].node.force_close_channel_with_peer(&chan.2, &nodes[1].node.get_our_node_id(), None, true).unwrap();
+		check_added_monitors!(nodes[0], 1);
+		check_closed_event!(nodes[0], 1, ClosureReason::HolderForceClosed, [nodes[1].node.get_our_node_id()], 100000);
+
+		{
+			// Assert that channelUpdate message has been added to node[2] pending msg events
+			let pending_broadcast_messages= nodes[0].node.pending_broadcast_messages.lock().unwrap();
+			assert_eq!(pending_broadcast_messages.len(), 1);
+		}
+
+		// Confirm that the channel_update was not sent immediately to node[1] but was cached.
+		let node_1_events = nodes[1].node.get_and_clear_pending_msg_events();
+		assert_eq!(node_1_events.len(), 0);
+
+		// Confirm that get_and_clear_pending_msg_events correctly captures pending_broadcast_messages
+		let node_0_events = nodes[0].node.get_and_clear_pending_msg_events();
+		assert_eq!(node_0_events.len(), 1);
+	}
+
+	#[test]
 	fn test_drop_disconnected_peers_when_removing_channels() {
 		let chanmon_cfgs = create_chanmon_cfgs(2);
 		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
