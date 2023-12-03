@@ -11442,6 +11442,89 @@ mod tests {
 	}
 
 	#[test]
+	fn test_channel_close_when_not_timely_accepted() {
+		// Create network of two nodes
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+		// Simulate peer-diconnects mid-handshake
+		// The channel is initiated from the node 0 side,
+		// But the nodes disconnects before node 1 could send accept channel
+		let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
+		let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
+		assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
+
+		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+		{
+			// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
+			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+			let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
+			assert_eq!(per_peer_state.channel_by_id.len(), 1);
+		}
+
+		// In the meantime, two timer tick passed
+		nodes[0].node.timer_tick_occurred();
+		nodes[0].node.timer_tick_occurred();
+
+		// Since we disconnected from peer and did not connect back within time
+		// We should have forced-closed the channel by now, with "ClosureReason::DisconnectedPeer"
+		// as the event.
+		check_closed_event!(nodes[0], 1, ClosureReason::DisconnectedPeer, [nodes[1].node.get_our_node_id()], 100000);
+
+		{
+			// Since accept channel message was never received
+			// The channel should be forced close by now from node 0 side
+			// and the peer removed from per_peer_state
+			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+			assert_eq!(node_0_per_peer_state.len(), 0);
+		}
+
+	}
+
+	#[test]
+	fn test_rebroadcast_open_channel_when_reconnect_mid_handshake() {
+		// Create network of two nodes
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+		// Simulate peer-diconnects mid-handshake
+		// The channel is initiated from the node 0 side,
+		// But the nodes disconnects before node 1 could send accept channel
+		let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
+		let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
+		assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
+
+		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+		{
+			// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
+			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+			let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
+			assert_eq!(per_peer_state.channel_by_id.len(), 1);
+		}
+
+		// The peers now reconnect
+		nodes[0].node.peer_connected(&nodes[1].node.get_our_node_id(), &msgs::Init {
+			features: nodes[1].node.init_features(), networks: None, remote_network_address: None
+		}, true).unwrap();
+		nodes[1].node.peer_connected(&nodes[0].node.get_our_node_id(), &msgs::Init {
+			features: nodes[0].node.init_features(), networks: None, remote_network_address: None
+		}, false).unwrap();
+
+		// Make sure the SendOpenChannel message is added to
+		// node_0 pending message events
+		let events = nodes[0].node.get_and_clear_pending_msg_events();
+		assert_eq!(events.len(), 1);
+	}
+
+	#[test]
 	fn test_drop_disconnected_peers_when_removing_channels() {
 		let chanmon_cfgs = create_chanmon_cfgs(2);
 		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
