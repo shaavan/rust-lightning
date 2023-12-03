@@ -43,7 +43,7 @@ use crate::events::{Event, EventHandler, EventsProvider, MessageSendEvent, Messa
 // Since this struct is returned in `list_channels` methods, expose it here in case users want to
 // construct one themselves.
 use crate::ln::{inbound_payment, ChannelId, PaymentHash, PaymentPreimage, PaymentSecret};
-use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel};
+use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, UnacceptedChannelContext, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel};
 use crate::ln::features::{Bolt12InvoiceFeatures, ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 #[cfg(any(feature = "_test_utils", test))]
 use crate::ln::features::Bolt11InvoiceFeatures;
@@ -4765,13 +4765,28 @@ where
 				chan_id: &ChannelId,
 				context: &mut ChannelContext<SP>,
 				unfunded_context: &mut UnfundedChannelContext,
+				unaccepted_context: &mut Option<&mut UnacceptedChannelContext>,
 				pending_msg_events: &mut Vec<MessageSendEvent>,
 				counterparty_node_id: PublicKey,
 			| {
 				context.maybe_expire_prev_config();
-				if unfunded_context.should_expire_unfunded_channel() {
-					log_error!(self.logger,
-						"Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
+				let should_expire_unaccepted_channel = match unaccepted_context {
+					Some(unaccepted_context) => unaccepted_context.should_expire_unaccepted_channel(),
+					None => false,
+				};
+				let should_expire_unfunded_channel = unfunded_context.should_expire_unfunded_channel();
+				if should_expire_unaccepted_channel || should_expire_unfunded_channel {
+					let log_msg = if should_expire_unaccepted_channel {
+						format!("Force-closing pending channel with ID {} for not accepting in a timely manner", chan_id)
+					} else {
+						format!("Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id)
+					};
+					let err_msg = if should_expire_unaccepted_channel {
+						"Force-closing pending channel due to timeout awaiting acceptance".to_owned()
+					} else {
+						"Force-closing pending channel due to timeout awaiting establishment handshake".to_owned()
+					};
+					log_error!(self.logger, "{}", log_msg);
 					update_maps_on_chan_removal!(self, &context);
 					self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
 					shutdown_channels.push(context.force_shutdown(false));
@@ -4780,7 +4795,7 @@ where
 						action: msgs::ErrorAction::SendErrorMessage {
 							msg: msgs::ErrorMessage {
 								channel_id: *chan_id,
-								data: "Force-closing pending channel due to timeout awaiting establishment handshake".to_owned(),
+								data: err_msg.to_owned(),
 							},
 						},
 					});
@@ -4871,11 +4886,11 @@ where
 								true
 							},
 							ChannelPhase::UnfundedInboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut None,
 									pending_msg_events, counterparty_node_id)
 							},
 							ChannelPhase::UnfundedOutboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut Some(&mut chan.unaccepted_context),
 									pending_msg_events, counterparty_node_id)
 							},
 						}
@@ -6097,6 +6112,7 @@ where
 					match phase.get_mut() {
 						ChannelPhase::UnfundedOutboundV1(chan) => {
 							try_chan_phase_entry!(self, chan.accept_channel(&msg, &self.default_configuration.channel_handshake_limits, &peer_state.latest_features), phase);
+							chan.unaccepted_context.channel_accepted();
 							(chan.context.get_value_satoshis(), chan.context.get_funding_redeemscript().to_v0_p2wsh(), chan.context.get_user_id())
 						},
 						_ => {
