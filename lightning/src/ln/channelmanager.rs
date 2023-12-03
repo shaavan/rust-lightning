@@ -43,7 +43,7 @@ use crate::events::{Event, EventHandler, EventsProvider, MessageSendEvent, Messa
 // Since this struct is returned in `list_channels` methods, expose it here in case users want to
 // construct one themselves.
 use crate::ln::{inbound_payment, ChannelId, PaymentHash, PaymentPreimage, PaymentSecret};
-use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext};
+use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, UnconfirmedChannelContext, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext};
 use crate::ln::features::{Bolt12InvoiceFeatures, ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 #[cfg(any(feature = "_test_utils", test))]
 use crate::ln::features::Bolt11InvoiceFeatures;
@@ -4831,23 +4831,33 @@ where
 				chan_id: &ChannelId,
 				context: &mut ChannelContext<SP>,
 				unfunded_context: &mut UnfundedChannelContext,
+				unconfirmed_context: &mut Option<&mut UnconfirmedChannelContext>,
 				pending_msg_events: &mut Vec<MessageSendEvent>,
 				counterparty_node_id: PublicKey,
+				is_connected: bool
 			| {
 				context.maybe_expire_prev_config();
-				if unfunded_context.should_expire_unfunded_channel() {
+				let should_expire_unconfirmed_channel = match unconfirmed_context {
+					Some(unconfirmed_context) => unconfirmed_context.should_expire_unconfirmed_channel(is_connected),
+					None => false,
+				};
+				let should_expire_unfunded_channel = unfunded_context.should_expire_unfunded_channel();
+				if should_expire_unconfirmed_channel || should_expire_unfunded_channel {
 					let logger = WithChannelContext::from(&self.logger, context);
-					log_error!(logger,
-						"Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
+					log_error!(logger, "Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
 					update_maps_on_chan_removal!(self, &context);
-					self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
+					if should_expire_unconfirmed_channel {
+						self.issue_channel_close_events(&context, ClosureReason::DisconnectedPeer);
+					} else {
+						self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
+					}
 					shutdown_channels.push(context.force_shutdown(false));
 					pending_msg_events.push(MessageSendEvent::HandleError {
 						node_id: counterparty_node_id,
 						action: msgs::ErrorAction::SendErrorMessage {
 							msg: msgs::ErrorMessage {
 								channel_id: *chan_id,
-								data: "Force-closing pending channel due to timeout awaiting establishment handshake".to_owned(),
+								data: "Force-closing pending channel due to timeout awaiting establishment handshake".to_owned()
 							},
 						},
 					});
@@ -4862,6 +4872,7 @@ where
 				for (counterparty_node_id, peer_state_mutex) in per_peer_state.iter() {
 					let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 					let peer_state = &mut *peer_state_lock;
+					let peer_connected = peer_state.is_connected.clone();
 					let pending_msg_events = &mut peer_state.pending_msg_events;
 					let counterparty_node_id = *counterparty_node_id;
 					peer_state.channel_by_id.retain(|chan_id, phase| {
@@ -4939,12 +4950,12 @@ where
 								true
 							},
 							ChannelPhase::UnfundedInboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
+								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut None,
+									pending_msg_events, counterparty_node_id, peer_connected)
 							},
 							ChannelPhase::UnfundedOutboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
+								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut Some(&mut chan.unconfirmed_context),
+									pending_msg_events, counterparty_node_id, peer_connected)
 							},
 						}
 					});
