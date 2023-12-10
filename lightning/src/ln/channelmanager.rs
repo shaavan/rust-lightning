@@ -893,6 +893,7 @@ impl <SP: Deref> PeerState<SP> where SP::Target: SignerProvider {
 			return false
 		}
 		self.channel_by_id.iter().filter(|(_, phase)| matches!(phase, ChannelPhase::Funded(_))).count() == 0
+			&& self.channel_by_id.iter().filter(|(_, phase)| matches!(phase, ChannelPhase::UnfundedOutboundV1(_))).count() == 0
 			&& self.monitor_update_blocked_actions.is_empty()
 			&& self.in_flight_monitor_updates.is_empty()
 	}
@@ -8869,10 +8870,12 @@ where
 							}
 							&mut chan.context
 						},
-						// Unfunded channels will always be removed.
-						ChannelPhase::UnfundedOutboundV1(chan) => {
-							&mut chan.context
+						// We retain UnfundedOutboundV1 channel for some time in case
+						// peer unexpectedly disconnects, and intends to reconnect again.
+						ChannelPhase::UnfundedOutboundV1(_) => {
+							return true;
 						},
+						// Unfunded inbound channels will always be removed.
 						ChannelPhase::UnfundedInboundV1(chan) => {
 							&mut chan.context
 						},
@@ -9011,15 +9014,22 @@ where
 				let peer_state = &mut *peer_state_lock;
 				let pending_msg_events = &mut peer_state.pending_msg_events;
 
-				peer_state.channel_by_id.iter_mut().filter_map(|(_, phase)|
-					if let ChannelPhase::Funded(chan) = phase { Some(chan) } else { None }
-				).for_each(|chan| {
-					let logger = WithChannelContext::from(&self.logger, &chan.context);
-					pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
-						node_id: chan.context.get_counterparty_node_id(),
-						msg: chan.get_channel_reestablish(&&logger),
-					});
-				});
+				for (_, phase) in peer_state.channel_by_id.iter_mut() {
+					if let ChannelPhase::Funded(chan) = phase {
+						let logger = WithChannelContext::from(&self.logger, &chan.context);
+						pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
+							node_id: chan.context.get_counterparty_node_id(),
+							msg: chan.get_channel_reestablish(&&logger),
+						});
+					}
+					else if let ChannelPhase::UnfundedOutboundV1(chan) = phase {
+						pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
+							node_id: chan.context.get_counterparty_node_id(),
+							msg: chan.get_open_channel(self.chain_hash),
+						});
+					}
+					// else don't do anything if the channel is UnfundedInbound Channel.
+				}
 			}
 
 			return NotifyOption::SkipPersistHandleEvents;
