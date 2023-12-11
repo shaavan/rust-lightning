@@ -4847,7 +4847,11 @@ where
 					let logger = WithChannelContext::from(&self.logger, context);
 					log_error!(logger, "Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
 					update_maps_on_chan_removal!(self, &context);
-					self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
+					if should_expire_unconfirmed_channel {
+						self.issue_channel_close_events(&context, ClosureReason::DisconnectedPeer);
+					} else {
+						self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
+					}
 					shutdown_channels.push(context.force_shutdown(false));
 					pending_msg_events.push(MessageSendEvent::HandleError {
 						node_id: counterparty_node_id,
@@ -11466,8 +11470,10 @@ mod tests {
 		nodes[0].node.timer_tick_occurred();
 		nodes[0].node.timer_tick_occurred();
 
-		// Since we were disconnected from node 1,
-		check_closed_event!(nodes[0], 1, ClosureReason::HolderForceClosed, [nodes[1].node.get_our_node_id()], 100000);
+		// Since we disconnected from peer and did not connect back within time
+		// We should have forced-closed the channel by now, with "ClosureReason::DisconnectedPeer"
+		// as the event.
+		check_closed_event!(nodes[0], 1, ClosureReason::DisconnectedPeer, [nodes[1].node.get_our_node_id()], 100000);
 
 		{
 			// Since accept channel message was never received
