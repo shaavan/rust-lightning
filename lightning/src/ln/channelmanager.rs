@@ -43,7 +43,7 @@ use crate::events::{Event, EventHandler, EventsProvider, MessageSendEvent, Messa
 // Since this struct is returned in `list_channels` methods, expose it here in case users want to
 // construct one themselves.
 use crate::ln::{inbound_payment, ChannelId, PaymentHash, PaymentPreimage, PaymentSecret};
-use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, UnconfirmedChannelContext, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext};
+use crate::ln::channel::{Channel, ChannelPhase, ChannelContext, ChannelError, ChannelUpdateStatus, ShutdownResult, DisconnectedPeerChannelContext, UnfundedChannelContext, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext};
 use crate::ln::features::{Bolt12InvoiceFeatures, ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 #[cfg(any(feature = "_test_utils", test))]
 use crate::ln::features::Bolt11InvoiceFeatures;
@@ -4832,22 +4832,22 @@ where
 				chan_id: &ChannelId,
 				context: &mut ChannelContext<SP>,
 				unfunded_context: &mut UnfundedChannelContext,
-				unconfirmed_context: &mut Option<&mut UnconfirmedChannelContext>,
+				disconnected_peer_channel_context: &mut Option<&mut DisconnectedPeerChannelContext>,
 				pending_msg_events: &mut Vec<MessageSendEvent>,
 				counterparty_node_id: PublicKey,
 				is_connected: bool
 			| {
 				context.maybe_expire_prev_config();
-				let should_expire_unconfirmed_channel = match unconfirmed_context {
-					Some(unconfirmed_context) => unconfirmed_context.should_expire_unconfirmed_channel(is_connected),
+				let should_expire_disconnected_peer_channel = match disconnected_peer_channel_context {
+					Some(disconnected_peer_channel_context) => disconnected_peer_channel_context.should_expire_disconnected_peer_channel(is_connected),
 					None => false,
 				};
 				let should_expire_unfunded_channel = unfunded_context.should_expire_unfunded_channel();
-				if should_expire_unconfirmed_channel || should_expire_unfunded_channel {
+				if should_expire_disconnected_peer_channel || should_expire_unfunded_channel {
 					let logger = WithChannelContext::from(&self.logger, context);
 					log_error!(logger, "Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
 					update_maps_on_chan_removal!(self, &context);
-					if should_expire_unconfirmed_channel {
+					if should_expire_disconnected_peer_channel {
 						self.issue_channel_close_events(&context, ClosureReason::DisconnectedPeer);
 					} else {
 						self.issue_channel_close_events(&context, ClosureReason::HolderForceClosed);
@@ -4955,7 +4955,7 @@ where
 									pending_msg_events, counterparty_node_id, peer_connected)
 							},
 							ChannelPhase::UnfundedOutboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut Some(&mut chan.unconfirmed_context),
+								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context, &mut Some(&mut chan.disconnected_peer_channel_context),
 									pending_msg_events, counterparty_node_id, peer_connected)
 							},
 						}

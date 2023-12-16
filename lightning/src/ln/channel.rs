@@ -881,7 +881,7 @@ pub(crate) const UNFUNDED_CHANNEL_AGE_LIMIT_TICKS: usize = 60;
 
 /// The number of ticks that may elapse while we're waiting for a disconnected peer to reconnect,
 /// before we try to close the associated outbound channel with them.
-pub(crate) const DISCONNECTED_UNCONFIRMED_CHANNEL_AGE_LIMIT_TICKS: usize = 2;
+pub(crate) const DISCONNECTED_PEER_CHANNEL_LIMIT_TICKS: usize = 2;
 
 /// Number of blocks needed for an output from a coinbase transaction to be spendable.
 pub(crate) const COINBASE_MATURITY: u32 = 100;
@@ -923,36 +923,28 @@ impl<'a, SP: Deref> ChannelPhase<SP> where
 	}
 }
 
-pub(super) struct UnconfirmedChannelContext {
-	/// A counter tracking how many ticks have elapsed since this unaccepted channel was
-	/// created. If this unaccepted channel reaches peer has yet to respond after reaching
-	/// `UNACCEPTED_CHANNEL_AGE_LIMIT_TICKS`, it will be force-closed and purged from memory.
-	///
-	/// This is so that we don't keep outbound request around which have not been accepted
-	/// in a timely manner
-	///
-	/// A counter tracking how many ticks have elapsed since this the peer associated to this
-	/// unconfimed outbound channel has been disconnected. If this unconfirmed channel associated
-	/// peer is still disconnected after reaching `DISCONNECTED_UNCONFIRMED_CHANNEL_AGE_LIMIT_TICKS`,
-	/// it will be force-closed and purged from memory.
-	///
-	/// This is so that we don't keep the outbound request around for long whose associated peer
-	/// has disconnected in middle of channel creation handshake, and has not connected back yet.
-	unconfirmed_channel_age_ticks: usize,
+pub(super) struct DisconnectedPeerChannelContext {
+	/// A counter tracking how many ticks have elapsed since the peer associated with
+	/// this unconfirmed outbound channel has been disconnected. If the peer is still
+	/// disconnected after reaching `DISCONNECTED_PEER_CHANNEL_LIMIT_TICKS`
+	/// the outbound channel will be force-closed and purged from memory. This is so that
+	/// we don't keep the outbound request around for long whose associated peer has
+	/// disconnected in the middle of the channel creation handshake and has not yet connected back.
+	disconnected_peer_channel_ticks: usize,
 }
 
-impl UnconfirmedChannelContext {
+impl DisconnectedPeerChannelContext {
 	/// Determines whether we should force-close and purge this unfunded channel from memory due to it
 	/// having reached the unfunded channel age limit.
 	///
 	/// This should be called on every [`super::channelmanager::ChannelManager::timer_tick_occurred`].
-	pub fn should_expire_unconfirmed_channel(&mut self, peer_connected: bool) -> bool {
+	pub fn should_expire_disconnected_peer_channel(&mut self, peer_connected: bool) -> bool {
 		if peer_connected {
-			self.unconfirmed_channel_age_ticks = 0;
+			self.disconnected_peer_channel_ticks = 0;
 			return false;
 		}
-		self.unconfirmed_channel_age_ticks += 1;
-		self.unconfirmed_channel_age_ticks >= DISCONNECTED_UNCONFIRMED_CHANNEL_AGE_LIMIT_TICKS
+		self.disconnected_peer_channel_ticks += 1;
+		self.disconnected_peer_channel_ticks >= DISCONNECTED_PEER_CHANNEL_LIMIT_TICKS
 	}
 }
 
@@ -964,7 +956,7 @@ pub(super) struct UnfundedChannelContext {
 	///
 	/// This is so that we don't keep channels around that haven't progressed to a funded state
 	/// in a timely manner.
-	unfunded_channel_age_ticks: usize,
+	channel_age_ticks: usize,
 }
 
 impl UnfundedChannelContext {
@@ -973,8 +965,8 @@ impl UnfundedChannelContext {
 	///
 	/// This should be called on every [`super::channelmanager::ChannelManager::timer_tick_occurred`].
 	pub fn should_expire_unfunded_channel(&mut self) -> bool {
-		self.unfunded_channel_age_ticks += 1;
-		self.unfunded_channel_age_ticks >= UNFUNDED_CHANNEL_AGE_LIMIT_TICKS
+		self.channel_age_ticks += 1;
+		self.channel_age_ticks >= UNFUNDED_CHANNEL_AGE_LIMIT_TICKS
 	}
 }
 
@@ -6112,7 +6104,7 @@ impl<SP: Deref> Channel<SP> where
 pub(super) struct OutboundV1Channel<SP: Deref> where SP::Target: SignerProvider {
 	pub context: ChannelContext<SP>,
 	pub unfunded_context: UnfundedChannelContext,
-	pub unconfirmed_context: UnconfirmedChannelContext,
+	pub disconnected_peer_channel_context: DisconnectedPeerChannelContext,
 }
 
 impl<SP: Deref> OutboundV1Channel<SP> where SP::Target: SignerProvider {
@@ -6317,8 +6309,8 @@ impl<SP: Deref> OutboundV1Channel<SP> where SP::Target: SignerProvider {
 
 				blocked_monitor_updates: Vec::new(),
 			},
-			unfunded_context: UnfundedChannelContext { unfunded_channel_age_ticks: 0 },
-			unconfirmed_context: UnconfirmedChannelContext { unconfirmed_channel_age_ticks: 0 }
+			unfunded_context: UnfundedChannelContext { channel_age_ticks: 0 },
+			disconnected_peer_channel_context: DisconnectedPeerChannelContext { disconnected_peer_channel_ticks: 0 }
 		})
 	}
 
@@ -7104,7 +7096,7 @@ impl<SP: Deref> InboundV1Channel<SP> where SP::Target: SignerProvider {
 
 				blocked_monitor_updates: Vec::new(),
 			},
-			unfunded_context: UnfundedChannelContext { unfunded_channel_age_ticks: 0 }
+			unfunded_context: UnfundedChannelContext { channel_age_ticks: 0 }
 		};
 
 		Ok(chan)
