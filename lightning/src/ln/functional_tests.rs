@@ -62,7 +62,7 @@ use crate::sync::{Arc, Mutex, RwLock};
 use crate::ln::functional_test_utils::*;
 use crate::ln::chan_utils::CommitmentTransaction;
 
-use super::channel::UNFUNDED_CHANNEL_AGE_LIMIT_TICKS;
+use super::channel::STALE_UNFUNDED_CHANNEL_AGE_LIMIT_TICKS;
 
 #[test]
 fn test_insane_channel_opens() {
@@ -10276,7 +10276,7 @@ fn test_remove_expired_outbound_unfunded_channels() {
 	check_outbound_channel_existence(true);
 
 	// Channel should exist with 1 timer tick less than required.
-	for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS - 1 {
+	for _ in 0..STALE_UNFUNDED_CHANNEL_AGE_LIMIT_TICKS - 1 {
 		nodes[0].node.timer_tick_occurred();
 		check_outbound_channel_existence(true)
 	}
@@ -10327,7 +10327,7 @@ fn test_remove_expired_inbound_unfunded_channels() {
 	check_inbound_channel_existence(true);
 
 	// Channel should exist with 1 timer tick less than required.
-	for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS - 1 {
+	for _ in 0..STALE_UNFUNDED_CHANNEL_AGE_LIMIT_TICKS - 1 {
 		nodes[1].node.timer_tick_occurred();
 		check_inbound_channel_existence(true)
 	}
