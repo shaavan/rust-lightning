@@ -22,6 +22,8 @@ pub(crate) struct ForwardTlvs {
 	/// Senders to a blinded path use this value to concatenate the route they find to the
 	/// introduction node with the blinded path.
 	pub(crate) next_blinding_override: Option<PublicKey>,
+	/// Custom Tlvs
+	pub(crate) custom_tlvs: Vec<(u64, Vec<u8>)>,
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
@@ -30,6 +32,8 @@ pub(crate) struct ReceiveTlvs {
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub(crate) path_id: Option<[u8; 32]>,
+	/// Custom Tlvs
+	pub(crate) custom_tlvs: Vec<(u64, Vec<u8>)>,
 }
 
 impl Writeable for ForwardTlvs {
@@ -60,9 +64,9 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	let blinded_tlvs = unblinded_path.iter()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| {
-			ControlTlvs::Forward(ForwardTlvs { next_node_id: *pk, next_blinding_override: None })
+			ControlTlvs::Forward(ForwardTlvs { next_node_id: *pk, next_blinding_override: None, custom_tlvs: Vec::new() })
 		})
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, custom_tlvs: Vec::new() })));
 
 	utils::construct_blinded_hops(secp_ctx, unblinded_path.iter(), blinded_tlvs, session_priv)
 }
@@ -80,7 +84,7 @@ pub(crate) fn advance_path_by_one<NS: Deref, T: secp256k1::Signing + secp256k1::
 	match ChaChaPolyReadAdapter::read(&mut reader, rho) {
 		Ok(ChaChaPolyReadAdapter { readable: ControlTlvs::Forward(ForwardTlvs {
 			mut next_node_id, next_blinding_override,
-		})}) => {
+			custom_tlvs})}) => {
 			let mut new_blinding_point = match next_blinding_override {
 				Some(blinding_point) => blinding_point,
 				None => {
