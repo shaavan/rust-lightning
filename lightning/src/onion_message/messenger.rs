@@ -627,7 +627,7 @@ where
 		(control_tlvs_ss, custom_handler.deref(), logger.deref())
 	) {
 		Ok((Payload::Receive::<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>> {
-			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id, custom_tlvs}), reply_path,
+			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id, custom_tlvs: _ }), reply_path,
 		}, None)) => {
 			Ok(PeeledOnion::Receive(message, path_id, reply_path))
 		},
@@ -1152,7 +1152,7 @@ fn packet_payloads_and_keys<T: OnionMessageContents, S: secp256k1::Signing + sec
 		}, prev_control_tlvs_ss.unwrap()));
 	} else {
 		payloads.push((Payload::Receive {
-			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, custom_tlvs: Vec::new()}),
+			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, custom_tlvs: Vec::new() }),
 			reply_path: reply_path.take(),
 			message,
 		}, prev_control_tlvs_ss.unwrap()));
