@@ -56,6 +56,7 @@ pub fn get_blinded_route_parameters(
 			max_cltv_expiry: u32::max_value(),
 			htlc_minimum_msat: channel_upds.last().unwrap().htlc_minimum_msat,
 		},
+		custom_tlvs: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPath::new_for_payment(
@@ -89,6 +90,7 @@ fn do_one_hop_blinded_path(success: bool) {
 			max_cltv_expiry: u32::max_value(),
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
+		custom_tlvs: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPath::one_hop_for_payment(
@@ -131,6 +133,7 @@ fn mpp_to_one_hop_blinded_path() {
 			max_cltv_expiry: u32::max_value(),
 			htlc_minimum_msat: chan_upd_1_3.htlc_minimum_msat,
 		},
+		custom_tlvs: Vec::new(),
 	};
 	let blinded_path = BlindedPath::one_hop_for_payment(
 		nodes[3].node.get_our_node_id(), payee_tlvs, &chanmon_cfgs[3].keys_manager, &secp_ctx
