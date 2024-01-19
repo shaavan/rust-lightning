@@ -3692,13 +3692,7 @@ fn test_dup_events_on_peer_disconnect() {
 	expect_payment_path_successful!(nodes[0]);
 }
 
-
-// The following test is disabled because we no longer close the channel
-// immediately after funding brodcasts. Instead we wait for some time for
-// the peer to reconnect back, and only close it after it become stale for
-// UNFUNDED_CHANNEL_AGE_LIMIT_TICKS
 #[test]
-#[ignore]
 fn test_peer_disconnected_before_funding_broadcasted() {
 	// Test that channels are closed with `ClosureReason::DisconnectedPeer` if the peer disconnects
 	// before the funding transaction has been broadcasted, and doesn't reconnect back within time.
@@ -3730,12 +3724,19 @@ fn test_peer_disconnected_before_funding_broadcasted() {
 		assert_eq!(nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().len(), 0);
 	}
 
-	// Ensure that the channel is closed after timeout with `ClosureReason::DisconnectedPeer`
-	// when the peers are disconnected before the funding transaction was broadcasted.
+	// The peers disconnect before the funding is broadcasted.
 	nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
 	nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
 
-	check_closed_event!(&nodes[0], 2, ClosureReason::DisconnectedPeer, true
+	// The time for peers to reconnect expires.
+	for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS {
+		nodes[0].node.timer_tick_occurred();
+	}
+
+	// Ensure that the channel is closed with `ClosureReason::HolderForceClosed`
+	// when the peers are disconnected and do not reconnect before the funding
+	// transaction is broadcasted.
+	check_closed_event!(&nodes[0], 2, ClosureReason::HolderForceClosed, true
 		, [nodes[1].node.get_our_node_id()], 1000000);
 	check_closed_event!(&nodes[1], 1, ClosureReason::DisconnectedPeer, false
 		, [nodes[0].node.get_our_node_id()], 1000000);
@@ -10512,88 +10513,100 @@ fn test_remove_expired_inbound_unfunded_channels() {
 }
 
 #[test]
-	fn test_channel_close_when_not_timely_accepted() {
-		// Create network of two nodes
-		let chanmon_cfgs = create_chanmon_cfgs(2);
-		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
-		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+fn test_channel_close_when_not_timely_accepted() {
+	// Create network of two nodes
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 
-		// Simulate peer-diconnects mid-handshake
-		// The channel is initiated from the node 0 side,
-		// But the nodes disconnects before node 1 could send accept channel
-		let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
-		let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
-		assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
+	// Simulate peer-disconnects mid-handshake
+	// The channel is initiated from the node 0 side,
+	// but the nodes disconnect before node 1 could send accept channel
+	let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
+	let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
+	assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
 
-		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
-		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+	nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+	nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
 
-		{
-			// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
-			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
-			let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
-			assert_eq!(per_peer_state.channel_by_id.len(), 1);
-		}
-
-		// In the meantime, some time passes.
-		for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS {
-			nodes[0].node.timer_tick_occurred();
-		}
-
-		// Since we disconnected from peer and did not connect back within time
-		// We should have forced-closed the channel by now.
-		check_closed_event!(nodes[0], 1, ClosureReason::HolderForceClosed, [nodes[1].node.get_our_node_id()], 100000);
-
-		{
-			// Since accept channel message was never received
-			// The channel should be forced close by now from node 0 side
-			// and the peer removed from per_peer_state
-			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
-			assert_eq!(node_0_per_peer_state.len(), 0);
-		}
-
+	{
+		// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
+		let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+		let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
+		assert_eq!(per_peer_state.channel_by_id.len(), 1);
 	}
 
-	#[test]
-	fn test_rebroadcast_open_channel_when_reconnect_mid_handshake() {
-		// Create network of two nodes
-		let chanmon_cfgs = create_chanmon_cfgs(2);
-		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
-		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
-
-		// Simulate peer-diconnects mid-handshake
-		// The channel is initiated from the node 0 side,
-		// But the nodes disconnects before node 1 could send accept channel
-		let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
-		let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
-		assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
-
-		nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
-		nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
-
-		{
-			// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
-			let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
-			let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
-			assert_eq!(per_peer_state.channel_by_id.len(), 1);
-		}
-
-		// The peers now reconnect
-		nodes[0].node.peer_connected(&nodes[1].node.get_our_node_id(), &msgs::Init {
-			features: nodes[1].node.init_features(), networks: None, remote_network_address: None
-		}, true).unwrap();
-		nodes[1].node.peer_connected(&nodes[0].node.get_our_node_id(), &msgs::Init {
-			features: nodes[0].node.init_features(), networks: None, remote_network_address: None
-		}, false).unwrap();
-
-		// Make sure the SendOpenChannel message is added to
-		// node_0 pending message events
-		let events = nodes[0].node.get_and_clear_pending_msg_events();
-		assert_eq!(events.len(), 1);
+	{
+		// Since channel was inbound from node[1] perspective, it should have been immediately dropped.
+		let node_1_per_peer_state = nodes[1].node.per_peer_state.read().unwrap();
+		let per_peer_state = node_1_per_peer_state.get(&nodes[0].node.get_our_node_id());
+		assert!(per_peer_state.is_none());
 	}
 
+	// In the meantime, some time passes.
+	for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS {
+		nodes[0].node.timer_tick_occurred();
+	}
+
+	// Since we disconnected from peer and did not connect back within time,
+	// we should have forced-closed the channel by now.
+	check_closed_event!(nodes[0], 1, ClosureReason::HolderForceClosed, [nodes[1].node.get_our_node_id()], 100000);
+
+	{
+		// Since accept channel message was never received
+		// The channel should be forced close by now from node 0 side
+		// and the peer removed from per_peer_state
+		let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+		assert_eq!(node_0_per_peer_state.len(), 0);
+	}
+}
+
+#[test]
+fn test_rebroadcast_open_channel_when_reconnect_mid_handshake() {
+	// Create network of two nodes
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	// Simulate peer-disconnects mid-handshake
+	// The channel is initiated from the node 0 side,
+	// but the nodes disconnect before node 1 could send accept channel
+	let create_chan_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, None).unwrap();
+	let open_channel_msg = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
+	assert_eq!(open_channel_msg.temporary_channel_id, create_chan_id);
+
+	nodes[0].node.peer_disconnected(&nodes[1].node.get_our_node_id());
+	nodes[1].node.peer_disconnected(&nodes[0].node.get_our_node_id());
+
+	{
+		// Make sure that we have not removed the OutboundV1Channel from node[0] immediately.
+		let node_0_per_peer_state = nodes[0].node.per_peer_state.read().unwrap();
+		let per_peer_state = node_0_per_peer_state.get(&nodes[1].node.get_our_node_id()).unwrap().lock().unwrap();
+		assert_eq!(per_peer_state.channel_by_id.len(), 1);
+	}
+
+	{
+		// Since channel was inbound from node[1] perspective, it should have been immediately dropped.
+		let node_1_per_peer_state = nodes[1].node.per_peer_state.read().unwrap();
+		let per_peer_state = node_1_per_peer_state.get(&nodes[0].node.get_our_node_id());
+		assert!(per_peer_state.is_none());
+	}
+
+	// The peers now reconnect
+	nodes[0].node.peer_connected(&nodes[1].node.get_our_node_id(), &msgs::Init {
+		features: nodes[1].node.init_features(), networks: None, remote_network_address: None
+	}, true).unwrap();
+	nodes[1].node.peer_connected(&nodes[0].node.get_our_node_id(), &msgs::Init {
+		features: nodes[0].node.init_features(), networks: None, remote_network_address: None
+	}, false).unwrap();
+
+	// Make sure the SendOpenChannel message is added to
+	// node_0 pending message events
+	let events = nodes[0].node.get_and_clear_pending_msg_events();
+	assert_eq!(events.len(), 1);
+}
 
 fn do_test_multi_post_event_actions(do_reload: bool) {
 	// Tests handling multiple post-Event actions at once.
@@ -10778,12 +10791,12 @@ fn test_disconnect_in_funding_batch() {
 	// The remaining peer in the batch disconnects.
 	nodes[0].node.peer_disconnected(&nodes[2].node.get_our_node_id());
 
-	// After the time expires for allowing peer to connect back
+	// Let the time for the peers to reconnect expire.
 	for _ in 0..UNFUNDED_CHANNEL_AGE_LIMIT_TICKS {
 		nodes[0].node.timer_tick_occurred();
 	}
 
-	// The channels in the batch will close immediately.
+	// The channels in the batch will close after timeout.
 	let funding_txo_1 = OutPoint { txid: tx.txid(), index: 0 };
 	let funding_txo_2 = OutPoint { txid: tx.txid(), index: 1 };
 	let channel_id_1 = funding_txo_1.to_channel_id();
