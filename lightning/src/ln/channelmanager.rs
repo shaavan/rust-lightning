@@ -892,8 +892,9 @@ impl <SP: Deref> PeerState<SP> where SP::Target: SignerProvider {
 		if require_disconnected && self.is_connected {
 			return false
 		}
-		self.channel_by_id.iter().filter(|(_, phase)| matches!(phase, ChannelPhase::Funded(_))).count() == 0
-			&& self.channel_by_id.iter().filter(|(_, phase)| matches!(phase, ChannelPhase::UnfundedOutboundV1(_))).count() == 0
+		!self.channel_by_id.iter().any(|(_, phase)|
+			matches!(phase, ChannelPhase::Funded(_) | ChannelPhase::UnfundedOutboundV1(_))
+		)
 			&& self.monitor_update_blocked_actions.is_empty()
 			&& self.in_flight_monitor_updates.is_empty()
 	}
@@ -9015,20 +9016,29 @@ where
 				let pending_msg_events = &mut peer_state.pending_msg_events;
 
 				for (_, phase) in peer_state.channel_by_id.iter_mut() {
-					if let ChannelPhase::Funded(chan) = phase {
-						let logger = WithChannelContext::from(&self.logger, &chan.context);
-						pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
-							node_id: chan.context.get_counterparty_node_id(),
-							msg: chan.get_channel_reestablish(&&logger),
-						});
+					match phase {
+						ChannelPhase::Funded(chan) => {
+							let logger = WithChannelContext::from(&self.logger, &chan.context);
+							pending_msg_events.push(events::MessageSendEvent::SendChannelReestablish {
+								node_id: chan.context.get_counterparty_node_id(),
+								msg: chan.get_channel_reestablish(&&logger),
+							});
+						}
+
+						ChannelPhase::UnfundedOutboundV1(chan) => {
+							pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
+								node_id: chan.context.get_counterparty_node_id(),
+								msg: chan.get_open_channel(self.chain_hash),
+							});
+						}
+
+						ChannelPhase::UnfundedInboundV1(_) => {
+							// Since unfunded inbound channel maps are cleared upon disconnecting a peer, and they're not
+							// persisted (so won't be recovered after a crash), they shouldn't exist here and we would never
+							// need to worry about closing and removing them.
+							debug_assert!(false);
+						}
 					}
-					else if let ChannelPhase::UnfundedOutboundV1(chan) = phase {
-						pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
-							node_id: chan.context.get_counterparty_node_id(),
-							msg: chan.get_open_channel(self.chain_hash),
-						});
-					}
-					// else don't do anything if the channel is UnfundedInbound Channel.
 				}
 			}
 
@@ -11146,7 +11156,7 @@ mod tests {
 	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 	use core::sync::atomic::Ordering;
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
-use crate::ln::{PaymentPreimage, PaymentHash, PaymentSecret};
+	use crate::ln::{PaymentPreimage, PaymentHash, PaymentSecret};
 	use crate::ln::ChannelId;
 	use crate::ln::channelmanager::{create_recv_pending_htlc_info, HTLCForwardInfo, inbound_payment, PaymentId, PaymentSendFailure, RecipientOnionFields, InterceptId};
 	use crate::ln::functional_test_utils::*;
