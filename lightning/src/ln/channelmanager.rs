@@ -892,7 +892,7 @@ pub(super) struct PeerState<SP: Deref> where SP::Target: SignerProvider {
 	/// The peer is currently connected (i.e. we've seen a
 	/// [`ChannelMessageHandler::peer_connected`] and no corresponding
 	/// [`ChannelMessageHandler::peer_disconnected`].
-	is_connected: bool,
+	pub is_connected: bool,
 }
 
 impl <SP: Deref> PeerState<SP> where SP::Target: SignerProvider {
@@ -1392,8 +1392,7 @@ where
 
 	pending_offers_messages: Mutex<Vec<PendingOnionMessage<OffersMessage>>>,
 
-	/// Tracks the channel_update message that were not broadcasted because
-	/// we were not connected to any peers.
+	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
 	pending_broadcast_messages: Mutex<Vec<MessageSendEvent>>,
 
 	entropy_source: ES,
@@ -1980,7 +1979,8 @@ macro_rules! handle_error {
 		match $internal {
 			Ok(msg) => Ok(msg),
 			Err(MsgHandleErrInternal { err, shutdown_finish, .. }) => {
-				let mut msg_events = Vec::with_capacity(2);
+				let mut msg_event = None;
+				let mut broadcast_event = None;
 
 				if let Some((shutdown_res, update_option)) = shutdown_finish {
 					let counterparty_node_id = shutdown_res.counterparty_node_id;
@@ -1992,7 +1992,7 @@ macro_rules! handle_error {
 
 					$self.finish_close_channel(shutdown_res);
 					if let Some(update) = update_option {
-						msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+						broadcast_event = Some(events::MessageSendEvent::BroadcastChannelUpdate {
 							msg: update
 						});
 					}
@@ -2002,17 +2002,22 @@ macro_rules! handle_error {
 
 				if let msgs::ErrorAction::IgnoreError = err.action {
 				} else {
-					msg_events.push(events::MessageSendEvent::HandleError {
+					msg_event = Some(events::MessageSendEvent::HandleError {
 						node_id: $counterparty_node_id,
 						action: err.action.clone()
 					});
 				}
 
-				if !msg_events.is_empty() {
+				if let Some(broadcast_event) = broadcast_event {
+					let mut pending_broadcast_messages = $self.pending_broadcast_messages.lock().unwrap();
+					pending_broadcast_messages.push(broadcast_event);
+				}
+
+				if let Some(msg_event) = msg_event {
 					let per_peer_state = $self.per_peer_state.read().unwrap();
 					if let Some(peer_state_mutex) = per_peer_state.get(&$counterparty_node_id) {
 						let mut peer_state = peer_state_mutex.lock().unwrap();
-						peer_state.pending_msg_events.append(&mut msg_events);
+						peer_state.pending_msg_events.push(msg_event);
 					}
 				}
 
@@ -2963,7 +2968,7 @@ where
 		};
 		if let Some(update) = update_opt {
 			// If we have some Channel Update to broadcast, we cache it and broadcast it later.
-			let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+			let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
 			pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 				msg: update
 			});
@@ -4042,6 +4047,7 @@ where
 			.ok_or_else(|| APIError::ChannelUnavailable { err: format!("Can't find a peer matching the passed counterparty node_id {}", counterparty_node_id) })?;
 		let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 		let peer_state = &mut *peer_state_lock;
+
 		for channel_id in channel_ids {
 			if !peer_state.has_channel(channel_id) {
 				return Err(APIError::ChannelUnavailable {
@@ -4058,7 +4064,8 @@ where
 				}
 				if let ChannelPhase::Funded(channel) = channel_phase {
 					if let Ok(msg) = self.get_channel_update_for_broadcast(channel) {
-						peer_state.pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate { msg });
+						let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+						pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate { msg });
 					} else if let Ok(msg) = self.get_channel_update_for_unicast(channel) {
 						peer_state.pending_msg_events.push(events::MessageSendEvent::SendChannelUpdate {
 							node_id: channel.context.get_counterparty_node_id(),
@@ -4968,7 +4975,8 @@ where
 										if n >= DISABLE_GOSSIP_TICKS {
 											chan.set_channel_update_status(ChannelUpdateStatus::Disabled);
 											if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-												pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+												let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+												pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 													msg: update
 												});
 											}
@@ -4982,7 +4990,8 @@ where
 										if n >= ENABLE_GOSSIP_TICKS {
 											chan.set_channel_update_status(ChannelUpdateStatus::Enabled);
 											if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-												pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+												let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+												pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 													msg: update
 												});
 											}
@@ -6641,9 +6650,8 @@ where
 		}
 		if let Some(ChannelPhase::Funded(chan)) = chan_option {
 			if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
-				let peer_state = &mut *peer_state_lock;
-				peer_state.pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+				let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+				pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 					msg: update
 				});
 			}
@@ -7303,7 +7311,8 @@ where
 									if let ChannelPhase::Funded(mut chan) = remove_channel_phase!(self, chan_phase_entry) {
 										failed_channels.push(chan.context.force_shutdown(false, ClosureReason::HolderForceClosed));
 										if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-											pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+											let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+											pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 												msg: update
 											});
 										}
@@ -7488,7 +7497,8 @@ where
 										// We're done with this channel. We got a closing_signed and sent back
 										// a closing_signed with a closing transaction to broadcast.
 										if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-											pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+											let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+											pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 												msg: update
 											});
 										}
@@ -8450,6 +8460,7 @@ where
 				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 				let peer_state = &mut *peer_state_lock;
 				let pending_msg_events = &mut peer_state.pending_msg_events;
+
 				peer_state.channel_by_id.retain(|_, phase| {
 					match phase {
 						// Retain unfunded channels.
@@ -8522,7 +8533,8 @@ where
 								let reason_message = format!("{}", reason);
 								failed_channels.push(channel.context.force_shutdown(true, reason));
 								if let Ok(update) = self.get_channel_update_for_broadcast(&channel) {
-									pending_msg_events.push(events::MessageSendEvent::BroadcastChannelUpdate {
+									let pending_broadcast_messages = &mut self.pending_broadcast_messages.lock().unwrap();
+									pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 										msg: update
 									});
 								}
@@ -8969,7 +8981,9 @@ where
 						// Gossip
 						&events::MessageSendEvent::SendChannelAnnouncement { .. } => false,
 						&events::MessageSendEvent::BroadcastChannelAnnouncement { .. } => true,
-						&events::MessageSendEvent::BroadcastChannelUpdate { .. } => true,
+						// [`ChannelManager::pending_broadcast_events`] holds the [`BroadcastChannelUpdate`]
+						// This check here is to ensure exhaustivity.
+						&events::MessageSendEvent::BroadcastChannelUpdate { .. } => false,
 						&events::MessageSendEvent::BroadcastNodeAnnouncement { .. } => true,
 						&events::MessageSendEvent::SendChannelUpdate { .. } => false,
 						&events::MessageSendEvent::SendChannelRangeQuery { .. } => false,
@@ -11880,7 +11894,6 @@ mod tests {
 			assert_eq!(nodes_0_lock.len(), 1);
 			assert!(nodes_0_lock.contains_key(&funding_output));
 		}
-
 		{
 			// At this stage, `nodes[1]` has proposed a fee for the closing transaction in the
 			// `handle_closing_signed` call above. As `nodes[1]` has not yet received the signature
