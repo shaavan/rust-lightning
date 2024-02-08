@@ -3282,7 +3282,10 @@ fn do_test_durable_preimages_on_closed_channel(close_chans_before_reload: bool, 
 	check_spends!(bs_preimage_tx, as_closing_tx[0]);
 
 	if !close_chans_before_reload {
+		// Connect a dummy node to allow broadcasting the close channel event.
+		connect_dummy_node(&nodes[1]);
 		check_closed_broadcast(&nodes[1], 1, true);
+		disconnect_dummy_node(&nodes[1]);
 		check_closed_event(&nodes[1], 1, ClosureReason::CommitmentTxConfirmed, false, &[nodes[0].node.get_our_node_id()], 100000);
 	} else {
 		// While we forwarded the payment a while ago, we don't want to process events too early or
@@ -3395,7 +3398,9 @@ fn do_test_reload_mon_update_completion_actions(close_during_reload: bool) {
 		// (as learned about during the on-reload block connection).
 		nodes[0].node.force_close_broadcasting_latest_txn(&chan_id_ab, &nodes[1].node.get_our_node_id()).unwrap();
 		check_added_monitors!(nodes[0], 1);
+		connect_dummy_node(&nodes[0]);
 		check_closed_broadcast!(nodes[0], true);
+		disconnect_dummy_node(&nodes[0]);
 		check_closed_event(&nodes[0], 1, ClosureReason::HolderForceClosed, false, &[nodes[1].node.get_our_node_id()], 100_000);
 		let as_closing_tx = nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().split_off(0);
 		mine_transaction_without_consistency_checks(&nodes[1], &as_closing_tx[0]);
@@ -3410,7 +3415,9 @@ fn do_test_reload_mon_update_completion_actions(close_during_reload: bool) {
 			Event::ChannelClosed { .. } => {},
 			_ => panic!(),
 		}
+		connect_dummy_node(&nodes[1]);
 		check_closed_broadcast!(nodes[1], true);
+		disconnect_dummy_node(&nodes[1]);
 	}
 
 	// Once we run event processing the monitor should free, check that it was indeed the B<->C

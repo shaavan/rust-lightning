@@ -2683,7 +2683,9 @@ fn do_test_anchors_monitor_fixes_counterparty_payment_script_on_reload(confirm_c
 		reload_node!(nodes[1], user_config, &nodes[1].node.encode(), &[&serialized_monitor], persister, chain_monitor, node_deserialized);
 		let commitment_tx_conf_height = block_from_scid(&mine_transaction(&nodes[1], &commitment_tx));
 		check_added_monitors(&nodes[1], 1);
+		connect_dummy_node(&nodes[1]);
 		check_closed_broadcast(&nodes[1], 1, true);
+		disconnect_dummy_node(&nodes[1]);
 		commitment_tx_conf_height
 	};
 	check_closed_event!(&nodes[1], 1, ClosureReason::CommitmentTxConfirmed, false,
