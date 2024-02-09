@@ -2901,7 +2901,8 @@ pub fn fail_payment<'a, 'b, 'c>(origin_node: &Node<'a, 'b, 'c>, expected_path: &
 
 pub fn create_chanmon_cfgs(node_count: usize) -> Vec<TestChanMonCfg> {
 	let mut chan_mon_cfgs = Vec::new();
-	for i in 0..node_count {
+	let node_counts = node_count + 1;
+	for i in 0..node_counts {
 		let tx_broadcaster = test_utils::TestBroadcaster::new(Network::Testnet);
 		let fee_estimator = test_utils::TestFeeEstimator { sat_per_kw: Mutex::new(253) };
 		let chain_source = test_utils::TestChainSource::new(Network::Testnet);
@@ -2918,7 +2919,8 @@ pub fn create_chanmon_cfgs(node_count: usize) -> Vec<TestChanMonCfg> {
 }
 
 pub fn create_node_cfgs<'a>(node_count: usize, chanmon_cfgs: &'a Vec<TestChanMonCfg>) -> Vec<NodeCfg<'a>> {
-	create_node_cfgs_with_persisters(node_count, chanmon_cfgs, chanmon_cfgs.iter().map(|c| &c.persister).collect())
+	let node_counts = node_count + 1;
+	create_node_cfgs_with_persisters(node_counts, chanmon_cfgs, chanmon_cfgs.iter().map(|c| &c.persister).collect())
 }
 
 pub fn create_node_cfgs_with_persisters<'a>(node_count: usize, chanmon_cfgs: &'a Vec<TestChanMonCfg>, persisters: Vec<&'a impl Persist<TestChannelSigner>>) -> Vec<NodeCfg<'a>> {
@@ -2966,7 +2968,9 @@ pub fn test_default_channel_config() -> UserConfig {
 
 pub fn create_node_chanmgrs<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg<'b>>, node_config: &[Option<UserConfig>]) -> Vec<ChannelManager<&'a TestChainMonitor<'b>, &'b test_utils::TestBroadcaster, &'a test_utils::TestKeysInterface, &'a test_utils::TestKeysInterface, &'a test_utils::TestKeysInterface, &'b test_utils::TestFeeEstimator, &'a test_utils::TestRouter<'b>, &'b test_utils::TestLogger>> {
 	let mut chanmgrs = Vec::new();
-	for i in 0..node_count {
+	let node_counts = node_count + 1;
+	let node_configs: Vec<Option<UserConfig>> = [&node_config[..], &[None; 1]].concat();
+	for i in 0..node_counts {
 		let network = Network::Testnet;
 		let genesis_block = bitcoin::blockdata::constants::genesis_block(network);
 		let params = ChainParameters {
@@ -2974,7 +2978,7 @@ pub fn create_node_chanmgrs<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg<'b>
 			best_block: BestBlock::from_network(network),
 		};
 		let node = ChannelManager::new(cfgs[i].fee_estimator, &cfgs[i].chain_monitor, cfgs[i].tx_broadcaster, &cfgs[i].router, cfgs[i].logger, cfgs[i].keys_manager,
-			cfgs[i].keys_manager, cfgs[i].keys_manager, if node_config[i].is_some() { node_config[i].clone().unwrap() } else { test_default_channel_config() }, params, genesis_block.header.time);
+			cfgs[i].keys_manager, cfgs[i].keys_manager, if node_configs[i].is_some() { node_configs[i].clone().unwrap() } else { test_default_channel_config() }, params, genesis_block.header.time);
 		chanmgrs.push(node);
 	}
 
@@ -2986,8 +2990,9 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 	let chan_count = Rc::new(RefCell::new(0));
 	let payment_count = Rc::new(RefCell::new(0));
 	let connect_style = Rc::new(RefCell::new(ConnectStyle::random_style()));
+	let node_counts = node_count + 1;
 
-	for i in 0..node_count {
+	for i in 0..node_counts {
 		let dedicated_entropy = DedicatedEntropy(RandomBytes::new([i as u8; 32]));
 		let onion_messenger = OnionMessenger::new(
 			dedicated_entropy, cfgs[i].keys_manager, cfgs[i].logger, &cfgs[i].message_router,
@@ -3013,7 +3018,7 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 		})
 	}
 
-	for i in 0..node_count {
+	for i in 0..node_counts {
 		for j in (i+1)..node_count {
 			let node_id_i = nodes[i].node.get_our_node_id();
 			let node_id_j = nodes[j].node.get_our_node_id();
