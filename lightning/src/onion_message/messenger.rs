@@ -26,7 +26,7 @@ use crate::ln::onion_utils;
 use crate::routing::gossip::{NetworkGraph, NodeId};
 use super::packet::OnionMessageContents;
 use super::packet::ParsedOnionMessageContents;
-use super::offers::OffersMessageHandler;
+use super::offers::{OffersMessage, OffersMessageHandler};
 use super::packet::{BIG_PACKET_HOP_DATA_LEN, ForwardControlTlvs, Packet, Payload, ReceiveControlTlvs, SMALL_PACKET_HOP_DATA_LEN};
 use crate::util::logger::Logger;
 use crate::util::ser::Writeable;
@@ -241,6 +241,49 @@ impl OnionMessageRecipient {
 			OnionMessageRecipient::PendingConnection(..) => false,
 		}
 	}
+}
+
+pub trait MessageResponder {
+	fn respond(&self, response: Option<OffersMessage>, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]>);
+}
+
+impl<ES: Deref, NS: Deref, L: Deref, MR: Deref, OMH: Deref, CMH: Deref> MessageResponder
+for OnionMessenger<ES, NS, L, MR, OMH, CMH>
+where
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	L::Target: Logger,
+	MR::Target: MessageRouter,
+	OMH::Target: OffersMessageHandler,
+	CMH::Target: CustomOnionMessageHandler,
+{
+	fn respond(&self, response: Option<OffersMessage>, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]>) {
+		self.handle_onion_message_response(
+			response, reply_path, format_args!(
+				"when responding to Offers onion message with path_id {:02x?}",
+				path_id
+			)
+		);
+	}
+}
+
+pub struct OurObject<'a, T: MessageResponder> {
+	responder: &'a T,
+	pub reply_path: Option<BlindedPath>,
+	pub path_id: Option<[u8; 32]>
+}
+
+impl<'a, T: MessageResponder> OurObject<'a, T> {
+	fn new(responder: &'a T, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
+        OurObject {
+			responder,
+			reply_path,
+			path_id
+		}
+    }
+    pub fn respond(&self, response: Option<OffersMessage>) {
+        self.responder.respond(response, self.reply_path.clone(), self.path_id.clone());
+    }
 }
 
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
@@ -922,13 +965,8 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let response = self.offers_handler.handle_message(msg);
-						self.handle_onion_message_response(
-							response, reply_path, format_args!(
-								"when responding to Offers onion message with path_id {:02x?}",
-								path_id
-							)
-						);
+						let a_object = OurObject::new(self, reply_path, path_id);
+						self.offers_handler.handle_message(msg, &a_object);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let response = self.custom_handler.handle_custom_message(msg);

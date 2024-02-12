@@ -9261,6 +9261,9 @@ where
 	}
 }
 
+use crate::onion_message::messenger::MessageResponder;
+use crate::onion_message::messenger::OurObject;
+
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
 OffersMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L>
 where
@@ -9273,23 +9276,23 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage> {
+	fn handle_message<MR: MessageResponder>(&self, message: OffersMessage, our_object: &OurObject<MR>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		match message {
+		let response = match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return Some(OffersMessage::InvoiceError(error.into())),
+					Err(error) => return our_object.respond(Some(OffersMessage::InvoiceError(error.into()))),
 				};
 				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return our_object.respond(Some(OffersMessage::InvoiceError(error.into())));
 					},
 				};
 
@@ -9300,7 +9303,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return our_object.respond(Some(OffersMessage::InvoiceError(error.into())));
 					},
 				};
 
@@ -9310,7 +9313,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return our_object.respond(Some(OffersMessage::InvoiceError(error.into())));
 					},
 				};
 
@@ -9379,7 +9382,8 @@ where
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				None
 			},
-		}
+		};
+		our_object.respond(response);
 	}
 
 	fn release_pending_messages(&self) -> Vec<PendingOnionMessage<OffersMessage>> {
