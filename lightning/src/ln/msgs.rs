@@ -1585,10 +1585,15 @@ pub trait RoutingMessageHandler : MessageSendEventsProvider {
 	fn provided_init_features(&self, their_node_id: &PublicKey) -> InitFeatures;
 }
 
+use crate::onion_message::packet::OnionMessageContents;
+use crate::blinded_path::BlindedPath;
+
 /// A handler for received [`OnionMessage`]s and for providing generated ones to send.
 pub trait OnionMessageHandler: EventsProvider {
 	/// Handle an incoming `onion_message` message from the given peer.
 	fn handle_onion_message(&self, peer_node_id: &PublicKey, msg: &OnionMessage);
+
+	fn handle_onion_message_response<T: OnionMessageContents>(&self, response: Option<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments);
 
 	/// Returns the next pending onion message for the peer with the given node id.
 	fn next_onion_message_for_peer(&self, peer_node_id: PublicKey) -> Option<OnionMessage>;

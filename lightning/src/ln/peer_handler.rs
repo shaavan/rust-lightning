@@ -132,10 +132,10 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 	}
 }
 
-use crate::onion_message::messenger::MessageResponder;
-use crate::onion_message::messenger::OurObject;
+// use crate::onion_message::messenger::MessageResponder;
+use crate::onion_message::messenger::Responder;
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<T: MessageResponder>(&self, _msg: OffersMessage, our_object: &OurObject<T>) { our_object.respond(None); }
+	fn handle_message<OMH: OnionMessageHandler>(&self, _msg: OffersMessage, responder: &Responder<OMH>) { responder.respond(None); }
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;

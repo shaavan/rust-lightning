@@ -16,7 +16,7 @@ use crate::ln::msgs::{self, DecodeError, OnionMessageHandler, SocketAddress};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::{FixedLengthReader, LengthReadable, Writeable, Writer};
 use crate::util::test_utils;
-use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, OurObject, PendingOnionMessage, SendError};
+use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, Responder, PendingOnionMessage, SendError};
 use super::offers::{OffersMessage, OffersMessageHandler};
 use super::packet::{OnionMessageContents, Packet};
 
@@ -67,12 +67,12 @@ impl MessageRouter for TestMessageRouter {
 	}
 }
 
-use crate::onion_message::messenger::MessageResponder;
+// use crate::onion_message::messenger::MessageResponder;
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message<T: MessageResponder>(&self, _message: OffersMessage, our_object: &OurObject<T>) {
-		our_object.respond(None);
+	fn handle_message<OMH: OnionMessageHandler>(&self, _message: OffersMessage, responder: &Responder<OMH>) {
+		responder.respond(None);
 	}
 }
 
