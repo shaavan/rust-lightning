@@ -120,8 +120,11 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 	}
 	fn processing_queue_high(&self) -> bool { false }
 }
+
+use crate::blinded_path::BlindedPath;
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
+	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: Option<T>, _reply_path: Option<BlindedPath>, _log_suffix: fmt::Arguments) {}
 	fn next_onion_message_for_peer(&self, _peer_node_id: PublicKey) -> Option<msgs::OnionMessage> { None }
 	fn peer_connected(&self, _their_node_id: &PublicKey, _init: &msgs::Init, _inbound: bool) -> Result<(), ()> { Ok(()) }
 	fn peer_disconnected(&self, _their_node_id: &PublicKey) {}
@@ -132,10 +135,9 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 	}
 }
 
-use crate::onion_message::messenger::MessageResponder;
-use crate::onion_message::messenger::OurObject;
+use crate::onion_message::messenger::Responder;
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<T: MessageResponder>(&self, _msg: OffersMessage, our_object: &OurObject<T>) { our_object.respond(None); }
+	fn handle_message<OMH: OnionMessageHandler>(&self, _msg: OffersMessage, responder: &Responder<OMH>) { responder.respond::<OffersMessage>(None); }
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;

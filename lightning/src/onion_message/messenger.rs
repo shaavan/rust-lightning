@@ -26,7 +26,7 @@ use crate::ln::onion_utils;
 use crate::routing::gossip::{NetworkGraph, NodeId};
 use super::packet::OnionMessageContents;
 use super::packet::ParsedOnionMessageContents;
-use super::offers::{OffersMessage, OffersMessageHandler};
+use super::offers::OffersMessageHandler;
 use super::packet::{BIG_PACKET_HOP_DATA_LEN, ForwardControlTlvs, Packet, Payload, ReceiveControlTlvs, SMALL_PACKET_HOP_DATA_LEN};
 use crate::util::logger::Logger;
 use crate::util::ser::Writeable;
@@ -243,46 +243,30 @@ impl OnionMessageRecipient {
 	}
 }
 
-pub trait MessageResponder {
-	fn respond(&self, response: Option<OffersMessage>, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]>);
-}
-
-impl<ES: Deref, NS: Deref, L: Deref, MR: Deref, OMH: Deref, CMH: Deref> MessageResponder
-for OnionMessenger<ES, NS, L, MR, OMH, CMH>
-where
-	ES::Target: EntropySource,
-	NS::Target: NodeSigner,
-	L::Target: Logger,
-	MR::Target: MessageRouter,
-	OMH::Target: OffersMessageHandler,
-	CMH::Target: CustomOnionMessageHandler,
-{
-	fn respond(&self, response: Option<OffersMessage>, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]>) {
-		self.handle_onion_message_response(
-			response, reply_path, format_args!(
-				"when responding to Offers onion message with path_id {:02x?}",
-				path_id
-			)
-		);
-	}
-}
-
-pub struct OurObject<'a, T: MessageResponder> {
-	responder: &'a T,
+pub struct Responder<'a, OMH: OnionMessageHandler> {
+	messenger: &'a OMH,
 	pub reply_path: Option<BlindedPath>,
+	pub message_type: String,
 	pub path_id: Option<[u8; 32]>
 }
 
-impl<'a, T: MessageResponder> OurObject<'a, T> {
-	fn new(responder: &'a T, reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
-        OurObject {
-			responder,
+impl<'a, OMH: OnionMessageHandler> Responder<'a, OMH> {
+	fn new(messenger: &'a OMH, reply_path: Option<BlindedPath>, message_type: String, path_id: Option<[u8; 32]> ) -> Self {
+        Responder {
+			messenger,
 			reply_path,
+			message_type,
 			path_id
 		}
     }
-    pub fn respond(&self, response: Option<OffersMessage>) {
-        self.responder.respond(response, self.reply_path.clone(), self.path_id.clone());
+    pub fn respond<T: OnionMessageContents>(&self, response: Option<T>) {
+        self.messenger.handle_onion_message_response(
+			response, self.reply_path.clone(), format_args!(
+				"when responding to {} onion message with path_id {:02x?}",
+				self.message_type,
+				self.path_id.clone()
+			)
+		);
     }
 }
 
@@ -965,8 +949,8 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let a_object = OurObject::new(self, reply_path, path_id);
-						self.offers_handler.handle_message(msg, &a_object);
+						let responder = Responder::new(self, reply_path, "Offer".to_string(), path_id);
+						self.offers_handler.handle_message(msg, &responder);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let response = self.custom_handler.handle_custom_message(msg);
@@ -1006,6 +990,23 @@ where
 			},
 			Err(e) => {
 				log_error!(self.logger, "Failed to process onion message {:?}", e);
+			}
+		}
+	}
+
+	fn handle_onion_message_response<T: OnionMessageContents>(
+		&self, response: Option<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
+	) {
+		if let Some(response) = response {
+			match reply_path {
+				Some(reply_path) => {
+					let _ = self.find_path_and_enqueue_onion_message(
+						response, Destination::BlindedPath(reply_path), None, log_suffix
+					);
+				},
+				None => {
+					log_trace!(self.logger, "Missing reply path {}", log_suffix);
+				},
 			}
 		}
 	}
