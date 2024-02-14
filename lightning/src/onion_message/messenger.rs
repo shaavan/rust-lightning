@@ -527,7 +527,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, msg: Self::CustomMessage) -> Option<Self::CustomMessage>;
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, msg: Self::CustomMessage, responder: &Responder<OMH>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -953,13 +953,8 @@ where
 						self.offers_handler.handle_message(msg, &responder);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let response = self.custom_handler.handle_custom_message(msg);
-						self.handle_onion_message_response(
-							response, reply_path, format_args!(
-								"when responding to Custom onion message with path_id {:02x?}",
-								path_id
-							)
-						);
+						let responder = Responder::new(self, reply_path, "Custom".to_string(), path_id);
+						self.custom_handler.handle_custom_message(msg, &responder);
 					},
 				}
 			},

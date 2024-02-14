@@ -123,8 +123,8 @@ struct TestCustomMessageHandler {}
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, _msg: Self::CustomMessage) -> Option<Self::CustomMessage> {
-		Some(TestCustomMessage {})
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _msg: Self::CustomMessage, responder: &Responder<OMH>) {
+		responder.respond(TestCustomMessage {})
 	}
 	fn read_custom_message<R: io::Read>(&self, _message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, msgs::DecodeError> {
 		let mut buf = Vec::new();

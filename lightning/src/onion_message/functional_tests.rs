@@ -131,16 +131,18 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage) -> Option<Self::CustomMessage> {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, msg: Self::CustomMessage, responder: &Responder<OMH>) {
 		match self.expected_messages.lock().unwrap().pop_front() {
 			Some(expected_msg) => assert_eq!(expected_msg, msg),
 			None => panic!("Unexpected message: {:?}", msg),
 		}
 
-		match msg {
+		let response = match msg {
 			TestCustomMessage::Request => Some(TestCustomMessage::Response),
 			TestCustomMessage::Response => None,
-		}
+		};
+
+		responder.respond(response)
 	}
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {
 		match message_type {

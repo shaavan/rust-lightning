@@ -31,7 +31,6 @@ const INVOICE_TLV_TYPE: u64 = 66;
 const INVOICE_ERROR_TLV_TYPE: u64 = 68;
 
 use crate::onion_message::messenger::Responder;
-// use super::messenger::MessageResponder;
 
 /// A handler for an [`OnionMessage`] containing a BOLT 12 Offers message as its payload.
 ///
