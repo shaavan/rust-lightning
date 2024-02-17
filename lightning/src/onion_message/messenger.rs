@@ -263,7 +263,7 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
     }
     pub fn respond(&self, response: T) {
         self.messenger.handle_onion_message_response(
-			Some(response), self.reply_path.clone(), format_args!(
+			response, self.reply_path.clone(), format_args!(
 				"when responding to {} onion message with path_id {:02x?}",
 				self.message_type,
 				self.path_id.clone()
@@ -975,19 +975,17 @@ where
 	}
 
 	fn handle_onion_message_response<T: OnionMessageContents>(
-		&self, response: Option<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
+		&self, response: T, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
 	) {
-		if let Some(response) = response {
-			match reply_path {
-				Some(reply_path) => {
-					let _ = self.find_path_and_enqueue_onion_message(
-						response, Destination::BlindedPath(reply_path), None, log_suffix
-					);
-				},
-				None => {
-					log_trace!(self.logger, "Missing reply path {}", log_suffix);
-				},
-			}
+		match reply_path {
+			Some(reply_path) => {
+				let _ = self.find_path_and_enqueue_onion_message(
+					response, Destination::BlindedPath(reply_path), None, log_suffix
+				);
+			},
+			None => {
+				log_trace!(self.logger, "Missing reply path {}", log_suffix);
+			},
 		}
 	}
 

@@ -124,7 +124,7 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 use crate::blinded_path::BlindedPath;
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
-	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: Option<T>, _reply_path: Option<BlindedPath>, _log_suffix: fmt::Arguments) {}
+	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: Option<BlindedPath>, _log_suffix: fmt::Arguments) {}
 	fn next_onion_message_for_peer(&self, _peer_node_id: PublicKey) -> Option<msgs::OnionMessage> { None }
 	fn peer_connected(&self, _their_node_id: &PublicKey, _init: &msgs::Init, _inbound: bool) -> Result<(), ()> { Ok(()) }
 	fn peer_disconnected(&self, _their_node_id: &PublicKey) {}
