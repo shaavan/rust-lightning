@@ -9264,11 +9264,11 @@ where
 use crate::onion_message::messenger::Responder;
 use crate::ln::msgs::OnionMessageHandler;
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
-OffersMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L>
+impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
+OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, F, R, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
-	T::Target: BroadcasterInterface,
+	BI::Target: BroadcasterInterface,
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
 	SP::Target: SignerProvider,
@@ -9276,23 +9276,23 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<OMH: OnionMessageHandler>(&self, message: OffersMessage, responder: &Responder<OMH>) {
+	fn handle_message<OMH: OnionMessageHandler>(&self, responder: &Responder<OMH, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		let response = match message {
+		let response_option = match &responder.message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return responder.respond(Some(OffersMessage::InvoiceError(error.into()))),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
 				};
-				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
+				let invoice_request = match invoice_request.clone().verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return responder.respond(Some(OffersMessage::InvoiceError(error.into())));
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9303,7 +9303,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return responder.respond(Some(OffersMessage::InvoiceError(error.into())));
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9313,7 +9313,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return responder.respond(Some(OffersMessage::InvoiceError(error.into())));
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9383,7 +9383,10 @@ where
 				None
 			},
 		};
-		responder.respond(response);
+
+		if let Some(response) = response_option {
+			responder.respond(response);
+		}
 	}
 
 	fn release_pending_messages(&self) -> Vec<PendingOnionMessage<OffersMessage>> {

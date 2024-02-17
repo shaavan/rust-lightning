@@ -42,7 +42,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message<OMH: OnionMessageHandler>(&self, message: OffersMessage, responder: &Responder<OMH>);
+	fn handle_message<OMH: OnionMessageHandler>(&self, responder: &Responder<OMH, OffersMessage>);
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///

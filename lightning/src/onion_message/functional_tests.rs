@@ -70,9 +70,7 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _message: OffersMessage, responder: &Responder<OMH>) {
-		responder.respond::<OffersMessage>(None);
-	}
+	fn handle_message<OMH: OnionMessageHandler>(&self, _responder: &Responder<OMH, OffersMessage>) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -131,18 +129,20 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, msg: Self::CustomMessage, responder: &Responder<OMH>) {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder: &Responder<OMH, Self::CustomMessage>) {
 		match self.expected_messages.lock().unwrap().pop_front() {
-			Some(expected_msg) => assert_eq!(expected_msg, msg),
-			None => panic!("Unexpected message: {:?}", msg),
+			Some(expected_msg) => assert_eq!(expected_msg, responder.message),
+			None => panic!("Unexpected message: {:?}", responder.message),
 		}
 
-		let response = match msg {
+		let response_option = match responder.message {
 			TestCustomMessage::Request => Some(TestCustomMessage::Response),
 			TestCustomMessage::Response => None,
 		};
 
-		responder.respond(response)
+		if let Some(response) = response_option {
+			responder.respond(response)
+		}	
 	}
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {
 		match message_type {
