@@ -246,21 +246,12 @@ impl OnionMessageRecipient {
 pub struct Responder<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
 	messenger: &'a OMH,
 	pub message: T,
-	pub reply_path: Option<BlindedPath>,
+	pub reply_path: BlindedPath,
 	pub message_type: String,
 	pub path_id: Option<[u8; 32]>
 }
 
 impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T> {
-	fn new(messenger: &'a OMH, message: T, reply_path: Option<BlindedPath>, message_type: String, path_id: Option<[u8; 32]> ) -> Self {
-        Responder {
-			messenger,
-			message,
-			reply_path,
-			message_type,
-			path_id
-		}
-    }
     pub fn respond(&self, response: T) {
         self.messenger.handle_onion_message_response(
 			response, self.reply_path.clone(), format_args!(
@@ -269,6 +260,30 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
 				self.path_id.clone()
 			)
 		);
+    }
+}
+
+pub enum ResponderEnum<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
+	WithReplyPath(Responder<'a, OMH, T>),
+	WithoutReplyPath
+}
+
+impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ResponderEnum<'a, OMH, T> {
+	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, message_type: String, path_id: Option<[u8; 32]> ) -> Self {
+
+		match reply_path_option {
+			Some(reply_path) => {
+				ResponderEnum::WithReplyPath(Responder {
+					messenger,
+					message,
+					reply_path,
+					message_type,
+					path_id
+				})
+			}
+			None => ResponderEnum::WithoutReplyPath
+		}
+
     }
 }
 
@@ -529,7 +544,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder: &Responder<OMH, Self::CustomMessage>);
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder_enum: &ResponderEnum<OMH, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -934,12 +949,12 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let responder: Responder<_, crate::onion_message::offers::OffersMessage> = Responder::new(self, msg, reply_path, "Offer".to_string(), path_id);
-						self.offers_handler.handle_message(&responder);
+						let responder_enum = ResponderEnum::new(self, msg, reply_path, "Offer".to_string(), path_id);
+						self.offers_handler.handle_message(&responder_enum);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let responder = Responder::new(self, msg, reply_path, "Custom".to_string(), path_id);
-						self.custom_handler.handle_custom_message(&responder);
+						let responder_enum = ResponderEnum::new(self, msg, reply_path, "Custom".to_string(), path_id);
+						self.custom_handler.handle_custom_message(&responder_enum);
 					},
 				}
 			},
@@ -975,18 +990,11 @@ where
 	}
 
 	fn handle_onion_message_response<T: OnionMessageContents>(
-		&self, response: T, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
+		&self, response: T, reply_path: BlindedPath, log_suffix: fmt::Arguments
 	) {
-		match reply_path {
-			Some(reply_path) => {
-				let _ = self.find_path_and_enqueue_onion_message(
-					response, Destination::BlindedPath(reply_path), None, log_suffix
-				);
-			},
-			None => {
-				log_trace!(self.logger, "Missing reply path {}", log_suffix);
-			},
-		}
+		let _ = self.find_path_and_enqueue_onion_message(
+			response, Destination::BlindedPath(reply_path), None, log_suffix
+		);
 	}
 
 	fn peer_connected(&self, their_node_id: &PublicKey, init: &msgs::Init, _inbound: bool) -> Result<(), ()> {

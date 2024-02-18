@@ -28,7 +28,7 @@ use crate::util::ser::{VecWriter, Writeable, Writer};
 use crate::ln::peer_channel_encryptor::{PeerChannelEncryptor, NextNoiseStep, MessageBuf, MSG_BUF_ALLOC_SIZE};
 use crate::ln::wire;
 use crate::ln::wire::{Encode, Type};
-use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage};
+use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ResponderEnum};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::gossip::{NodeId, NodeAlias};
@@ -124,7 +124,7 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 use crate::blinded_path::BlindedPath;
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
-	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: Option<BlindedPath>, _log_suffix: fmt::Arguments) {}
+	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: BlindedPath, _log_suffix: fmt::Arguments) {}
 	fn next_onion_message_for_peer(&self, _peer_node_id: PublicKey) -> Option<msgs::OnionMessage> { None }
 	fn peer_connected(&self, _their_node_id: &PublicKey, _init: &msgs::Init, _inbound: bool) -> Result<(), ()> { Ok(()) }
 	fn peer_disconnected(&self, _their_node_id: &PublicKey) {}
@@ -135,13 +135,12 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 	}
 }
 
-use crate::onion_message::messenger::Responder;
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _responder: &Responder<OMH, OffersMessage>) {}
+	fn handle_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ResponderEnum<OMH, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _responder: &Responder<OMH, Self::CustomMessage>) {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ResponderEnum<OMH, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}

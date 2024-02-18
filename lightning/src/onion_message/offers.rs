@@ -30,7 +30,7 @@ const INVOICE_REQUEST_TLV_TYPE: u64 = 64;
 const INVOICE_TLV_TYPE: u64 = 66;
 const INVOICE_ERROR_TLV_TYPE: u64 = 68;
 
-use crate::onion_message::messenger::Responder;
+use crate::onion_message::messenger::ResponderEnum;
 
 /// A handler for an [`OnionMessage`] containing a BOLT 12 Offers message as its payload.
 ///
@@ -42,7 +42,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message<OMH: OnionMessageHandler>(&self, responder: &Responder<OMH, OffersMessage>);
+	fn handle_message<OMH: OnionMessageHandler>(&self, responder_enum: &ResponderEnum<OMH, OffersMessage>);
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
