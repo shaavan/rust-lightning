@@ -265,12 +265,11 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
 
 pub enum ResponderEnum<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
 	WithReplyPath(Responder<'a, OMH, T>),
-	WithoutReplyPath
+	WithoutReplyPath(T)
 }
 
 impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ResponderEnum<'a, OMH, T> {
 	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, message_type: String, path_id: Option<[u8; 32]> ) -> Self {
-
 		match reply_path_option {
 			Some(reply_path) => {
 				ResponderEnum::WithReplyPath(Responder {
@@ -281,9 +280,8 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ResponderEnum<'a, OM
 					path_id
 				})
 			}
-			None => ResponderEnum::WithoutReplyPath
+			None => ResponderEnum::WithoutReplyPath(message)
 		}
-
     }
 }
 
