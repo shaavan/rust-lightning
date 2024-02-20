@@ -154,6 +154,7 @@ impl CustomOnionMessageHandler for IgnoringMessageHandler {
 
 impl OnionMessageContents for Infallible {
 	fn tlv_type(&self) -> u64 { unreachable!(); }
+	fn msg_type(&self) -> &'static str { unreachable!(); }
 }
 
 impl Deref for IgnoringMessageHandler {

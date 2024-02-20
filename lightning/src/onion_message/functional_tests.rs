@@ -91,6 +91,9 @@ impl OnionMessageContents for TestCustomMessage {
 			TestCustomMessage::Response => CUSTOM_RESPONSE_MESSAGE_TYPE,
 		}
 	}
+	fn msg_type(&self) -> &'static str {
+		&"Custom"
+	}
 }
 
 impl Writeable for TestCustomMessage {
@@ -435,6 +438,9 @@ fn invalid_custom_message_type() {
 		fn tlv_type(&self) -> u64 {
 			// Onion message contents must have a TLV >= 64.
 			63
+		}
+		fn msg_type(&self) -> &'static str {
+			&"Invalid"
 		}
 	}
 

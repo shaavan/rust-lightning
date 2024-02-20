@@ -247,7 +247,6 @@ pub struct Responder<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
 	messenger: &'a OMH,
 	pub message: T,
 	pub reply_path: BlindedPath,
-	pub message_type: String,
 	pub path_id: Option<[u8; 32]>
 }
 
@@ -256,7 +255,7 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
         self.messenger.handle_onion_message_response(
 			response, self.reply_path.clone(), format_args!(
 				"when responding to {} onion message with path_id {:02x?}",
-				self.message_type,
+				self.message.msg_type(),
 				self.path_id.clone()
 			)
 		);
@@ -269,14 +268,13 @@ pub enum ResponderEnum<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
 }
 
 impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ResponderEnum<'a, OMH, T> {
-	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, message_type: String, path_id: Option<[u8; 32]> ) -> Self {
+	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
 				ResponderEnum::WithReplyPath(Responder {
 					messenger,
 					message,
 					reply_path,
-					message_type,
 					path_id
 				})
 			}
@@ -947,11 +945,11 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let responder_enum = ResponderEnum::new(self, msg, reply_path, "Offer".to_string(), path_id);
+						let responder_enum = ResponderEnum::new(self, msg, reply_path, path_id);
 						self.offers_handler.handle_message(&responder_enum);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let responder_enum = ResponderEnum::new(self, msg, reply_path, "Custom".to_string(), path_id);
+						let responder_enum = ResponderEnum::new(self, msg, reply_path, path_id);
 						self.custom_handler.handle_custom_message(&responder_enum);
 					},
 				}

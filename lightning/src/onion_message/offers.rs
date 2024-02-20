@@ -120,6 +120,9 @@ impl OnionMessageContents for OffersMessage {
 			OffersMessage::InvoiceError(_) => INVOICE_ERROR_TLV_TYPE,
 		}
 	}
+	fn msg_type(&self) -> &'static str {
+		&"Offers"
+	}
 }
 
 impl Writeable for OffersMessage {
