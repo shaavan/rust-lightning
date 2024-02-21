@@ -18,6 +18,7 @@
 use bitcoin::blockdata::constants::ChainHash;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey, PublicKey};
 
+use crate::blinded_path::BlindedPath;
 use crate::sign::{NodeSigner, Recipient};
 use crate::events::{EventHandler, EventsProvider, MessageSendEvent, MessageSendEventsProvider};
 use crate::ln::ChannelId;
@@ -28,7 +29,7 @@ use crate::util::ser::{VecWriter, Writeable, Writer};
 use crate::ln::peer_channel_encryptor::{PeerChannelEncryptor, NextNoiseStep, MessageBuf, MSG_BUF_ALLOC_SIZE};
 use crate::ln::wire;
 use crate::ln::wire::{Encode, Type};
-use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage};
+use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ReceivedOnionMessage};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::gossip::{NodeId, NodeAlias};
@@ -120,8 +121,10 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 	}
 	fn processing_queue_high(&self) -> bool { false }
 }
+
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
+	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: BlindedPath, _log_suffix: fmt::Arguments) {}
 	fn next_onion_message_for_peer(&self, _peer_node_id: PublicKey) -> Option<msgs::OnionMessage> { None }
 	fn peer_connected(&self, _their_node_id: &PublicKey, _init: &msgs::Init, _inbound: bool) -> Result<(), ()> { Ok(()) }
 	fn peer_disconnected(&self, _their_node_id: &PublicKey) {}
@@ -131,12 +134,13 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 		InitFeatures::empty()
 	}
 }
+
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message(&self, _msg: OffersMessage) -> Option<OffersMessage> { None }
+	fn handle_message<OMH: OnionMessageHandler>(&self, _received_onion_message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message(&self, _msg: Infallible) -> Option<Infallible> {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _received_onion_message: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
@@ -150,6 +154,7 @@ impl CustomOnionMessageHandler for IgnoringMessageHandler {
 
 impl OnionMessageContents for Infallible {
 	fn tlv_type(&self) -> u64 { unreachable!(); }
+	fn msg_type(&self) -> &'static str { unreachable!(); }
 }
 
 impl Deref for IgnoringMessageHandler {

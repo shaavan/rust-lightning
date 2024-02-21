@@ -243,6 +243,54 @@ impl OnionMessageRecipient {
 	}
 }
 
+pub struct Responder<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
+	messenger: &'a OMH,
+	pub message: T,
+	pub reply_path: BlindedPath,
+	pub path_id: Option<[u8; 32]>
+}
+
+impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T> {
+    pub fn respond(&self, response: T) {
+        self.messenger.handle_onion_message_response(
+			response, self.reply_path.clone(), format_args!(
+				"when responding to {} onion message with path_id {:02x?}",
+				self.message.msg_type(),
+				self.path_id.clone()
+			)
+		);
+    }
+}
+
+pub struct MessageWithId<T: OnionMessageContents> {
+    pub message: T,
+    pub path_id: Option<[u8; 32]>,
+}
+
+pub enum ReceivedOnionMessage<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
+	WithReplyPath(Responder<'a, OMH, T>),
+	WithoutReplyPath(MessageWithId<T>),
+}
+
+impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ReceivedOnionMessage<'a, OMH, T> {
+	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
+		match reply_path_option {
+			Some(reply_path) => {
+				ReceivedOnionMessage::WithReplyPath(Responder {
+					messenger,
+					message,
+					reply_path,
+					path_id
+				})
+			}
+			None => ReceivedOnionMessage::WithoutReplyPath(MessageWithId {
+				message,
+				path_id
+			})
+		}
+    }
+}
+
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
 ///
 /// These are obtained when released from [`OnionMessenger`]'s handlers after which they are
@@ -500,7 +548,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, msg: Self::CustomMessage) -> Option<Self::CustomMessage>;
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, received_onion_message: &ReceivedOnionMessage<OMH, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -828,23 +876,6 @@ where
 		)
 	}
 
-	fn handle_onion_message_response<T: OnionMessageContents>(
-		&self, response: Option<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
-	) {
-		if let Some(response) = response {
-			match reply_path {
-				Some(reply_path) => {
-					let _ = self.find_path_and_enqueue_onion_message(
-						response, Destination::BlindedPath(reply_path), None, log_suffix
-					);
-				},
-				None => {
-					log_trace!(self.logger, "Missing reply path {}", log_suffix);
-				},
-			}
-		}
-	}
-
 	#[cfg(test)]
 	pub(super) fn release_pending_msgs(&self) -> HashMap<PublicKey, VecDeque<OnionMessage>> {
 		let mut message_recipients = self.message_recipients.lock().unwrap();
@@ -922,22 +953,12 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let response = self.offers_handler.handle_message(msg);
-						self.handle_onion_message_response(
-							response, reply_path, format_args!(
-								"when responding to Offers onion message with path_id {:02x?}",
-								path_id
-							)
-						);
+						let received_onion_message = ReceivedOnionMessage::new(self, msg, reply_path, path_id);
+						self.offers_handler.handle_message(&received_onion_message);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let response = self.custom_handler.handle_custom_message(msg);
-						self.handle_onion_message_response(
-							response, reply_path, format_args!(
-								"when responding to Custom onion message with path_id {:02x?}",
-								path_id
-							)
-						);
+						let received_onion_message = ReceivedOnionMessage::new(self, msg, reply_path, path_id);
+						self.custom_handler.handle_custom_message(&received_onion_message);
 					},
 				}
 			},
@@ -970,6 +991,14 @@ where
 				log_error!(self.logger, "Failed to process onion message {:?}", e);
 			}
 		}
+	}
+
+	fn handle_onion_message_response<T: OnionMessageContents>(
+		&self, response: T, reply_path: BlindedPath, log_suffix: fmt::Arguments
+	) {
+		let _ = self.find_path_and_enqueue_onion_message(
+			response, Destination::BlindedPath(reply_path), None, log_suffix
+		);
 	}
 
 	fn peer_connected(&self, their_node_id: &PublicKey, init: &msgs::Init, _inbound: bool) -> Result<(), ()> {
