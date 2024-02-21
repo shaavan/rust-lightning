@@ -32,10 +32,12 @@ use bitcoin::blockdata::script::ScriptBuf;
 use bitcoin::hash_types::Txid;
 
 use crate::blinded_path::payment::{BlindedPaymentTlvs, ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::BlindedPath;
 use crate::ln::{ChannelId, PaymentPreimage, PaymentHash, PaymentSecret};
 use crate::ln::features::{ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 use crate::ln::onion_utils;
 use crate::onion_message;
+use crate::onion_message::packet::OnionMessageContents;
 use crate::sign::{NodeSigner, Recipient};
 
 use crate::prelude::*;
@@ -1584,9 +1586,6 @@ pub trait RoutingMessageHandler : MessageSendEventsProvider {
 	/// Note that this method is called before [`Self::peer_connected`].
 	fn provided_init_features(&self, their_node_id: &PublicKey) -> InitFeatures;
 }
-
-use crate::onion_message::packet::OnionMessageContents;
-use crate::blinded_path::BlindedPath;
 
 /// A handler for received [`OnionMessage`]s and for providing generated ones to send.
 pub trait OnionMessageHandler: EventsProvider {

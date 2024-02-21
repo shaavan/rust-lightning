@@ -147,7 +147,7 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 			if let Some(response) = response_option {
 				responder.respond(response)
 			}
-		}	
+		}
 	}
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {
 		match message_type {

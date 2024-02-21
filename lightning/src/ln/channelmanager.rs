@@ -75,6 +75,8 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+use super::msgs::OnionMessageHandler;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::routing::router::DefaultRouter,
@@ -9260,8 +9262,6 @@ where
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 }
-
-use crate::ln::msgs::OnionMessageHandler;
 
 impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
 OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, F, R, L>

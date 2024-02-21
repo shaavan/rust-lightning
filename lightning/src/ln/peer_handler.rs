@@ -18,6 +18,7 @@
 use bitcoin::blockdata::constants::ChainHash;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey, PublicKey};
 
+use crate::blinded_path::BlindedPath;
 use crate::sign::{NodeSigner, Recipient};
 use crate::events::{EventHandler, EventsProvider, MessageSendEvent, MessageSendEventsProvider};
 use crate::ln::ChannelId;
@@ -121,7 +122,6 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 	fn processing_queue_high(&self) -> bool { false }
 }
 
-use crate::blinded_path::BlindedPath;
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
 	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: BlindedPath, _log_suffix: fmt::Arguments) {}
