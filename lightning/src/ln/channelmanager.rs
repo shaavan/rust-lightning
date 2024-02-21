@@ -64,7 +64,7 @@ use crate::offers::merkle::SignError;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ResponderEnum};
+use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ReceivedOnionMessage};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::WriteableEcdsaChannelSigner;
@@ -9275,11 +9275,11 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<OMH: OnionMessageHandler>(&self, responder_enum: &ResponderEnum<OMH, OffersMessage>) {
+	fn handle_message<OMH: OnionMessageHandler>(&self, responder_enum: &ReceivedOnionMessage<OMH, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		if let ResponderEnum::WithReplyPath(responder) = responder_enum {
+		if let ReceivedOnionMessage::WithReplyPath(responder) = responder_enum {
 			let response_option = match &responder.message {
 				OffersMessage::InvoiceRequest(invoice_request) => {
 					let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(

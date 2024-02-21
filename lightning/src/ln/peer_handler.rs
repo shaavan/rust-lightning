@@ -28,7 +28,7 @@ use crate::util::ser::{VecWriter, Writeable, Writer};
 use crate::ln::peer_channel_encryptor::{PeerChannelEncryptor, NextNoiseStep, MessageBuf, MSG_BUF_ALLOC_SIZE};
 use crate::ln::wire;
 use crate::ln::wire::{Encode, Type};
-use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ResponderEnum};
+use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ReceivedOnionMessage};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::gossip::{NodeId, NodeAlias};
@@ -136,11 +136,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 }
 
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ResponderEnum<OMH, OffersMessage>) {}
+	fn handle_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ReceivedOnionMessage<OMH, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ResponderEnum<OMH, Self::CustomMessage>) {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}

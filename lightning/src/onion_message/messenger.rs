@@ -262,23 +262,31 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
     }
 }
 
-pub enum ResponderEnum<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
-	WithReplyPath(Responder<'a, OMH, T>),
-	WithoutReplyPath(T)
+pub struct MessageWithId<T: OnionMessageContents> {
+    pub message: T,
+    pub path_id: Option<[u8; 32]>,
 }
 
-impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ResponderEnum<'a, OMH, T> {
+pub enum ReceivedOnionMessage<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
+	WithReplyPath(Responder<'a, OMH, T>),
+	WithoutReplyPath(MessageWithId<T>),
+}
+
+impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> ReceivedOnionMessage<'a, OMH, T> {
 	fn new(messenger: &'a OMH, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
-				ResponderEnum::WithReplyPath(Responder {
+				ReceivedOnionMessage::WithReplyPath(Responder {
 					messenger,
 					message,
 					reply_path,
 					path_id
 				})
 			}
-			None => ResponderEnum::WithoutReplyPath(message)
+			None => ReceivedOnionMessage::WithoutReplyPath(MessageWithId {
+				message,
+				path_id
+			})
 		}
     }
 }
@@ -540,7 +548,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder_enum: &ResponderEnum<OMH, Self::CustomMessage>);
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder_enum: &ReceivedOnionMessage<OMH, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -945,11 +953,11 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let responder_enum = ResponderEnum::new(self, msg, reply_path, path_id);
+						let responder_enum = ReceivedOnionMessage::new(self, msg, reply_path, path_id);
 						self.offers_handler.handle_message(&responder_enum);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let responder_enum = ResponderEnum::new(self, msg, reply_path, path_id);
+						let responder_enum = ReceivedOnionMessage::new(self, msg, reply_path, path_id);
 						self.custom_handler.handle_custom_message(&responder_enum);
 					},
 				}

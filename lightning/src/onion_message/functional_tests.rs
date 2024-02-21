@@ -16,7 +16,7 @@ use crate::ln::msgs::{self, DecodeError, OnionMessageHandler, SocketAddress};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::{FixedLengthReader, LengthReadable, Writeable, Writer};
 use crate::util::test_utils;
-use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, ResponderEnum, SendError};
+use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, ReceivedOnionMessage, SendError};
 use super::offers::{OffersMessage, OffersMessageHandler};
 use super::packet::{OnionMessageContents, Packet};
 
@@ -70,7 +70,7 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ResponderEnum<OMH, OffersMessage>) {}
+	fn handle_message<OMH: OnionMessageHandler>(&self, _responder_enum: &ReceivedOnionMessage<OMH, OffersMessage>) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,8 +132,8 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder_enum: &ResponderEnum<OMH, Self::CustomMessage>) {
-		if let ResponderEnum::WithReplyPath(responder) = responder_enum {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, responder_enum: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
+		if let ReceivedOnionMessage::WithReplyPath(responder) = responder_enum {
 			match self.expected_messages.lock().unwrap().pop_front() {
 				Some(expected_msg) => assert_eq!(expected_msg, responder.message),
 				None => panic!("Unexpected message: {:?}", responder.message),
