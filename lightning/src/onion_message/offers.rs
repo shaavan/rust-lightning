@@ -12,7 +12,7 @@
 use core::convert::TryFrom;
 use core::fmt;
 use crate::io::{self, Read};
-use crate::ln::msgs::DecodeError;
+use crate::ln::msgs::{DecodeError, OnionMessageHandler};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::invoice::Bolt12Invoice;
@@ -30,6 +30,8 @@ const INVOICE_REQUEST_TLV_TYPE: u64 = 64;
 const INVOICE_TLV_TYPE: u64 = 66;
 const INVOICE_ERROR_TLV_TYPE: u64 = 68;
 
+use crate::onion_message::messenger::ReceivedOnionMessage;
+
 /// A handler for an [`OnionMessage`] containing a BOLT 12 Offers message as its payload.
 ///
 /// [`OnionMessage`]: crate::ln::msgs::OnionMessage
@@ -40,7 +42,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage>;
+	fn handle_message<OMH: OnionMessageHandler>(&self, received_onion_message: &ReceivedOnionMessage<OMH, OffersMessage>);
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
@@ -117,6 +119,9 @@ impl OnionMessageContents for OffersMessage {
 			OffersMessage::Invoice(_) => INVOICE_TLV_TYPE,
 			OffersMessage::InvoiceError(_) => INVOICE_ERROR_TLV_TYPE,
 		}
+	}
+	fn msg_type(&self) -> &'static str {
+		&"Offers"
 	}
 }
 
