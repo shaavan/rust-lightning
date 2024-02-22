@@ -136,11 +136,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 }
 
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _received_onion_message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
+	fn handle_message<OMH: OnionMessageHandler>(&self, _message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _received_onion_message: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
+	fn handle_custom_message<OMH: OnionMessageHandler>(&self, _message: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
