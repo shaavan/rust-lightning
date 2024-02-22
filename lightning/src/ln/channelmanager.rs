@@ -9429,12 +9429,12 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<OMH: OnionMessageHandler>(&self, received_onion_message: &ReceivedOnionMessage<OMH, OffersMessage>) {
+	fn handle_message<OMH: OnionMessageHandler>(&self, message: &ReceivedOnionMessage<OMH, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		if let ReceivedOnionMessage::WithReplyPath(responder) = received_onion_message {
-			let response_option = match &responder.message {
+		if let ReceivedOnionMessage::WithReplyPath{message, responder} = message {
+			let response_option = match &message {
 				OffersMessage::InvoiceRequest(invoice_request) => {
 					let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 						&invoice_request
