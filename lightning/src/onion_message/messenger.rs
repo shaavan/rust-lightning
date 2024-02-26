@@ -250,7 +250,7 @@ pub struct Responder<'a, OMH: OnionMessageHandler, T: OnionMessageContents> {
 	pub path_id: Option<[u8; 32]>,
 	// This phantom Data is used to ensure that we use T in the struct definition
 	// This allow us to ensure at compile time that the received message type and response type will be same
-	_phantom: std::marker::PhantomData<T>
+	_phantom: core::marker::PhantomData<T>
 }
 
 impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T> {
@@ -258,11 +258,11 @@ impl<'a, OMH: OnionMessageHandler, T: OnionMessageContents> Responder<'a, OMH, T
 		// Utilising the fact that we ensure at compile time that
 		// received message type, and response type will be same
 		let message_type = T::msg_type(&response);
-        self.messenger.handle_onion_message_response(
+		self.messenger.handle_onion_message_response(
 			response, self.reply_path.clone(), format_args!(
 				"when responding to {} onion message with path_id {:02x?}",
 				message_type,
-				self.path_id.clone()
+				self.path_id
 			)
 		);
     }
