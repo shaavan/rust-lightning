@@ -11,6 +11,7 @@
 
 use core::convert::TryFrom;
 use core::fmt;
+use crate::blinded_path::BlindedPath;
 use crate::io::{self, Read};
 use crate::ln::msgs::{DecodeError, OnionMessageHandler};
 use crate::offers::invoice_error::InvoiceError;
@@ -42,7 +43,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message<OMH: OnionMessageHandler>(&self, message: &ReceivedOnionMessage<OMH, OffersMessage>);
+	fn handle_message<F: Fn(OffersMessage, BlindedPath, &str, Option<[u8; 32]>)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>);
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///

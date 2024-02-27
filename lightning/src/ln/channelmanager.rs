@@ -9263,19 +9263,19 @@ where
 	}
 }
 
-impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
-OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, F, R, L>
+impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, FE: Deref, R: Deref, L: Deref>
+OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, FE, R, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	BI::Target: BroadcasterInterface,
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
 	SP::Target: SignerProvider,
-	F::Target: FeeEstimator,
+	FE::Target: FeeEstimator,
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<OMH: OnionMessageHandler>(&self, message: &ReceivedOnionMessage<OMH, OffersMessage>) {
+	fn handle_message<F: Fn(OffersMessage, BlindedPath, &str, Option<[u8; 32]>)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
