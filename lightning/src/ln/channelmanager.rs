@@ -75,7 +75,6 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
-use super::msgs::OnionMessageHandler;
 
 #[cfg(not(c_bindings))]
 use {
@@ -9263,23 +9262,23 @@ where
 	}
 }
 
-impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
-OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, F, R, L>
+impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, FE: Deref, R: Deref, L: Deref>
+OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, FE, R, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	BI::Target: BroadcasterInterface,
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
 	SP::Target: SignerProvider,
-	F::Target: FeeEstimator,
+	FE::Target: FeeEstimator,
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<OMH: OnionMessageHandler>(&self, message: &ReceivedOnionMessage<OMH, OffersMessage>) {
+	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		if let ReceivedOnionMessage::WithReplyPath{message, responder} = message {
+		if let ReceivedOnionMessage::WithReplyPath{responder, message, path_id: _} = message {
 			let response_option = match &message {
 				OffersMessage::InvoiceRequest(invoice_request) => {
 					let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
