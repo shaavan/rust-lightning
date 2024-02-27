@@ -70,7 +70,7 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message<OMH: OnionMessageHandler>(&self, _message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
+	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, _message: &ReceivedOnionMessage<F, OffersMessage>) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -132,8 +132,8 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message<OMH: OnionMessageHandler>(&self, message: &ReceivedOnionMessage<OMH, Self::CustomMessage>) {
-		if let ReceivedOnionMessage::WithReplyPath{message, responder} = message {
+	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>) {
+		if let ReceivedOnionMessage::WithReplyPath{responder, message, path_id: _} = message {
 			match self.expected_messages.lock().unwrap().pop_front() {
 				Some(expected_msg) => assert_eq!(expected_msg, *message),
 				None => panic!("Unexpected message: {:?}", message),
