@@ -136,11 +136,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 }
 
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<F: Fn(OffersMessage, BlindedPath, &str, Option<[u8; 32]>)>(&self, _message: &ReceivedOnionMessage<F, OffersMessage>) {}
+	fn handle_message<F: Fn(OffersMessage, &BlindedPath)>(&self, _message: &ReceivedOnionMessage<F, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath, &str, Option<[u8; 32]>)>(&self, _message: &ReceivedOnionMessage<F, Self::CustomMessage>) {
+	fn handle_custom_message<F: Fn(Self::CustomMessage, &BlindedPath)>(&self, _message: &ReceivedOnionMessage<F, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
