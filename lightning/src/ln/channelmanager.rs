@@ -64,7 +64,7 @@ use crate::offers::merkle::SignError;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ReceivedOnionMessage};
+use crate::onion_message::messenger::{self, new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ReceivedOnionMessage};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::WriteableEcdsaChannelSigner;
@@ -9274,24 +9274,24 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<F: Fn(OffersMessage, &BlindedPath)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
+	fn handle_message<F: Fn(OffersMessage)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		if let ReceivedOnionMessage::WithReplyPath{responder, message, path_id: _} = message {
+		if let ReceivedOnionMessage::WithReplyPath{messenger_function, reply_path, message, path_id: _} = message {
 			let response_option = match &message {
 				OffersMessage::InvoiceRequest(invoice_request) => {
 					let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 						&invoice_request
 					) {
 						Ok(amount_msats) => amount_msats,
-						Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+						Err(error) => return (messenger_function)(OffersMessage::InvoiceError(error.into())),
 					};
 					let invoice_request = match invoice_request.clone().verify(expanded_key, secp_ctx) {
 						Ok(invoice_request) => invoice_request,
 						Err(()) => {
 							let error = Bolt12SemanticError::InvalidMetadata;
-							return responder.respond(OffersMessage::InvoiceError(error.into()));
+							return (messenger_function)(OffersMessage::InvoiceError(error.into()));
 						},
 					};
 
@@ -9302,7 +9302,7 @@ where
 						Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 						Err(()) => {
 							let error = Bolt12SemanticError::InvalidAmount;
-							return responder.respond(OffersMessage::InvoiceError(error.into()));
+							return (messenger_function)(OffersMessage::InvoiceError(error.into()));
 						},
 					};
 
@@ -9312,7 +9312,7 @@ where
 						Ok(payment_paths) => payment_paths,
 						Err(()) => {
 							let error = Bolt12SemanticError::MissingPaths;
-							return responder.respond(OffersMessage::InvoiceError(error.into()));
+							return (messenger_function)(OffersMessage::InvoiceError(error.into()));
 						},
 					};
 
@@ -9384,7 +9384,7 @@ where
 			};
 
 			if let Some(response) = response_option {
-				responder.respond(response);
+				(messenger_function)(response);
 			}
 		}
 	}
