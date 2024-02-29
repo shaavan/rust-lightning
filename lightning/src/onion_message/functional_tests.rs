@@ -135,7 +135,7 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	fn handle_custom_message<F: Fn(Self::CustomMessage)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>) {
 		if let ReceivedOnionMessage::WithReplyPath{responder, message, path_id: _} = message {
 			match self.expected_messages.lock().unwrap().pop_front() {
-				Some(expected_msg) => assert_eq!(expected_msg, **message),
+				Some(expected_msg) => assert_eq!(expected_msg, *message),
 				None => panic!("Unexpected message: {:?}", message),
 			}
 

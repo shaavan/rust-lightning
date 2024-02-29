@@ -263,20 +263,20 @@ impl<F: Fn(T), T: OnionMessageContents> Responder<F, T> {
 }
 
 /// A enum to handle received [`OnionMessage`]
-pub enum ReceivedOnionMessage<'a, F: Fn(T), T: OnionMessageContents> {
+pub enum ReceivedOnionMessage<F: Fn(T), T: OnionMessageContents> {
 	WithReplyPath {
 		responder: Responder<F, T>,
-		message: &'a T,
+		message: T,
 		path_id: Option<[u8; 32]>
 	},
 	WithoutReplyPath {
-		message: &'a T,
+		message: T,
 		path_id: Option<[u8; 32]>,
 	},
 }
 
-impl<'a, F: Fn(T), T: OnionMessageContents> ReceivedOnionMessage<'a, F, T> {
-	fn new(messenger_function: F, message: &'a T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
+impl<F: Fn(T), T: OnionMessageContents> ReceivedOnionMessage<F, T> {
+	fn new(messenger_function: F, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
 				let responder = Responder {
@@ -960,11 +960,13 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
+						// message_type is defined outside of closure to avoid burrowing
+						// issues when using msg for creating ReceivedOnionMessage::New()
+						let message_type = msg.msg_type();
 						let closure = |response| {
 							// This closure will only be called if reply_path does exist.
 							// So reply_path must exist when the closure is called.
 							assert!(reply_path.is_some());
-							let message_type = msg.msg_type();
 							self.handle_onion_message_response(
 								response, reply_path.clone().unwrap(), format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
@@ -973,15 +975,17 @@ where
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, &msg, reply_path.clone(), path_id);
+						let message = ReceivedOnionMessage::new(closure, msg, reply_path.clone(), path_id);
 						self.offers_handler.handle_message(&message);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
+						// message_type is defined outside of closure to avoid burrowing
+						// issues when using msg for creating ReceivedOnionMessage::New()
+						let message_type = msg.msg_type();
 						let closure = |response| {
 							// This closure will only be called if reply_path does exist.
 							// So reply_path must exist when the closure is called.
 							assert!(reply_path.clone().is_some());
-							let message_type = msg.msg_type();
 							self.handle_onion_message_response(
 								response, reply_path.clone().unwrap(), format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
@@ -990,7 +994,7 @@ where
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, &msg, reply_path.clone(), path_id);
+						let message = ReceivedOnionMessage::new(closure, msg, reply_path.clone(), path_id);
 						self.custom_handler.handle_custom_message(&message);
 					},
 				}
