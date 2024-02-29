@@ -245,11 +245,27 @@ impl OnionMessageRecipient {
 	}
 }
 
+/// A struct handling response to an [`OnionMessage`]
+pub struct Responder<F: Fn(T, &BlindedPath), T: OnionMessageContents> {
+	messenger_function: F,
+	pub reply_path: BlindedPath,
+	// This phantom Data is used to ensure that we use T in the struct definition
+	// This allow us to ensure at compile time that the received message type and response type will be same
+	_phantom: PhantomData<T>
+}
+
+impl<F: Fn(T, &BlindedPath), T: OnionMessageContents> Responder<F, T> {
+    pub fn respond(&self, response: T) {
+		// Utilising the fact that we ensure at compile time that
+		// received message type, and response type will be same
+		(self.messenger_function)(response, &self.reply_path);
+    }
+}
+
 /// A enum to handle received [`OnionMessage`]
-pub enum ReceivedOnionMessage<'a, F: Fn(T), T: OnionMessageContents> {
+pub enum ReceivedOnionMessage<'a, F: Fn(T, &BlindedPath), T: OnionMessageContents> {
 	WithReplyPath {
-		messenger_function: F,
-		reply_path: &'a BlindedPath,
+		responder: Responder<F, T>,
 		message: &'a T,
 		path_id: Option<[u8; 32]>
 	},
@@ -259,13 +275,17 @@ pub enum ReceivedOnionMessage<'a, F: Fn(T), T: OnionMessageContents> {
 	},
 }
 
-impl<'a, F: Fn(T), T: OnionMessageContents> ReceivedOnionMessage<'a, F, T> {
-	fn new(messenger_function: F, message: &'a T, reply_path_option: &'a Option<BlindedPath>, path_id: Option<[u8; 32]>) -> Self {
+impl<'a, F: Fn(T, &BlindedPath), T: OnionMessageContents> ReceivedOnionMessage<'a, F, T> {
+	fn new(messenger_function: F, message: &'a T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
-				ReceivedOnionMessage::WithReplyPath {
+				let responder = Responder {
 					messenger_function,
 					reply_path,
+					_phantom: PhantomData
+				};
+				ReceivedOnionMessage::WithReplyPath {
+					responder,
 					message,
 					path_id
 				}
@@ -535,7 +555,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message<F: Fn(Self::CustomMessage)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>);
+	fn handle_custom_message<F: Fn(Self::CustomMessage, &BlindedPath)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -940,37 +960,31 @@ where
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let closure = |response| {
-							// This closure will only be called if reply_path does exist.
-							// So reply_path must exist when the closure is called.
-							assert!(reply_path.is_some());
+						let closure = |response, reply_path: &BlindedPath| {
 							let message_type = msg.msg_type();
 							self.handle_onion_message_response(
-								response, reply_path.clone().unwrap(), format_args!(
+								response, reply_path.clone(), format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
 									message_type,
 									path_id
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, &msg, &reply_path, path_id);
+						let message = ReceivedOnionMessage::new(closure, &msg, reply_path, path_id);
 						self.offers_handler.handle_message(&message);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let closure = |response| {
-							// This closure will only be called if reply_path does exist.
-							// So reply_path must exist when the closure is called.
-							assert!(reply_path.is_some());
+						let closure = |response, reply_path: &BlindedPath| {
 							let message_type = msg.msg_type();
 							self.handle_onion_message_response(
-								response, reply_path.clone().unwrap(), format_args!(
+								response, reply_path.clone(), format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
 									message_type,
 									path_id
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, &msg, &reply_path, path_id);
+						let message = ReceivedOnionMessage::new(closure, &msg, reply_path, path_id);
 						self.custom_handler.handle_custom_message(&message);
 					},
 				}
