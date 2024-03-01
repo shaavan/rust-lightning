@@ -244,27 +244,53 @@ impl OnionMessageRecipient {
 	}
 }
 
+pub trait ResponderTrait<T: OnionMessageContents>{
+	fn trait_respond(&self, response: T, reply_path: BlindedPath);
+}
+
+impl<F, T> ResponderTrait<T> for F
+where
+T: OnionMessageContents,
+F: Fn(T, BlindedPath)
+{
+	fn trait_respond(&self, response: T, reply_path: BlindedPath) {
+		self(response, reply_path)
+	}
+}
+
 /// A struct handling response to an [`OnionMessage`]
-pub struct Responder<F: Fn(T, BlindedPath), T: OnionMessageContents> {
-	messenger_function: F,
+pub struct Responder<R, T>
+where
+R: ResponderTrait<T>,
+T: OnionMessageContents
+{
+	messenger_function: R,
 	pub reply_path: BlindedPath,
 	// This phantom Data is used to ensure that we use T in the struct definition
 	// This allow us to ensure at compile time that the received message type and response type will be same
 	_phantom: PhantomData<T>
 }
 
-impl<F: Fn(T, BlindedPath), T: OnionMessageContents> Responder<F, T> {
+impl<R, T> Responder<R, T>
+where
+R: ResponderTrait<T>,
+T: OnionMessageContents
+{
     pub fn respond(&self, response: T) {
 		// Utilising the fact that we ensure at compile time that
 		// received message type, and response type will be same
-		(self.messenger_function)(response, self.reply_path.clone());
-    }
+		self.messenger_function.trait_respond(response, self.reply_path.clone())
+	}
 }
 
 /// A enum to handle received [`OnionMessage`]
-pub enum ReceivedOnionMessage<F: Fn(T, BlindedPath), T: OnionMessageContents> {
+pub enum ReceivedOnionMessage<R, T>
+where
+R: ResponderTrait<T>,
+T: OnionMessageContents
+{
 	WithReplyPath {
-		responder: Responder<F, T>,
+		responder: Responder<R, T>,
 		message: T,
 		path_id: Option<[u8; 32]>
 	},
@@ -274,8 +300,12 @@ pub enum ReceivedOnionMessage<F: Fn(T, BlindedPath), T: OnionMessageContents> {
 	},
 }
 
-impl<F: Fn(T, BlindedPath), T: OnionMessageContents> ReceivedOnionMessage<F, T> {
-	fn new(messenger_function: F, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
+impl<R, T> ReceivedOnionMessage<R, T>
+where
+R: ResponderTrait<T>,
+T: OnionMessageContents
+{
+	fn new(messenger_function: R, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
 				let responder = Responder {
