@@ -96,7 +96,7 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message<F: Fn(OffersMessage)>(&self, _message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
+	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, _message: &ReceivedOnionMessage<OMH, OffersMessage>) {}
 }
 
 #[derive(Debug)]
@@ -121,7 +121,7 @@ struct TestCustomMessageHandler {}
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message<F: Fn(Self::CustomMessage), T: OnionMessageContents>(&self, message: &ReceivedOnionMessage<F, T>) {
+	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath), T: OnionMessageContents>(&self, message: &ReceivedOnionMessage<F, T>) {
 		if let ReceivedOnionMessage::WithReplyPath({_, responder}) = message {
 			responder.respond(TestCustomMessage {})
 		}

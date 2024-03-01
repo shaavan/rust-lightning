@@ -19,7 +19,6 @@ use crate::blinded_path::BlindedPath;
 use crate::blinded_path::message::{advance_path_by_one, ForwardTlvs, ReceiveTlvs};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
-use crate::onion_message::offers::OffersMessage;
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::ln::features::{InitFeatures, NodeFeatures};
 use crate::ln::msgs::{self, OnionMessage, OnionMessageHandler, SocketAddress};
@@ -246,7 +245,7 @@ impl OnionMessageRecipient {
 }
 
 /// A struct handling response to an [`OnionMessage`]
-pub struct Responder<F: Fn(T), T: OnionMessageContents> {
+pub struct Responder<F: Fn(T, BlindedPath), T: OnionMessageContents> {
 	messenger_function: F,
 	pub reply_path: BlindedPath,
 	// This phantom Data is used to ensure that we use T in the struct definition
@@ -254,16 +253,16 @@ pub struct Responder<F: Fn(T), T: OnionMessageContents> {
 	_phantom: PhantomData<T>
 }
 
-impl<F: Fn(T), T: OnionMessageContents> Responder<F, T> {
+impl<F: Fn(T, BlindedPath), T: OnionMessageContents> Responder<F, T> {
     pub fn respond(&self, response: T) {
 		// Utilising the fact that we ensure at compile time that
 		// received message type, and response type will be same
-		(self.messenger_function)(response);
+		(self.messenger_function)(response, self.reply_path.clone());
     }
 }
 
 /// A enum to handle received [`OnionMessage`]
-pub enum ReceivedOnionMessage<F: Fn(T), T: OnionMessageContents> {
+pub enum ReceivedOnionMessage<F: Fn(T, BlindedPath), T: OnionMessageContents> {
 	WithReplyPath {
 		responder: Responder<F, T>,
 		message: T,
@@ -275,7 +274,7 @@ pub enum ReceivedOnionMessage<F: Fn(T), T: OnionMessageContents> {
 	},
 }
 
-impl<F: Fn(T), T: OnionMessageContents> ReceivedOnionMessage<F, T> {
+impl<F: Fn(T, BlindedPath), T: OnionMessageContents> ReceivedOnionMessage<F, T> {
 	fn new(messenger_function: F, message: T, reply_path_option: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
 		match reply_path_option {
 			Some(reply_path) => {
@@ -555,7 +554,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message<F: Fn(Self::CustomMessage)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>);
+	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, message: &ReceivedOnionMessage<F, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -963,38 +962,32 @@ where
 						// message_type is defined outside of closure to avoid burrowing
 						// issues when using msg for creating ReceivedOnionMessage::New()
 						let message_type = msg.msg_type();
-						let closure = |response| {
-							// This closure will only be called if reply_path does exist.
-							// So reply_path must exist when the closure is called.
-							assert!(reply_path.is_some());
+						let closure = |response, reply_path: BlindedPath| {
 							self.handle_onion_message_response(
-								response, reply_path.clone().unwrap(), format_args!(
+								response, reply_path, format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
 									message_type,
 									path_id
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, msg, reply_path.clone(), path_id);
+						let message = ReceivedOnionMessage::new(closure, msg, reply_path, path_id);
 						self.offers_handler.handle_message(&message);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						// message_type is defined outside of closure to avoid burrowing
 						// issues when using msg for creating ReceivedOnionMessage::New()
 						let message_type = msg.msg_type();
-						let closure = |response| {
-							// This closure will only be called if reply_path does exist.
-							// So reply_path must exist when the closure is called.
-							assert!(reply_path.clone().is_some());
+						let closure = |response, reply_path: BlindedPath| {
 							self.handle_onion_message_response(
-								response, reply_path.clone().unwrap(), format_args!(
+								response, reply_path, format_args!(
 									"when responding to {} onion message with path_id {:02x?}",
 									message_type,
 									path_id
 								)
 							);
 						};
-						let message = ReceivedOnionMessage::new(closure, msg, reply_path.clone(), path_id);
+						let message = ReceivedOnionMessage::new(closure, msg, reply_path, path_id);
 						self.custom_handler.handle_custom_message(&message);
 					},
 				}

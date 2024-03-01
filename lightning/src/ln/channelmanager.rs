@@ -9274,7 +9274,7 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<F: Fn(OffersMessage)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
+	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, message: &ReceivedOnionMessage<F, OffersMessage>) {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
