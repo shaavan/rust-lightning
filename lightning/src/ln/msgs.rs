@@ -32,12 +32,10 @@ use bitcoin::blockdata::script::ScriptBuf;
 use bitcoin::hash_types::Txid;
 
 use crate::blinded_path::payment::{BlindedPaymentTlvs, ForwardTlvs, ReceiveTlvs};
-use crate::blinded_path::BlindedPath;
 use crate::ln::{ChannelId, PaymentPreimage, PaymentHash, PaymentSecret};
 use crate::ln::features::{ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 use crate::ln::onion_utils;
 use crate::onion_message;
-use crate::onion_message::packet::OnionMessageContents;
 use crate::sign::{NodeSigner, Recipient};
 
 use crate::prelude::*;

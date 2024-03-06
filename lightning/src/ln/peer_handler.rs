@@ -18,7 +18,6 @@
 use bitcoin::blockdata::constants::ChainHash;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey, PublicKey};
 
-use crate::blinded_path::BlindedPath;
 use crate::sign::{NodeSigner, Recipient};
 use crate::events::{EventHandler, EventsProvider, MessageSendEvent, MessageSendEventsProvider};
 use crate::ln::ChannelId;
@@ -29,7 +28,7 @@ use crate::util::ser::{VecWriter, Writeable, Writer};
 use crate::ln::peer_channel_encryptor::{PeerChannelEncryptor, NextNoiseStep, MessageBuf, MSG_BUF_ALLOC_SIZE};
 use crate::ln::wire;
 use crate::ln::wire::{Encode, Type};
-use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ReceivedOnionMessage};
+use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ReceivedOnionMessage, RespondFunction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::gossip::{NodeId, NodeAlias};
@@ -135,11 +134,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 }
 
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, _message: ReceivedOnionMessage<F, OffersMessage>) {}
+	fn handle_message<R: RespondFunction<OffersMessage>>(&self, _message: ReceivedOnionMessage<R, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, _message: ReceivedOnionMessage<F, Self::CustomMessage>) {
+	fn handle_custom_message<R: RespondFunction<Self::CustomMessage>>(&self, _message: ReceivedOnionMessage<R, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
