@@ -124,7 +124,6 @@ impl RoutingMessageHandler for IgnoringMessageHandler {
 
 impl OnionMessageHandler for IgnoringMessageHandler {
 	fn handle_onion_message(&self, _their_node_id: &PublicKey, _msg: &msgs::OnionMessage) {}
-	fn handle_onion_message_response<T: OnionMessageContents>(&self, _response: T, _reply_path: BlindedPath, _log_suffix: fmt::Arguments) {}
 	fn next_onion_message_for_peer(&self, _peer_node_id: PublicKey) -> Option<msgs::OnionMessage> { None }
 	fn peer_connected(&self, _their_node_id: &PublicKey, _init: &msgs::Init, _inbound: bool) -> Result<(), ()> { Ok(()) }
 	fn peer_disconnected(&self, _their_node_id: &PublicKey) {}
@@ -136,11 +135,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 }
 
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, _message: &ReceivedOnionMessage<F, OffersMessage>) {}
+	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, _message: ReceivedOnionMessage<F, OffersMessage>) {}
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, _message: &ReceivedOnionMessage<F, Self::CustomMessage>) {
+	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, _message: ReceivedOnionMessage<F, Self::CustomMessage>) {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
