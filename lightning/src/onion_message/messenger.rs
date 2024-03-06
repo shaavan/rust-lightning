@@ -593,7 +593,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message<F: Fn(Self::CustomMessage, BlindedPath)>(&self, message: ReceivedOnionMessage<F, Self::CustomMessage>);
+	fn handle_custom_message<R: RespondFunction<Self::CustomMessage>>(&self, message: ReceivedOnionMessage<R, Self::CustomMessage>);
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.

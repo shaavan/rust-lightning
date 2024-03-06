@@ -65,7 +65,7 @@ use crate::offers::merkle::SignError;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ReceivedOnionMessage};
+use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ReceivedOnionMessage, RespondFunction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::WriteableEcdsaChannelSigner;
@@ -9428,7 +9428,8 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message<F: Fn(OffersMessage, BlindedPath)>(&self, message: ReceivedOnionMessage<F, OffersMessage>) {
+	fn handle_message<RF: RespondFunction<OffersMessage>>(&self, message: ReceivedOnionMessage<RF, OffersMessage>)
+	{
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
