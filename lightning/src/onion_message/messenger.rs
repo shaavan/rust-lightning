@@ -398,6 +398,22 @@ where
 	}
 }
 
+enum ResponseInstruction<T: OnionMessageContents> {
+	HaveResponse {
+		response: T,
+	},
+	NoResponse
+}
+
+impl<T: OnionMessageContents> ResponseInstruction<T> {
+    fn respond(response: T) -> ResponseInstruction<T> {
+		// if condition
+        ResponseInstruction::HaveResponse { response }
+		// else
+		// ResponseInstruction::NoResponse
+    }
+}
+
 /// A path for sending an [`OnionMessage`].
 #[derive(Clone)]
 pub struct OnionMessagePath {
