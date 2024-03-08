@@ -398,7 +398,7 @@ where
 	}
 }
 
-enum ResponseInstruction<T: OnionMessageContents> {
+pub enum ResponseInstruction<T: OnionMessageContents> {
 	HaveResponse {
 		response: T,
 	},
@@ -406,7 +406,7 @@ enum ResponseInstruction<T: OnionMessageContents> {
 }
 
 impl<T: OnionMessageContents> ResponseInstruction<T> {
-    fn respond(response: T) -> ResponseInstruction<T> {
+    pub fn respond(response: T) -> ResponseInstruction<T> {
 		// if condition
         ResponseInstruction::HaveResponse { response }
 		// else
@@ -528,7 +528,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, msg: Self::CustomMessage) -> Option<Self::CustomMessage>;
+	fn handle_custom_message(&self, msg: Self::CustomMessage) -> ResponseInstruction<Self::CustomMessage>;
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -858,9 +858,9 @@ where
 	}
 
 	fn handle_onion_message_response<T: OnionMessageContents>(
-		&self, response: Option<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
+		&self, response: ResponseInstruction<T>, reply_path: Option<BlindedPath>, log_suffix: fmt::Arguments
 	) {
-		if let Some(response) = response {
+		if let ResponseInstruction::HaveResponse { response } = response {
 			match reply_path {
 				Some(reply_path) => {
 					let _ = self.find_path_and_enqueue_onion_message(
