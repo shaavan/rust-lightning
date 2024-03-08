@@ -16,7 +16,7 @@ use crate::ln::msgs::{self, DecodeError, OnionMessageHandler, SocketAddress};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::{FixedLengthReader, LengthReadable, Writeable, Writer};
 use crate::util::test_utils;
-use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, SendError};
+use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, ResponseInstruction, SendError};
 use super::offers::{OffersMessage, OffersMessageHandler};
 use super::packet::{OnionMessageContents, Packet};
 
@@ -70,8 +70,8 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: OffersMessage) -> Option<OffersMessage> {
-		None
+	fn handle_message(&self, _message: OffersMessage) -> ResponseInstruction<OffersMessage> {
+		ResponseInstruction::NoResponse
 	}
 }
 
@@ -131,15 +131,15 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage) -> Option<Self::CustomMessage> {
+	fn handle_custom_message(&self, msg: Self::CustomMessage) -> ResponseInstruction<Self::CustomMessage> {
 		match self.expected_messages.lock().unwrap().pop_front() {
 			Some(expected_msg) => assert_eq!(expected_msg, msg),
 			None => panic!("Unexpected message: {:?}", msg),
 		}
 
 		match msg {
-			TestCustomMessage::Request => Some(TestCustomMessage::Response),
-			TestCustomMessage::Response => None,
+			TestCustomMessage::Request => ResponseInstruction::respond(TestCustomMessage::Response),
+			TestCustomMessage::Response => ResponseInstruction::NoResponse,
 		}
 	}
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {

@@ -64,7 +64,7 @@ use crate::offers::merkle::SignError;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{Destination, MessageRouter, PendingOnionMessage, new_pending_onion_message};
+use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::WriteableEcdsaChannelSigner;
@@ -9273,23 +9273,23 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		match message {
+		let mut response = match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return Some(OffersMessage::InvoiceError(error.into())),
+					Err(error) => return ResponseInstruction::respond(OffersMessage::InvoiceError(error.into())),
 				};
 				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return ResponseInstruction::respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9300,7 +9300,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return ResponseInstruction::respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9310,7 +9310,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return Some(OffersMessage::InvoiceError(error.into()));
+						return ResponseInstruction::respond(OffersMessage::InvoiceError(error.into()));
 					},
 				};
 
@@ -9379,6 +9379,11 @@ where
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				None
 			},
+		};
+		if let Some(response) = response {
+			ResponseInstruction::respond(response)
+		} else {
+			ResponseInstruction::NoResponse
 		}
 	}
 

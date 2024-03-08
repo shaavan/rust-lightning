@@ -16,6 +16,7 @@ use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::invoice::Bolt12Invoice;
+use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12ParseError;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::util::logger::Logger;
@@ -24,6 +25,8 @@ use crate::util::ser::{Readable, ReadableArgs, Writeable, Writer};
 use crate::onion_message::messenger::PendingOnionMessage;
 
 use crate::prelude::*;
+
+use super::messenger::ResponseInstruction;
 
 // TLV record types for the `onionmsg_tlv` TLV stream as defined in BOLT 4.
 const INVOICE_REQUEST_TLV_TYPE: u64 = 64;
@@ -40,7 +43,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage>;
+	fn handle_message(&self, message: OffersMessage) -> ResponseInstruction<OffersMessage>;
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///

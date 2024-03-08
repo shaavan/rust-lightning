@@ -28,7 +28,7 @@ use crate::util::ser::{VecWriter, Writeable, Writer};
 use crate::ln::peer_channel_encryptor::{PeerChannelEncryptor, NextNoiseStep, MessageBuf, MSG_BUF_ALLOC_SIZE};
 use crate::ln::wire;
 use crate::ln::wire::{Encode, Type};
-use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage};
+use crate::onion_message::messenger::{CustomOnionMessageHandler, PendingOnionMessage, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::gossip::{NodeId, NodeAlias};
@@ -132,11 +132,11 @@ impl OnionMessageHandler for IgnoringMessageHandler {
 	}
 }
 impl OffersMessageHandler for IgnoringMessageHandler {
-	fn handle_message(&self, _msg: OffersMessage) -> Option<OffersMessage> { None }
+	fn handle_message(&self, _msg: OffersMessage) -> ResponseInstruction<OffersMessage> { ResponseInstruction::NoResponse }
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message(&self, _msg: Infallible) -> Option<Infallible> {
+	fn handle_custom_message(&self, _msg: Infallible) -> ResponseInstruction<Self::CustomMessage> {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
