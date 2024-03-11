@@ -21,7 +21,7 @@ use crate::onion_message::packet::OnionMessageContents;
 use crate::util::logger::Logger;
 use crate::util::ser::{Readable, ReadableArgs, Writeable, Writer};
 #[cfg(not(c_bindings))]
-use crate::onion_message::messenger::{PendingOnionMessage, ReceivedOnionMessage, RespondFunction};
+use crate::onion_message::messenger::{PendingOnionMessage, ReceivedOnionMessage, ResponseInstruction};
 
 use crate::prelude::*;
 
@@ -40,7 +40,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message<R: RespondFunction<OffersMessage>>(&self, message: ReceivedOnionMessage<R, OffersMessage>);
+	fn handle_message(&self, message: ReceivedOnionMessage<OffersMessage>) -> ResponseInstruction<OffersMessage>;
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
