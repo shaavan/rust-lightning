@@ -3036,6 +3036,25 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 		}
 	}
 
+	// // Connect a dummy node to each node in the network
+	// for i in 0..node_count {
+	// 	let node_id_dummy = PublicKey::from_slice(&[2; 33]).unwrap();
+
+	// 	let mut dummy_init_features = InitFeatures::empty();
+	// 	dummy_init_features.set_static_remote_key_required();
+
+	// 	let init_dummy = msgs::Init {
+	// 		features: dummy_init_features,
+	// 		networks: None,
+	// 		remote_network_address: None
+	// 	};
+
+	// 	nodes[i].node.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
+	// 	// // nodes[j].node.peer_connected(&node_id_i, &init_i, false).unwrap();
+	// 	nodes[i].onion_messenger.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
+	// 	// // nodes[j].onion_messenger.peer_connected(&node_id_i, &init_i, false).unwrap();
+	// }
+
 	nodes
 }
 
@@ -3152,13 +3171,14 @@ pub fn check_preimage_claim<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, prev_txn: &Vec<
 pub fn handle_announce_close_broadcast_events<'a, 'b, 'c>(nodes: &Vec<Node<'a, 'b, 'c>>, a: usize, b: usize, needs_err_handle: bool, expected_error: &str)  {
 	let events_1 = nodes[a].node.get_and_clear_pending_msg_events();
 	assert_eq!(events_1.len(), 2);
-	let as_update = match events_1[0] {
+	println!("------\n\n{:?}\n\n-------", &events_1);
+	let as_update = match events_1[1] {
 		MessageSendEvent::BroadcastChannelUpdate { ref msg } => {
 			msg.clone()
 		},
 		_ => panic!("Unexpected event"),
 	};
-	match events_1[1] {
+	match events_1[0] {
 		MessageSendEvent::HandleError { node_id, action: msgs::ErrorAction::SendErrorMessage { ref msg } } => {
 			assert_eq!(node_id, nodes[b].node.get_our_node_id());
 			assert_eq!(msg.data, expected_error);
@@ -3178,14 +3198,14 @@ pub fn handle_announce_close_broadcast_events<'a, 'b, 'c>(nodes: &Vec<Node<'a, '
 
 	let events_2 = nodes[b].node.get_and_clear_pending_msg_events();
 	assert_eq!(events_2.len(), if needs_err_handle { 1 } else { 2 });
-	let bs_update = match events_2[0] {
+	let bs_update = match events_2[1] {
 		MessageSendEvent::BroadcastChannelUpdate { ref msg } => {
 			msg.clone()
 		},
 		_ => panic!("Unexpected event"),
 	};
 	if !needs_err_handle {
-		match events_2[1] {
+		match events_2[0] {
 			MessageSendEvent::HandleError { node_id, action: msgs::ErrorAction::SendErrorMessage { ref msg } } => {
 				assert_eq!(node_id, nodes[a].node.get_our_node_id());
 				assert_eq!(msg.data, expected_error);

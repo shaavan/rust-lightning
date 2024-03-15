@@ -8241,12 +8241,14 @@ where
 			let mut is_some_peer_connected = false;
 			let mut pending_events = Vec::new();
 			let per_peer_state = self.per_peer_state.read().unwrap();
+			// println!("-----------\n\nTotal number of peers: {}\n\n-------------", per_peer_state.len());
 			for (_cp_id, peer_state_mutex) in per_peer_state.iter() {
 				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 				let peer_state = &mut *peer_state_lock;
 				if peer_state.pending_msg_events.len() > 0 {
 					pending_events.append(&mut peer_state.pending_msg_events);
 				}
+				// println!("Peer connection status: {}", peer_state.is_connected);
 				if peer_state.is_connected {
 					is_some_peer_connected = true
 				}
@@ -12176,6 +12178,14 @@ mod tests {
 		nodes[1].node.handle_open_channel(&nodes[0].node.get_our_node_id(), &open_channel_msg);
 		assert_eq!(get_err_msg(&nodes[1], &nodes[0].node.get_our_node_id()).channel_id,
 			open_channel_msg.temporary_channel_id);
+	}
+
+	#[test]
+	fn test_network_creation() {
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let _nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 	}
 
 	#[test]
