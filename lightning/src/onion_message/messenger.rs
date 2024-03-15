@@ -244,7 +244,14 @@ impl OnionMessageRecipient {
 	}
 }
 
-/// A enum to handle received [`OnionMessage`]
+/// The `ReceivedOnionMessage` enum represents messages received by the `OnionMessageHandler`.
+///
+/// This enum encompasses two variants:
+/// - `WithReplyPath`: Represents a message that can be responded to, including the original message,
+///   an optional path id, and a responder.
+/// - `WithoutReplyPath`: Represents a message without the possibility of response because of absence of a reply_path.
+///   It contains the original message and an optional path id.
+///
 pub enum ReceivedOnionMessage<T>
 where
 	T: OnionMessageContents
@@ -284,15 +291,15 @@ where
     }
 }
 
-/// A struct handling response to an [`OnionMessage`]
+/// The `Responder` struct manages responses to [`ReceivedOnionMessage`]
 pub struct Responder<T>
 where
 	T: OnionMessageContents
 {
 	reply_path: BlindedPath,
 
-	// This phantom Data is used to ensure that we use T in the struct definition
-	// This allow us to ensure at compile time that the received message type and response type will be same
+	/// A marker field, ensuring compile-time enforcement that the message
+	/// type used in the struct definition matches the response type.
 	_phantom: PhantomData<T>
 }
 
@@ -308,6 +315,11 @@ where
 	}
 }
 
+/// The `ResponseInstruction` enum represents instructions for responding to [`ReceivedOnionMessage`].
+///
+/// It includes the following variants:
+/// - `HaveResponse`: Indicates that a response is available, and can be sent using reply_path.
+/// - `NoResponse`: Indicates that no response is available.
 pub enum ResponseInstruction<T: OnionMessageContents> {
 	HaveResponse {
 		response: T,

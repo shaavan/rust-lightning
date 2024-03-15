@@ -9416,15 +9416,15 @@ where
 	}
 }
 
-impl<M: Deref, BI: Deref, ES: Deref, NS: Deref, SP: Deref, FE: Deref, R: Deref, L: Deref>
-OffersMessageHandler for ChannelManager<M, BI, ES, NS, SP, FE, R, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
+OffersMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
-	BI::Target: BroadcasterInterface,
+	T::Target: BroadcasterInterface,
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
 	SP::Target: SignerProvider,
-	FE::Target: FeeEstimator,
+	F::Target: FeeEstimator,
 	R::Target: Router,
 	L::Target: Logger,
 {
@@ -9546,7 +9546,6 @@ where
 					None
 				},
 			};
-
 			if let Some(response) = response_option {
 				responder.respond(response)
 			} else {
