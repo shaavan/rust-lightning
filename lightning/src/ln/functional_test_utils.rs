@@ -1535,6 +1535,7 @@ macro_rules! check_warn_msg {
 /// check whether an error message event has occurred.
 pub fn check_closed_broadcast(node: &Node, num_channels: usize, with_error_msg: bool) -> Vec<msgs::ErrorMessage> {
 	let msg_events = node.node.get_and_clear_pending_msg_events();
+	println!("{:?}", msg_events);
 	assert_eq!(msg_events.len(), if with_error_msg { num_channels * 2 } else { num_channels });
 	msg_events.into_iter().filter_map(|msg_event| {
 		match msg_event {
@@ -3056,6 +3057,91 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 	// }
 
 	nodes
+}
+
+pub fn create_network_with_dummy<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeCfg<'c>>, chan_mgrs: &'a Vec<ChannelManager<&'b TestChainMonitor<'c>, &'c test_utils::TestBroadcaster, &'b test_utils::TestKeysInterface, &'b test_utils::TestKeysInterface, &'b test_utils::TestKeysInterface, &'c test_utils::TestFeeEstimator, &'c test_utils::TestRouter, &'c test_utils::TestLogger>>) -> Vec<Node<'a, 'b, 'c>> {
+	let mut nodes = Vec::new();
+	let chan_count = Rc::new(RefCell::new(0));
+	let payment_count = Rc::new(RefCell::new(0));
+	let connect_style = Rc::new(RefCell::new(ConnectStyle::random_style()));
+
+	for i in 0..node_count {
+		let dedicated_entropy = DedicatedEntropy(RandomBytes::new([i as u8; 32]));
+		let onion_messenger = OnionMessenger::new(
+			dedicated_entropy, cfgs[i].keys_manager, cfgs[i].logger, &cfgs[i].message_router,
+			&chan_mgrs[i], IgnoringMessageHandler {},
+		);
+		let gossip_sync = P2PGossipSync::new(cfgs[i].network_graph.as_ref(), None, cfgs[i].logger);
+		let wallet_source = Arc::new(test_utils::TestWalletSource::new(SecretKey::from_slice(&[i as u8 + 1; 32]).unwrap()));
+		nodes.push(Node{
+			chain_source: cfgs[i].chain_source, tx_broadcaster: cfgs[i].tx_broadcaster,
+			fee_estimator: cfgs[i].fee_estimator, router: &cfgs[i].router,
+			chain_monitor: &cfgs[i].chain_monitor, keys_manager: &cfgs[i].keys_manager,
+			node: &chan_mgrs[i], network_graph: cfgs[i].network_graph.as_ref(), gossip_sync,
+			node_seed: cfgs[i].node_seed, onion_messenger, network_chan_count: chan_count.clone(),
+			network_payment_count: payment_count.clone(), logger: cfgs[i].logger,
+			blocks: Arc::clone(&cfgs[i].tx_broadcaster.blocks),
+			connect_style: Rc::clone(&connect_style),
+			override_init_features: Rc::clone(&cfgs[i].override_init_features),
+			wallet_source: Arc::clone(&wallet_source),
+			bump_tx_handler: BumpTransactionEventHandler::new(
+				cfgs[i].tx_broadcaster, Arc::new(Wallet::new(Arc::clone(&wallet_source), cfgs[i].logger)),
+				&cfgs[i].keys_manager, cfgs[i].logger,
+			),
+		})
+	}
+
+	for i in 0..node_count {
+		for j in (i+1)..node_count {
+			let node_id_i = nodes[i].node.get_our_node_id();
+			let node_id_j = nodes[j].node.get_our_node_id();
+
+			let init_i = msgs::Init {
+				features: nodes[i].init_features(&node_id_j),
+				networks: None,
+				remote_network_address: None,
+			};
+			let init_j = msgs::Init {
+				features: nodes[j].init_features(&node_id_i),
+				networks: None,
+				remote_network_address: None,
+			};
+
+			nodes[i].node.peer_connected(&node_id_j, &init_j, true).unwrap();
+			nodes[j].node.peer_connected(&node_id_i, &init_i, false).unwrap();
+			nodes[i].onion_messenger.peer_connected(&node_id_j, &init_j, true).unwrap();
+			nodes[j].onion_messenger.peer_connected(&node_id_i, &init_i, false).unwrap();
+		}
+	}
+
+	// Connect a dummy node to each node in the network
+	for i in 0..node_count {
+		connect_dummy_node(&nodes[i]);
+	}
+
+	nodes
+}
+
+pub fn connect_dummy_node<'a, 'b: 'a, 'c: 'b>(node: &Node<'a, 'b, 'c>) {
+	let node_id_dummy = PublicKey::from_slice(&[2; 33]).unwrap();
+
+	let mut dummy_init_features = InitFeatures::empty();
+	dummy_init_features.set_static_remote_key_required();
+
+	let init_dummy = msgs::Init {
+		features: dummy_init_features,
+		networks: None,
+		remote_network_address: None
+	};
+
+	node.node.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
+	// // nodes[j].node.peer_connected(&node_id_i, &init_i, false).unwrap();
+	node.onion_messenger.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
+	// // nod
+}
+
+pub fn disconnect_dummy_node<'a, 'b: 'a, 'c: 'b>(node: &Node<'a, 'b, 'c>) {
+	node.node.peer_disconnected(&PublicKey::from_slice(&[2; 33]).unwrap());
 }
 
 // Note that the following only works for CLTV values up to 128

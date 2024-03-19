@@ -2272,7 +2272,9 @@ fn channel_monitor_network_test() {
 	// Simple case with no pending HTLCs:
 	nodes[1].node.force_close_broadcasting_latest_txn(&chan_1.2, &nodes[0].node.get_our_node_id()).unwrap();
 	check_added_monitors!(nodes[1], 1);
+	connect_dummy_node(&nodes[1]);
 	check_closed_broadcast!(nodes[1], true);
+	disconnect_dummy_node(&nodes[1]);
 	check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed, [nodes[0].node.get_our_node_id()], 100000);
 	{
 		let mut node_txn = test_txn_broadcast(&nodes[1], &chan_1, None, HTLCType::NONE);
@@ -4583,7 +4585,7 @@ fn test_static_spendable_outputs_preimage_tx() {
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let nodes = create_network_with_dummy(2, &node_cfgs, &node_chanmgrs);
 
 	// Create some initial channels
 	let chan_1 = create_announced_chan_between_nodes(&nodes, 0, 1);
@@ -4630,7 +4632,7 @@ fn test_static_spendable_outputs_timeout_tx() {
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let nodes = create_network_with_dummy(2, &node_cfgs, &node_chanmgrs);
 
 	// Create some initial channels
 	let chan_1 = create_announced_chan_between_nodes(&nodes, 0, 1);
@@ -4979,7 +4981,7 @@ fn test_duplicate_payment_hash_one_failure_one_success() {
 	config.channel_config.forwarding_fee_base_msat = 196;
 	let node_chanmgrs = create_node_chanmgrs(4, &node_cfgs,
 		&[Some(config.clone()), Some(config.clone()), Some(config.clone()), Some(config.clone())]);
-	let mut nodes = create_network(4, &node_cfgs, &node_chanmgrs);
+	let mut nodes = create_network_with_dummy(4, &node_cfgs, &node_chanmgrs);
 
 	create_announced_chan_between_nodes(&nodes, 0, 1);
 	let chan_2 = create_announced_chan_between_nodes(&nodes, 1, 2);
@@ -5140,7 +5142,7 @@ fn test_dynamic_spendable_outputs_local_htlc_success_tx() {
 		MessageSendEvent::UpdateHTLCs { .. } => {},
 		_ => panic!("Unexpected event"),
 	}
-	match events[1] {
+	match events[2] {
 		MessageSendEvent::BroadcastChannelUpdate { .. } => {},
 		_ => panic!("Unexepected event"),
 	}
@@ -7319,7 +7321,7 @@ fn test_announce_disable_channels() {
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let nodes = create_network_with_dummy(2, &node_cfgs, &node_chanmgrs);
 
 	create_announced_chan_between_nodes(&nodes, 0, 1);
 	create_announced_chan_between_nodes(&nodes, 1, 0);
