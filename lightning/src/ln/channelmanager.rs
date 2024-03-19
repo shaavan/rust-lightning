@@ -6613,7 +6613,6 @@ where
 				debug_assert!(false);
 				MsgHandleErrInternal::send_err_msg_no_close(format!("Can't find a peer matching the passed counterparty node_id {}", counterparty_node_id), msg.channel_id)
 			})?;
-		let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
 		let (tx, chan_option, shutdown_result) = {
 			let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 			let peer_state = &mut *peer_state_lock;
@@ -6651,6 +6650,7 @@ where
 		}
 		if let Some(ChannelPhase::Funded(chan)) = chan_option {
 			if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
+				let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
 				pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
 					msg: update
 				});
@@ -11880,6 +11880,8 @@ mod tests {
 		let (announcement, nodes_0_update, nodes_1_update) = create_chan_between_nodes_with_value_b(&nodes[0], &nodes[1], &channel_ready);
 		update_nodes_with_chan_announce(&nodes, 0, 1, &announcement, &nodes_0_update, &nodes_1_update);
 
+		// ------
+
 		nodes[0].node.close_channel(&channel_id, &nodes[1].node.get_our_node_id()).unwrap();
 		nodes[1].node.handle_shutdown(&nodes[0].node.get_our_node_id(), &get_event_msg!(nodes[0], MessageSendEvent::SendShutdown, nodes[1].node.get_our_node_id()));
 		let nodes_1_shutdown = get_event_msg!(nodes[1], MessageSendEvent::SendShutdown, nodes[0].node.get_our_node_id());
@@ -11896,6 +11898,8 @@ mod tests {
 			assert_eq!(nodes_0_lock.len(), 1);
 			assert!(nodes_0_lock.contains_key(&funding_output));
 		}
+
+		// ----------
 
 		{
 			// At this stage, `nodes[1]` has proposed a fee for the closing transaction in the
