@@ -250,7 +250,7 @@ fn do_test_unconf_chan(reload_node: bool, reorg_after_reload: bool, use_funding_
 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
 	let nodes_0_deserialized;
 
-	let mut nodes = create_network_with_dummy(2, &node_cfgs, &node_chanmgrs);
+	let mut nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 	*nodes[0].connect_style.borrow_mut() = connect_style;
 
 	let chan_conf_height = core::cmp::max(nodes[0].best_block_info().1 + 1, nodes[1].best_block_info().1 + 1);
@@ -352,7 +352,9 @@ fn do_test_unconf_chan(reload_node: bool, reorg_after_reload: bool, use_funding_
 	check_added_monitors!(nodes[0], 1);
 	let expected_err = "Funding transaction was un-confirmed. Locked at 6 confs, now have 0 confs.";
 	if reorg_after_reload || !reload_node {
+		connect_dummy_node(&nodes[0]);
 		handle_announce_close_broadcast_events(&nodes, 0, 1, true, "Channel closed because of an exception: Funding transaction was un-confirmed. Locked at 6 confs, now have 0 confs.");
+		disconnect_dummy_node(&nodes[0]);
 		check_added_monitors!(nodes[1], 1);
 		check_closed_event!(nodes[1], 1, ClosureReason::CounterpartyForceClosed { peer_msg: UntrustedString(format!("Channel closed because of an exception: {}", expected_err)) }
 			, [nodes[0].node.get_our_node_id()], 100000);

@@ -2634,14 +2634,14 @@ fn do_test_anchors_monitor_fixes_counterparty_payment_script_on_reload(confirm_c
 	// channel upon deserialization.
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
-	let persister;
-	let chain_monitor;
+	let persister: test_utils::TestPersister;
+	let chain_monitor: test_utils::TestChainMonitor<'_>;
 	let mut user_config = test_default_channel_config();
 	user_config.channel_handshake_config.negotiate_anchors_zero_fee_htlc_tx = true;
 	user_config.manually_accept_inbound_channels = true;
 	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[Some(user_config), Some(user_config)]);
-	let node_deserialized;
-	let mut nodes = create_network_with_dummy(2, &node_cfgs, &node_chanmgrs);
+	let node_deserialized: crate::ln::channelmanager::ChannelManager<&test_utils::TestChainMonitor<'_>, &test_utils::TestBroadcaster, &test_utils::TestKeysInterface, &test_utils::TestKeysInterface, &test_utils::TestKeysInterface, &test_utils::TestFeeEstimator, &test_utils::TestRouter<'_>, &test_utils::TestLogger>;
+	let mut nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 
 	let (_, _, chan_id, funding_tx) = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 100_000, 50_000_000);
 
@@ -2683,7 +2683,9 @@ fn do_test_anchors_monitor_fixes_counterparty_payment_script_on_reload(confirm_c
 		reload_node!(nodes[1], user_config, &nodes[1].node.encode(), &[&serialized_monitor], persister, chain_monitor, node_deserialized);
 		let commitment_tx_conf_height = block_from_scid(&mine_transaction(&nodes[1], &commitment_tx));
 		check_added_monitors(&nodes[1], 1);
+		connect_dummy_node(&nodes[1]);
 		check_closed_broadcast(&nodes[1], 1, true);
+		disconnect_dummy_node(&nodes[1]);
 		commitment_tx_conf_height
 	};
 	check_closed_event!(&nodes[1], 1, ClosureReason::CommitmentTxConfirmed, false,
