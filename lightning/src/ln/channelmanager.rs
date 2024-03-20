@@ -8241,14 +8241,12 @@ where
 			let mut is_some_peer_connected = false;
 			let mut pending_events = Vec::new();
 			let per_peer_state = self.per_peer_state.read().unwrap();
-			// println!("-----------\n\nTotal number of peers: {}\n\n-------------", per_peer_state.len());
 			for (_cp_id, peer_state_mutex) in per_peer_state.iter() {
 				let mut peer_state_lock = peer_state_mutex.lock().unwrap();
 				let peer_state = &mut *peer_state_lock;
 				if peer_state.pending_msg_events.len() > 0 {
 					pending_events.append(&mut peer_state.pending_msg_events);
 				}
-				// println!("Peer connection status: {}", peer_state.is_connected);
 				if peer_state.is_connected {
 					is_some_peer_connected = true
 				}
@@ -11880,8 +11878,6 @@ mod tests {
 		let (announcement, nodes_0_update, nodes_1_update) = create_chan_between_nodes_with_value_b(&nodes[0], &nodes[1], &channel_ready);
 		update_nodes_with_chan_announce(&nodes, 0, 1, &announcement, &nodes_0_update, &nodes_1_update);
 
-		// ------
-
 		nodes[0].node.close_channel(&channel_id, &nodes[1].node.get_our_node_id()).unwrap();
 		nodes[1].node.handle_shutdown(&nodes[0].node.get_our_node_id(), &get_event_msg!(nodes[0], MessageSendEvent::SendShutdown, nodes[1].node.get_our_node_id()));
 		let nodes_1_shutdown = get_event_msg!(nodes[1], MessageSendEvent::SendShutdown, nodes[0].node.get_our_node_id());
@@ -11898,9 +11894,6 @@ mod tests {
 			assert_eq!(nodes_0_lock.len(), 1);
 			assert!(nodes_0_lock.contains_key(&funding_output));
 		}
-
-		// ----------
-
 		{
 			// At this stage, `nodes[1]` has proposed a fee for the closing transaction in the
 			// `handle_closing_signed` call above. As `nodes[1]` has not yet received the signature
@@ -12182,14 +12175,6 @@ mod tests {
 		nodes[1].node.handle_open_channel(&nodes[0].node.get_our_node_id(), &open_channel_msg);
 		assert_eq!(get_err_msg(&nodes[1], &nodes[0].node.get_our_node_id()).channel_id,
 			open_channel_msg.temporary_channel_id);
-	}
-
-	#[test]
-	fn test_network_creation() {
-		let chanmon_cfgs = create_chanmon_cfgs(2);
-		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
-		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
-		let _nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 	}
 
 	#[test]

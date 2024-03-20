@@ -1535,7 +1535,6 @@ macro_rules! check_warn_msg {
 /// check whether an error message event has occurred.
 pub fn check_closed_broadcast(node: &Node, num_channels: usize, with_error_msg: bool) -> Vec<msgs::ErrorMessage> {
 	let msg_events = node.node.get_and_clear_pending_msg_events();
-	println!("{:?}", msg_events);
 	assert_eq!(msg_events.len(), if with_error_msg { num_channels * 2 } else { num_channels });
 	msg_events.into_iter().filter_map(|msg_event| {
 		match msg_event {
@@ -3037,25 +3036,6 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 		}
 	}
 
-	// // Connect a dummy node to each node in the network
-	// for i in 0..node_count {
-	// 	let node_id_dummy = PublicKey::from_slice(&[2; 33]).unwrap();
-
-	// 	let mut dummy_init_features = InitFeatures::empty();
-	// 	dummy_init_features.set_static_remote_key_required();
-
-	// 	let init_dummy = msgs::Init {
-	// 		features: dummy_init_features,
-	// 		networks: None,
-	// 		remote_network_address: None
-	// 	};
-
-	// 	nodes[i].node.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
-	// 	// // nodes[j].node.peer_connected(&node_id_i, &init_i, false).unwrap();
-	// 	nodes[i].onion_messenger.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
-	// 	// // nodes[j].onion_messenger.peer_connected(&node_id_i, &init_i, false).unwrap();
-	// }
-
 	nodes
 }
 
@@ -3072,9 +3052,7 @@ pub fn connect_dummy_node<'a, 'b: 'a, 'c: 'b>(node: &Node<'a, 'b, 'c>) {
 	};
 
 	node.node.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
-	// // nodes[j].node.peer_connected(&node_id_i, &init_i, false).unwrap();
 	node.onion_messenger.peer_connected(&node_id_dummy, &init_dummy, true).unwrap();
-	// // nod
 }
 
 pub fn disconnect_dummy_node<'a, 'b: 'a, 'c: 'b>(node: &Node<'a, 'b, 'c>) {
@@ -3194,7 +3172,6 @@ pub fn check_preimage_claim<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, prev_txn: &Vec<
 pub fn handle_announce_close_broadcast_events<'a, 'b, 'c>(nodes: &Vec<Node<'a, 'b, 'c>>, a: usize, b: usize, needs_err_handle: bool, expected_error: &str)  {
 	let events_1 = nodes[a].node.get_and_clear_pending_msg_events();
 	assert_eq!(events_1.len(), 2);
-	println!("------\n\n{:?}\n\n-------", &events_1);
 	let as_update = match events_1[1] {
 		MessageSendEvent::BroadcastChannelUpdate { ref msg } => {
 			msg.clone()

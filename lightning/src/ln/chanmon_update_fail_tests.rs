@@ -3282,7 +3282,7 @@ fn do_test_durable_preimages_on_closed_channel(close_chans_before_reload: bool, 
 	check_spends!(bs_preimage_tx, as_closing_tx[0]);
 
 	if !close_chans_before_reload {
-		// Connect a dummy node with node[1] so that the messages later in the test can be appropriately broadcasted
+		// Connect a dummy node to allow broadcasting the close channel event.
 		connect_dummy_node(&nodes[1]);
 		check_closed_broadcast(&nodes[1], 1, true);
 		disconnect_dummy_node(&nodes[1]);

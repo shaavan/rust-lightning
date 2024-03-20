@@ -5060,7 +5060,6 @@ fn test_duplicate_payment_hash_one_failure_one_success() {
 	check_added_monitors!(nodes[2], 2);
 	check_closed_event!(nodes[2], 1, ClosureReason::CommitmentTxConfirmed, [nodes[1].node.get_our_node_id()], 100000);
 	let events = nodes[2].node.get_and_clear_pending_msg_events();
-	println!("{:?}", events);
 	match events[0] {
 		MessageSendEvent::UpdateHTLCs { .. } => {},
 		_ => panic!("Unexpected event"),
