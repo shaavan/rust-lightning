@@ -252,41 +252,21 @@ impl OnionMessageRecipient {
 /// - `WithoutReplyPath`: Represents a message without the possibility of response because of absence of a reply_path.
 ///   It contains the original message and an optional path id.
 ///
-pub enum ReceivedOnionMessage<T>
-where
-	T: OnionMessageContents
-{
-	WithReplyPath {
-		message: T,
-		path_id: Option<[u8; 32]>,
-		responder: Responder<T>,
-	},
-	WithoutReplyPath {
-		message: T,
-		path_id: Option<[u8; 32]>,
-	},
+pub struct ReceivedOnionMessage<T: OnionMessageContents> {
+	pub message: T,
+	pub responder: Option<Responder<T>>
 }
 
-impl<T> ReceivedOnionMessage<T>
-where
-	T: OnionMessageContents
+impl<T: OnionMessageContents> ReceivedOnionMessage<T>
 {
-	fn new( message: T, reply_path_opt: Option<BlindedPath>, path_id: Option<[u8; 32]> ) -> Self {
-		if let Some(reply_path) = reply_path_opt {
-			let responder = Responder {
-				reply_path,
-				_phantom: PhantomData
-			};
-			ReceivedOnionMessage::WithReplyPath {
-				message,
-				path_id,
-				responder
-			}
-		} else {
-			ReceivedOnionMessage::WithoutReplyPath {
-				message,
-				path_id
-			}
+	fn new( message: T, reply_path_opt: Option<BlindedPath> ) -> Self {
+		let responder = reply_path_opt.map(|reply_path| Responder {
+			reply_path,
+			_phantom: PhantomData,
+		});
+		ReceivedOnionMessage {
+			message,
+			responder
 		}
     }
 }
@@ -309,10 +289,18 @@ where
 {
     pub fn respond(self, response: T) -> ResponseInstruction<T>{
 		ResponseInstruction::HaveResponse {
-			response,
-			reply_path: self.reply_path,
+			response: OnionMessageResponse {
+				response,
+				reply_path: self.reply_path
+			}
 		}
 	}
+}
+
+/// This struct contains the information needed to forward a response.
+pub struct OnionMessageResponse<T: OnionMessageContents> {
+	response: T,
+	reply_path: BlindedPath
 }
 
 /// The `ResponseInstruction` enum represents instructions for responding to [`ReceivedOnionMessage`].
@@ -322,8 +310,7 @@ where
 /// - `NoResponse`: Indicates that no response is available.
 pub enum ResponseInstruction<T: OnionMessageContents> {
 	HaveResponse {
-		response: T,
-		reply_path: BlindedPath,
+		response: OnionMessageResponse<T>
 	},
 	NoResponse
 }
@@ -935,9 +922,9 @@ where
 	fn handle_onion_message_response<T: OnionMessageContents>(
 		&self, response: ResponseInstruction<T>, log_suffix: fmt::Arguments
 	) {
-		if let ResponseInstruction::HaveResponse { response, reply_path } = response {
+		if let ResponseInstruction::HaveResponse { response } = response {
 			let _ = self.find_path_and_enqueue_onion_message(
-				response, Destination::BlindedPath(reply_path), None, log_suffix
+				response.response, Destination::BlindedPath(response.reply_path), None, log_suffix
 			);
 		}
 	}
@@ -1021,7 +1008,7 @@ where
 				let message_type = message.msg_type();
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let received_message = ReceivedOnionMessage::new(msg, reply_path, path_id);
+						let received_message = ReceivedOnionMessage::new(msg, reply_path);
 						let response_instructions = self.offers_handler.handle_message(received_message);
 						self.handle_onion_message_response(response_instructions, format_args!(
 							"when responding to {} onion message with path_id {:02x?}",
@@ -1030,7 +1017,7 @@ where
 						))
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let message = ReceivedOnionMessage::new(msg, reply_path, path_id);
+						let message = ReceivedOnionMessage::new(msg, reply_path);
 						let response_instructions = self.custom_handler.handle_custom_message(message);
 						self.handle_onion_message_response(response_instructions, format_args!(
 							"when responding to {} onion message with path_id {:02x?}",

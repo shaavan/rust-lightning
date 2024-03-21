@@ -9433,7 +9433,7 @@ where
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		if let ReceivedOnionMessage::WithReplyPath{responder, message, path_id: _} = message {
+		if let ReceivedOnionMessage { message, responder: Some(responder) } = message {
 			let response_option = match &message {
 				OffersMessage::InvoiceRequest(invoice_request) => {
 					let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
