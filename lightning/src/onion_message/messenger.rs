@@ -244,75 +244,48 @@ impl OnionMessageRecipient {
 	}
 }
 
-/// The `ReceivedOnionMessage` enum represents messages received by the `OnionMessageHandler`.
-///
-/// This enum encompasses two variants:
-/// - `WithReplyPath`: Represents a message that can be responded to, including the original message,
-///   an optional path id, and a responder.
-/// - `WithoutReplyPath`: Represents a message without the possibility of response because of absence of a reply_path.
-///   It contains the original message and an optional path id.
-///
-pub struct ReceivedOnionMessage<T: OnionMessageContents> {
-	pub message: T,
-	pub responder: Option<Responder<T>>
+/// The `Responder` struct manages responses to [`ReceivedOnionMessage`].
+pub struct Responder<T: OnionMessageContents>
+{
+    /// The path for replying to the received message.
+    reply_path: BlindedPath,
+
+    /// A marker field to ensure compile-time enforcement that the message
+    /// type used in the struct definition matches the response type.
+    _phantom: PhantomData<T>,
 }
 
-impl<T: OnionMessageContents> ReceivedOnionMessage<T>
+impl<T: OnionMessageContents> Responder<T>
 {
-	fn new( message: T, reply_path_opt: Option<BlindedPath> ) -> Self {
-		let responder = reply_path_opt.map(|reply_path| Responder {
-			reply_path,
-			_phantom: PhantomData,
-		});
-		ReceivedOnionMessage {
-			message,
-			responder
-		}
+	pub fn new(reply_path: BlindedPath) -> Self {
+        Responder {
+            reply_path,
+            _phantom: PhantomData,
+        }
     }
-}
 
-/// The `Responder` struct manages responses to [`ReceivedOnionMessage`]
-pub struct Responder<T>
-where
-	T: OnionMessageContents
-{
-	reply_path: BlindedPath,
-
-	/// A marker field, ensuring compile-time enforcement that the message
-	/// type used in the struct definition matches the response type.
-	_phantom: PhantomData<T>
-}
-
-impl<T> Responder<T>
-where
-	T: OnionMessageContents
-{
     pub fn respond(self, response: T) -> ResponseInstruction<T>{
-		ResponseInstruction::HaveResponse {
-			response: OnionMessageResponse {
-				response,
-				reply_path: self.reply_path
-			}
-		}
+		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
+			message: response,
+			reply_path: self.reply_path
+		})
 	}
 }
 
-/// This struct contains the information needed to forward a response.
+/// This struct contains the information needed to reply to a received message.
 pub struct OnionMessageResponse<T: OnionMessageContents> {
-	response: T,
-	reply_path: BlindedPath
+    /// The response message that has been generated.
+    message: T,
+    /// The reply path on which the response message will be sent.
+    reply_path: BlindedPath,
 }
 
-/// The `ResponseInstruction` enum represents instructions for responding to [`ReceivedOnionMessage`].
-///
-/// It includes the following variants:
-/// - `HaveResponse`: Indicates that a response is available, and can be sent using reply_path.
-/// - `NoResponse`: Indicates that no response is available.
+/// `ResponseInstruction` represents instructions for responding to received messages.
 pub enum ResponseInstruction<T: OnionMessageContents> {
-	HaveResponse {
-		response: OnionMessageResponse<T>
-	},
-	NoResponse
+    /// Indicates that a response should be sent without including a reply path for the receiver to respond back.
+    WithoutReplyPath(OnionMessageResponse<T>),
+    /// Indicates that there's no response to send back.
+    NoResponse,
 }
 
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
@@ -584,7 +557,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, message: ReceivedOnionMessage<Self::CustomMessage>) -> ResponseInstruction<Self::CustomMessage>;
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder<Self::CustomMessage>>) -> ResponseInstruction<Self::CustomMessage>;
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -922,9 +895,9 @@ where
 	fn handle_onion_message_response<T: OnionMessageContents>(
 		&self, response: ResponseInstruction<T>, log_suffix: fmt::Arguments
 	) {
-		if let ResponseInstruction::HaveResponse { response } = response {
+		if let ResponseInstruction::WithoutReplyPath(response) = response {
 			let _ = self.find_path_and_enqueue_onion_message(
-				response.response, Destination::BlindedPath(response.reply_path), None, log_suffix
+				response.message, Destination::BlindedPath(response.reply_path), None, log_suffix
 			);
 		}
 	}
@@ -1008,8 +981,8 @@ where
 				let message_type = message.msg_type();
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
-						let received_message = ReceivedOnionMessage::new(msg, reply_path);
-						let response_instructions = self.offers_handler.handle_message(received_message);
+						let responder = reply_path.map(|path| Responder::new(path));
+						let response_instructions = self.offers_handler.handle_message(msg, responder);
 						self.handle_onion_message_response(response_instructions, format_args!(
 							"when responding to {} onion message with path_id {:02x?}",
 							message_type,
@@ -1017,8 +990,8 @@ where
 						))
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
-						let message = ReceivedOnionMessage::new(msg, reply_path);
-						let response_instructions = self.custom_handler.handle_custom_message(message);
+						let responder = reply_path.map(|path| Responder::new(path));
+						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
 						self.handle_onion_message_response(response_instructions, format_args!(
 							"when responding to {} onion message with path_id {:02x?}",
 							message_type,

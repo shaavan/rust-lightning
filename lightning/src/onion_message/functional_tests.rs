@@ -16,7 +16,7 @@ use crate::ln::msgs::{self, DecodeError, OnionMessageHandler, SocketAddress};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::{FixedLengthReader, LengthReadable, Writeable, Writer};
 use crate::util::test_utils;
-use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, ReceivedOnionMessage, ResponseInstruction, SendError};
+use super::messenger::{CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger, PendingOnionMessage, Responder, ResponseInstruction, SendError};
 use super::offers::{OffersMessage, OffersMessageHandler};
 use super::packet::{OnionMessageContents, Packet};
 
@@ -70,7 +70,7 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: ReceivedOnionMessage<OffersMessage>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder<OffersMessage>>) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
 }
@@ -134,23 +134,17 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, message: ReceivedOnionMessage<Self::CustomMessage>) -> ResponseInstruction<Self::CustomMessage> {
-		if let ReceivedOnionMessage { message, responder: Some(responder) } = message {
-			match self.expected_messages.lock().unwrap().pop_front() {
-				Some(expected_msg) => assert_eq!(expected_msg, message),
-				None => panic!("Unexpected message: {:?}", message),
-			}
-
-			let response_option = match message {
-				TestCustomMessage::Request => Some(TestCustomMessage::Response),
-				TestCustomMessage::Response => None,
-			};
-
-			if let Some(response) = response_option {
-				responder.respond(response)
-			} else {
-				ResponseInstruction::NoResponse
-			}
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder<Self::CustomMessage>>) -> ResponseInstruction<Self::CustomMessage> {
+		match self.expected_messages.lock().unwrap().pop_front() {
+			Some(expected_msg) => assert_eq!(expected_msg, message),
+			None => panic!("Unexpected message: {:?}", message),
+		}
+		let response_option = match message {
+			TestCustomMessage::Request => Some(TestCustomMessage::Response),
+			TestCustomMessage::Response => None,
+		};
+		if let (Some(response), Some(responder)) = (response_option, responder) {
+			responder.respond(response)
 		} else {
 			ResponseInstruction::NoResponse
 		}
