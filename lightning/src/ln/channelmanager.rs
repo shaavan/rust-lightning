@@ -9433,25 +9433,27 @@ where
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		fn handle_error_response<T>(responder: Option<Responder<OffersMessage>>, error: T) -> ResponseInstruction<OffersMessage> where T: Into<OffersMessage> {
-			if let Some(responder) = responder {
-				responder.respond(error.into())
-			} else {
-				ResponseInstruction::NoResponse
-			}
-		}
+		let responder = match responder {
+			Some(responder) => responder,
+			None => return ResponseInstruction::NoResponse,
+		};
 
-		let response_option = match &message {
+		let response_opt = match &message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return handle_error_response(responder, OffersMessage::InvoiceError(error.into())),
+					Err(error) => {
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 				let invoice_request = match invoice_request.clone().verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
-					Err(()) => return handle_error_response(responder, OffersMessage::InvoiceError(Bolt12SemanticError::InvalidMetadata.into())),
+					Err(()) => {
+						let error = Bolt12SemanticError::InvalidMetadata;
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
@@ -9459,14 +9461,20 @@ where
 					Some(amount_msats), relative_expiry, None
 				) {
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
-					Err(()) => return handle_error_response(responder, OffersMessage::InvoiceError(Bolt12SemanticError::InvalidAmount.into())),
+					Err(()) => {
+						let error = Bolt12SemanticError::InvalidAmount;
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				let payment_paths = match self.create_blinded_payment_paths(
 					amount_msats, payment_secret
 				) {
 					Ok(payment_paths) => payment_paths,
-					Err(()) => return handle_error_response(responder, OffersMessage::InvoiceError(Bolt12SemanticError::MissingPaths.into())),
+					Err(()) => {
+						let error = Bolt12SemanticError::MissingPaths;
+						return responder.respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				#[cfg(not(feature = "std"))]
@@ -9544,10 +9552,10 @@ where
 				None
 			},
 		};
-		if let (Some(response), Some(responder)) = (response_option, responder) {
-			responder.respond(response)
-		} else {
-			ResponseInstruction::NoResponse
+
+		match response_opt {
+			Some(response) => responder.respond(response),
+			None => ResponseInstruction::NoResponse
 		}
 	}
 
