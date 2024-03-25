@@ -243,6 +243,46 @@ impl OnionMessageRecipient {
 	}
 }
 
+
+/// The `Responder` struct creates an appropriate [`ResponseInstruction`]
+/// for a response based on our ability to respond.
+pub struct Responder {
+	/// The path along which the response can be sent.
+	reply_path: BlindedPath,
+}
+
+impl Responder {
+	/// Creates a new [`Responder`] instance with the provided reply path.
+	pub fn new(reply_path: BlindedPath) -> Self {
+		Responder {
+		    reply_path,
+		}
+	}
+
+	/// Creates the appropriate [`ResponseInstruction`] for a given response.
+	pub fn respond<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
+			message: response,
+			reply_path: self.reply_path
+		})
+	}
+}
+
+/// This struct contains the information needed to reply to a received message.
+#[allow(unused)]
+pub struct OnionMessageResponse<T: OnionMessageContents> {
+	message: T,
+	reply_path: BlindedPath,
+}
+
+/// `ResponseInstruction` represents instructions for responding to received messages.
+pub enum ResponseInstruction<T: OnionMessageContents> {
+	/// Indicates that a response should be sent without including a reply path for the receiver to respond back.
+	WithoutReplyPath(OnionMessageResponse<T>),
+	/// Indicates that there's no response to send back.
+	NoResponse,
+}
+
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
 ///
 /// These are obtained when released from [`OnionMessenger`]'s handlers after which they are
