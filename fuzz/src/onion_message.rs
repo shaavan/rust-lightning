@@ -96,8 +96,8 @@ impl MessageRouter for TestMessageRouter {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: OffersMessage) -> Option<OffersMessage> {
-		None
+	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder<OffersMessage>>) -> ResponseInstruction<OffersMessage> {
+		ResponseInstruction::NoResponse
 	}
 }
 
@@ -123,8 +123,10 @@ struct TestCustomMessageHandler {}
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, _msg: Self::CustomMessage) -> Option<Self::CustomMessage> {
-		Some(TestCustomMessage {})
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder<Self::CustomMessage>>) -> ResponseInstruction<Self::CustomMessage> {
+		if let Some(responder) = responder {
+			responder.respond(TestCustomMessage {})
+		}
 	}
 	fn read_custom_message<R: io::Read>(&self, _message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, msgs::DecodeError> {
 		let mut buf = Vec::new();
