@@ -65,7 +65,7 @@ use crate::offers::merkle::SignError;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{Destination, MessageRouter, PendingOnionMessage, new_pending_onion_message};
+use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::WriteableEcdsaChannelSigner;
@@ -76,6 +76,7 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::offers::offer::DerivedMetadata,
@@ -9450,24 +9451,34 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder<OffersMessage>>) -> ResponseInstruction<OffersMessage>
+	{
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		match message {
+		let respond = |response| {
+			match responder {
+				Some(responder) => responder.respond(response),
+				None => ResponseInstruction::NoResponse,
+			}
+		};
+
+		let response_opt = match &message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return Some(OffersMessage::InvoiceError(error.into())),
+					Err(error) => {
+						return respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
-				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
+				let invoice_request = match invoice_request.clone().verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return Some(OffersMessage::InvoiceError(error.into()));
-					},
+						return respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
@@ -9477,8 +9488,8 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return Some(OffersMessage::InvoiceError(error.into()));
-					},
+						return respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				let payment_paths = match self.create_blinded_payment_paths(
@@ -9487,8 +9498,8 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return Some(OffersMessage::InvoiceError(error.into()));
-					},
+						return respond(OffersMessage::InvoiceError(error.into()));
+					}
 				};
 
 				#[cfg(not(feature = "std"))]
@@ -9565,6 +9576,11 @@ where
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				None
 			},
+		};
+
+		match response_opt {
+			Some(response) => respond(response),
+			None => ResponseInstruction::NoResponse
 		}
 	}
 
