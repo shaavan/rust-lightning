@@ -32,6 +32,7 @@ use crate::util::logger::{Logger, WithContext};
 use crate::util::ser::Writeable;
 
 use core::fmt;
+use core::marker::PhantomData;
 use core::ops::Deref;
 use crate::io;
 use crate::sync::Mutex;
@@ -241,6 +242,53 @@ impl OnionMessageRecipient {
 			OnionMessageRecipient::PendingConnection(..) => false,
 		}
 	}
+}
+
+/// The `Responder` struct manages [`ResponseInstruction`] for a given response.
+pub struct Responder<T: OnionMessageContents>
+{
+    /// The path for replying to the received message.
+    reply_path: BlindedPath,
+
+    /// A marker field to ensure compile-time enforcement that the message
+    /// type used in the struct definition matches the response type.
+    _phantom: PhantomData<T>,
+}
+
+impl<T: OnionMessageContents> Responder<T>
+{
+	/// Creates a new [`Responder`] instance with the provided reply path.
+	pub fn new(reply_path: BlindedPath) -> Self {
+        Responder {
+            reply_path,
+            _phantom: PhantomData,
+        }
+    }
+
+	/// Creates the appropriate [`ResponseInstruction`] for a given response.
+    pub fn respond(self, response: T) -> ResponseInstruction<T>{
+		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
+			message: response,
+			reply_path: self.reply_path
+		})
+	}
+}
+
+/// This struct contains the information needed to reply to a received message.
+#[allow(unused)]
+pub struct OnionMessageResponse<T: OnionMessageContents> {
+    /// The response message that has been generated.
+    message: T,
+    /// The reply path on which the response message will be sent.
+    reply_path: BlindedPath,
+}
+
+/// `ResponseInstruction` represents instructions for responding to received messages.
+pub enum ResponseInstruction<T: OnionMessageContents> {
+    /// Indicates that a response should be sent without including a reply path for the receiver to respond back.
+    WithoutReplyPath(OnionMessageResponse<T>),
+    /// Indicates that there's no response to send back.
+    NoResponse,
 }
 
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
