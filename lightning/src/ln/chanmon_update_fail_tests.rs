@@ -3282,6 +3282,7 @@ fn do_test_durable_preimages_on_closed_channel(close_chans_before_reload: bool, 
 	check_spends!(bs_preimage_tx, as_closing_tx[0]);
 
 	if !close_chans_before_reload {
+		// Connect a dummy node to allow broadcasting the close channel event.
 		check_closed_broadcast(&nodes[1], 1, true);
 		check_closed_event(&nodes[1], 1, ClosureReason::CommitmentTxConfirmed, false, &[nodes[0].node.get_our_node_id()], 100000);
 	} else {
