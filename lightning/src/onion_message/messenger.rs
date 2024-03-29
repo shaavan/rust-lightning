@@ -897,6 +897,23 @@ where
 		}
 	}
 
+	/// A wrapper for `handle_onion_message_response` that logs the appropriate
+	/// message based on the [`ResponseInstruction`] variant before processing it.
+	///
+	pub fn handle_onion_message_response_with_context<T: OnionMessageContents>(
+		&self, response: ResponseInstruction<T>, log_suffix: fmt::Arguments
+	) {
+		match &response {
+			ResponseInstruction::WithoutReplyPath(_) => {
+				log_trace!(self.logger, "Sending the response along the provided reply path.");
+			},
+			ResponseInstruction::NoResponse => {
+				log_trace!(self.logger, "No response generated, or no path available to send the response back.");
+			}
+		}
+		self.handle_onion_message_response(response, log_suffix);
+	}
+
 	#[cfg(test)]
 	pub(super) fn release_pending_msgs(&self) -> HashMap<PublicKey, VecDeque<OnionMessage>> {
 		let mut message_recipients = self.message_recipients.lock().unwrap();
