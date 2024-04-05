@@ -1427,6 +1427,7 @@ where
 	needs_persist_flag: AtomicBool,
 
 	pending_offers_messages: Mutex<Vec<PendingOnionMessage<OffersMessage>>>,
+	retry_offers_messages: Mutex<Vec<RetryOffersMessage>>,
 
 	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
 	pending_broadcast_messages: Mutex<Vec<MessageSendEvent>>,
@@ -1436,6 +1437,11 @@ where
 	signer_provider: SP,
 
 	logger: L,
+}
+
+struct RetryOffersMessage {
+	payment_id: PaymentId,
+	offers_message: PendingOnionMessage<OffersMessage>,
 }
 
 /// Chain-related parameters used to construct a new `ChannelManager`.
@@ -2526,6 +2532,7 @@ where
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			retry_offers_messages: Mutex::new(Vec::new()),
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
 			entropy_source,
@@ -5352,6 +5359,8 @@ where
 				duration_since_epoch, &self.pending_events
 			);
 
+			self.retry_offers_messages();
+
 			// Technically we don't need to do this here, but if we have holding cell entries in a
 			// channel that need freeing, it's better to do that here and block a background task
 			// than block the message queueing pipeline.
@@ -8098,13 +8107,18 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		let mut retry_offers_messages = self.retry_offers_messages.lock().unwrap();
 		if offer.paths().is_empty() {
 			let message = new_pending_onion_message(
 				OffersMessage::InvoiceRequest(invoice_request),
 				Destination::Node(offer.signing_pubkey()),
 				Some(reply_path),
 			);
-			pending_offers_messages.push(message);
+			pending_offers_messages.push(message.clone());
+			retry_offers_messages.push(RetryOffersMessage {
+				payment_id: payment_id.clone(),
+				offers_message: message
+			})
 		} else {
 			// Send as many invoice requests as there are paths in the offer (with an upper bound).
 			// Using only one path could result in a failure if the path no longer exists. But only
@@ -8116,7 +8130,11 @@ where
 					Destination::BlindedPath(path.clone()),
 					Some(reply_path.clone()),
 				);
-				pending_offers_messages.push(message);
+				pending_offers_messages.push(message.clone());
+				retry_offers_messages.push(RetryOffersMessage {
+					payment_id: payment_id.clone(),
+					offers_message: message
+				})
 			}
 		}
 
@@ -9762,6 +9780,7 @@ where
 						Some(OffersMessage::InvoiceError(Bolt12SemanticError::UnknownRequiredFeatures.into()))
 					},
 					Ok(payment_id) => {
+						self.remove_expired_retry_messages(&payment_id);
 						if let Err(e) = self.send_payment_for_bolt12_invoice(&invoice, payment_id) {
 							log_trace!(self.logger, "Failed paying invoice: {:?}", e);
 							Some(OffersMessage::InvoiceError(InvoiceError::from_string(format!("{:?}", e))))
@@ -9780,6 +9799,19 @@ where
 
 	fn release_pending_messages(&self) -> Vec<PendingOnionMessage<OffersMessage>> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
+	}
+
+	fn retry_offers_messages(&self) {
+		let retry_messages = self.retry_offers_messages.lock().unwrap();
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		for msg in retry_messages.iter() {
+			pending_offers_messages.push(msg.offers_message.clone())
+		}
+	}
+
+	fn remove_expired_retry_messages(&self, payment_id: &PaymentId) {
+		let mut retry_messages = self.retry_offers_messages.lock().unwrap();
+		retry_messages.retain(|retry_message| &retry_message.payment_id != payment_id)
 	}
 }
 
@@ -11622,6 +11654,7 @@ where
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			retry_offers_messages: Mutex::new(Vec::new()),
 
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 

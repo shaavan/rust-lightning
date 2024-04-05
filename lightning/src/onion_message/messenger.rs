@@ -248,6 +248,7 @@ impl OnionMessageRecipient {
 /// These are obtained when released from [`OnionMessenger`]'s handlers after which they are
 /// enqueued for sending.
 #[cfg(not(c_bindings))]
+#[derive(Clone)]
 pub struct PendingOnionMessage<T: OnionMessageContents> {
 	/// The message contents to send in an [`OnionMessage`].
 	pub contents: T,

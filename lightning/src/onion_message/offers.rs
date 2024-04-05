@@ -12,6 +12,7 @@
 use core::convert::TryFrom;
 use core::fmt;
 use crate::io::{self, Read};
+use crate::ln::channelmanager::PaymentId;
 use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
@@ -48,6 +49,10 @@ pub trait OffersMessageHandler {
 	/// another message. The latter should use the return value of [`Self::handle_message`].
 	#[cfg(not(c_bindings))]
 	fn release_pending_messages(&self) -> Vec<PendingOnionMessage<OffersMessage>> { vec![] }
+
+	fn retry_offers_messages(&self) {}
+
+	fn remove_expired_retry_messages(&self, _payment_id: &PaymentId) {}
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
