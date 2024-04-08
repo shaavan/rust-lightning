@@ -2123,6 +2123,10 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 		self.channel_state > ChannelState::NegotiatingFunding(NegotiatingFundingFlags::OUR_INIT_SENT)
 	}
 
+	pub(super) fn reset_state(&mut self) {
+		self.channel_state = ChannelState::NegotiatingFunding(NegotiatingFundingFlags::OUR_INIT_SENT);
+	}
+
 	/// Returns true if this channel is fully established and not known to be closing.
 	/// Allowed in any state (including after shutdown)
 	pub fn is_usable(&self) -> bool {

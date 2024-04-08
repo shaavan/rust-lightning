@@ -10084,6 +10084,10 @@ where
 						}
 
 						ChannelPhase::UnfundedOutboundV1(chan) => {
+							// Reset the channel state before resending the OpenChannel message.
+							// This step ensures that the channel is in its initial state before
+							// starting the channel establishment process.
+							chan.context.reset_state();
 							pending_msg_events.push(events::MessageSendEvent::SendOpenChannel {
 								node_id: chan.context.get_counterparty_node_id(),
 								msg: chan.get_open_channel(self.chain_hash),
