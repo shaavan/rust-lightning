@@ -2240,6 +2240,10 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider  {
 		self.channel_transaction_parameters.funding_outpoint
 	}
 
+	fn get_funding_transaction(&self) -> Option<Transaction> {
+		self.funding_transaction.clone()
+	}
+
 	/// Returns the height in which our funding transaction was confirmed.
 	pub fn get_funding_tx_confirmation_height(&self) -> Option<u32> {
 		let conf_height = self.funding_tx_confirmation_height;
@@ -7375,7 +7379,7 @@ impl<SP: Deref> OutboundV1Channel<SP> where SP::Target: SignerProvider {
 	/// Note that channel_id changes during this call!
 	/// Do NOT broadcast the funding transaction until after a successful funding_signed call!
 	/// If an Err is returned, it is a ChannelError::Close.
-	pub fn get_funding_created<L: Deref>(&mut self, funding_transaction: Transaction, funding_txo: OutPoint, is_batch_funding: bool, logger: &L)
+	pub fn get_funding_created<L: Deref>(&mut self, funding_transaction: Option<Transaction>, funding_txo: Option<OutPoint>, is_batch_funding: Option<bool>, logger: &L)
 	-> Result<Option<msgs::FundingCreated>, (Self, ChannelError)> where L::Target: Logger {
 		if !self.context.is_outbound() {
 			panic!("Tried to create outbound funding_created message on an inbound channel!");
@@ -7391,6 +7395,23 @@ impl<SP: Deref> OutboundV1Channel<SP> where SP::Target: SignerProvider {
 				self.context.cur_holder_commitment_transaction_number != INITIAL_COMMITMENT_NUMBER {
 			panic!("Should not have advanced channel commitment tx numbers prior to funding_created");
 		}
+
+		// This section of logic verifies if `funding_transaction` and `funding_txo` are provided.
+		// If not, they are retrieved from the context. The decision to proceed with the logic
+		// even when context values are available ensures consistent flow and passes through all
+		// original sanity checks.
+		let (funding_transaction, funding_txo, is_batch_funding) = match (funding_transaction, funding_txo, is_batch_funding) {
+			(Some(tx), Some(txo), Some(batch)) => (tx, txo, batch),
+			(None, None, None) => {
+				let funding_tx = self.context.get_funding_transaction()
+					.unwrap_or_else(|| panic!("Failed to get funding transaction from context"));
+				let funding_txo = self.context.get_funding_txo()
+					.unwrap_or_else(|| panic!("Failed to get funding txo from context"));
+				let batch_funding = self.context.is_batch_funding.is_some();
+				(funding_tx, funding_txo, batch_funding)
+			}
+			_ => panic!("Either all or None of funding_transaction, funding_txo, and is_batch_funding should be provided"),
+		};
 
 		self.context.channel_transaction_parameters.funding_outpoint = Some(funding_txo);
 		self.context.holder_signer.as_mut().provide_channel_parameters(&self.context.channel_transaction_parameters);
@@ -9511,7 +9532,7 @@ mod tests {
 			value: 10000000, script_pubkey: output_script.clone(),
 		}]};
 		let funding_outpoint = OutPoint{ txid: tx.txid(), index: 0 };
-		let funding_created_msg = node_a_chan.get_funding_created(tx.clone(), funding_outpoint, false, &&logger).map_err(|_| ()).unwrap();
+		let funding_created_msg = node_a_chan.get_funding_created(Some(tx.clone()), Some(funding_outpoint), Some(false), &&logger).map_err(|_| ()).unwrap();
 		let (_, funding_signed_msg, _) = node_b_chan.funding_created(&funding_created_msg.unwrap(), best_block, &&keys_provider, &&logger).map_err(|_| ()).unwrap();
 
 		// Node B --> Node A: funding signed
@@ -9640,7 +9661,7 @@ mod tests {
 			value: 10000000, script_pubkey: output_script.clone(),
 		}]};
 		let funding_outpoint = OutPoint{ txid: tx.txid(), index: 0 };
-		let funding_created_msg = node_a_chan.get_funding_created(tx.clone(), funding_outpoint, false, &&logger).map_err(|_| ()).unwrap();
+		let funding_created_msg = node_a_chan.get_funding_created(Some(tx.clone()), Some(funding_outpoint), Some(false), &&logger).map_err(|_| ()).unwrap();
 		let (mut node_b_chan, funding_signed_msg, _) = node_b_chan.funding_created(&funding_created_msg.unwrap(), best_block, &&keys_provider, &&logger).map_err(|_| ()).unwrap();
 
 		// Node B --> Node A: funding signed
@@ -9829,7 +9850,7 @@ mod tests {
 			value: 10000000, script_pubkey: output_script.clone(),
 		}]};
 		let funding_outpoint = OutPoint{ txid: tx.txid(), index: 0 };
-		let funding_created_msg = node_a_chan.get_funding_created(tx.clone(), funding_outpoint, false, &&logger).map_err(|_| ()).unwrap();
+		let funding_created_msg = node_a_chan.get_funding_created(Some(tx.clone()), Some(funding_outpoint), Some(false), &&logger).map_err(|_| ()).unwrap();
 		let (_, funding_signed_msg, _) = node_b_chan.funding_created(&funding_created_msg.unwrap(), best_block, &&keys_provider, &&logger).map_err(|_| ()).unwrap();
 
 		// Node B --> Node A: funding signed
@@ -9896,7 +9917,7 @@ mod tests {
 			value: 10000000, script_pubkey: outbound_chan.context.get_funding_redeemscript(),
 		}]};
 		let funding_outpoint = OutPoint{ txid: tx.txid(), index: 0 };
-		let funding_created = outbound_chan.get_funding_created(tx.clone(), funding_outpoint, false, &&logger).map_err(|_| ()).unwrap().unwrap();
+		let funding_created = outbound_chan.get_funding_created(Some(tx.clone()), Some(funding_outpoint), Some(false), &&logger).map_err(|_| ()).unwrap().unwrap();
 		let mut chan = match inbound_chan.funding_created(&funding_created, best_block, &&keys_provider, &&logger) {
 			Ok((chan, _, _)) => chan,
 			Err((_, e)) => panic!("{}", e),
@@ -11029,7 +11050,7 @@ mod tests {
 			]};
 		let funding_outpoint = OutPoint{ txid: tx.txid(), index: 0 };
 		let funding_created_msg = node_a_chan.get_funding_created(
-			tx.clone(), funding_outpoint, true, &&logger,
+			Some(tx.clone()), Some(funding_outpoint), Some(true), &&logger,
 		).map_err(|_| ()).unwrap();
 		let (mut node_b_chan, funding_signed_msg, _) = node_b_chan.funding_created(
 			&funding_created_msg.unwrap(),

@@ -4484,7 +4484,7 @@ where
 				funding_txo = find_funding_output(&chan, &funding_transaction)?;
 
 				let logger = WithChannelContext::from(&self.logger, &chan.context);
-				let funding_res = chan.get_funding_created(funding_transaction, funding_txo, is_batch_funding, &&logger)
+				let funding_res = chan.get_funding_created(Some(funding_transaction), Some(funding_txo), Some(is_batch_funding), &&logger)
 					.map_err(|(mut chan, e)| if let ChannelError::Close(msg) = e {
 						let channel_id = chan.context.channel_id();
 						let reason = ClosureReason::ProcessingError { err: msg.clone() };
