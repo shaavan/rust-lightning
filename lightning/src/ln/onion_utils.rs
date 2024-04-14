@@ -7,12 +7,16 @@
 // You may not use this file except in accordance with one or both of these
 // licenses.
 
+use crate::blinded_path::BlindedPath;
 use crate::crypto::chacha20::ChaCha20;
 use crate::crypto::streams::ChaChaReader;
 use crate::ln::channelmanager::{HTLCSource, RecipientOnionFields};
 use crate::ln::msgs;
 use crate::ln::wire::Encode;
 use crate::ln::{PaymentHash, PaymentPreimage};
+use crate::offers::invoice_request::InvoiceRequest;
+use crate::onion_message::messenger::{new_pending_onion_message, Destination, PendingOnionMessage};
+use crate::onion_message::offers::OffersMessage;
 use crate::routing::gossip::NetworkUpdate;
 use crate::routing::router::{BlindedTail, Path, RouteHop};
 use crate::sign::NodeSigner;
@@ -1231,6 +1235,32 @@ fn decode_next_hop<T, R: ReadableArgs<T>, N: NextPacketBytes>(
 				return Ok((msg, Some((hmac, new_packet_bytes)))); // This packet needs forwarding
 			}
 		},
+	}
+}
+
+
+pub fn get_invoice_request_message(invoice_request: InvoiceRequest, reply_path: BlindedPath) -> Vec<PendingOnionMessage<OffersMessage>> {
+	if invoice_request.paths().is_empty() {
+		let message = new_pending_onion_message(
+			OffersMessage::InvoiceRequest(invoice_request),
+			Destination::Node(invoice_request.signing_pubkey()),
+			Some(reply_path),
+		);
+		vec![message]
+	} else {
+		// Send as many invoice requests as there are paths in the offer (with an upper bound).
+		// Using only one path could result in a failure if the path no longer exists. But only
+		// one invoice for a given payment id will be paid, even if more than one is received.
+		const REQUEST_LIMIT: usize = 10;
+		invoice_request.paths().into_iter().take(REQUEST_LIMIT).map(
+			|path| {
+                new_pending_onion_message(
+                    OffersMessage::InvoiceRequest(invoice_request.clone()),
+                    Destination::BlindedPath(path.clone()),
+                    Some(reply_path.clone()),
+                )
+            }
+		).collect()
 	}
 }
 

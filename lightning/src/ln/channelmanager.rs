@@ -76,6 +76,9 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+use super::onion_utils::get_invoice_request_message;
+use super::outbound_payment::Request;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::offers::offer::DerivedMetadata,
@@ -5352,6 +5355,11 @@ where
 				duration_since_epoch, &self.pending_events
 			);
 
+			let messages = self.pending_outbound_payments.get_retry_invoice_request_messages();
+
+			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+			pending_offers_messages.extend(messages);
+
 			// Technically we don't need to do this here, but if we have holding cell entries in a
 			// channel that need freeing, it's better to do that here and block a background task
 			// than block the message queueing pipeline.
@@ -7976,7 +7984,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8088,37 +8096,19 @@ where
 		let invoice_request = builder.build_and_sign()?;
 		let reply_path = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
+		let request = Some(Request::new(invoice_request.clone(), reply_path.clone()));
+
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
 		let expiration = StaleExpiration::TimerTicks(1);
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, request,
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if offer.paths().is_empty() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(offer.signing_pubkey()),
-				Some(reply_path),
-			);
-			pending_offers_messages.push(message);
-		} else {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
-			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
-				);
-				pending_offers_messages.push(message);
-			}
-		}
+		pending_offers_messages.extend(get_invoice_request_message(invoice_request, reply_path));
 
 		Ok(())
 	}
