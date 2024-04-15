@@ -267,6 +267,14 @@ impl Responder {
 			reply_path: self.reply_path
 		})
 	}
+
+	/// Creates the appropriate [`ResponseInstruction`] for a given response.
+	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+		ResponseInstruction::WithReplyPath(OnionMessageResponse {
+			message: response,
+			reply_path: self.reply_path
+		})
+	}
 }
 
 /// This struct contains the information needed to reply to a received message.
@@ -277,6 +285,8 @@ pub struct OnionMessageResponse<T: OnionMessageContents> {
 
 /// `ResponseInstruction` represents instructions for responding to received messages.
 pub enum ResponseInstruction<T: OnionMessageContents> {
+	/// Indicates that a response should be sent including a reply path for the receiver to respond back.
+	WithReplyPath(OnionMessageResponse<T>),
 	/// Indicates that a response should be sent without including a reply path for the receiver to respond back.
 	WithoutReplyPath(OnionMessageResponse<T>),
 	/// Indicates that there's no response to send back.
@@ -837,6 +847,24 @@ where
 			.map_err(|_| SendError::PathNotFound)
 	}
 
+	fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
+		let recipient = self.node_signer
+			.get_node_id(Recipient::Node)
+			.map_err(|_| SendError::GetNodeIdFailed)?;
+		let secp_ctx = &self.secp_ctx;
+
+		let peers = self.message_recipients.lock().unwrap()
+			.iter()
+			.filter(|(_, peer)| matches!(peer, OnionMessageRecipient::ConnectedPeer(_)))
+			.map(|(node_id, _)| *node_id)
+			.collect();
+
+		self.message_router
+			.create_blinded_paths(recipient, peers, secp_ctx)
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| SendError::PathNotFound)
+	}
+
 	fn enqueue_onion_message<T: OnionMessageContents>(
 		&self, path: OnionMessagePath, contents: T, reply_path: Option<BlindedPath>,
 		log_suffix: fmt::Arguments
@@ -892,16 +920,26 @@ where
 	pub fn handle_onion_message_response<T: OnionMessageContents>(
 		&self, response: ResponseInstruction<T>, message_type: &str, path_id: Option<[u8; 32]>
 	) {
-		if let ResponseInstruction::WithoutReplyPath(response) = response {
-			let _ = self.find_path_and_enqueue_onion_message(
-				response.message, Destination::BlindedPath(response.reply_path), None,
-				format_args!(
-					"when responding to {} onion message with path_id {:02x?}",
-					message_type,
-					path_id
-				)
-			);
-		}
+		let (response, reply_path) = match response {
+			ResponseInstruction::WithReplyPath(response) => (response, self.create_blinded_path().ok()),
+			ResponseInstruction::WithoutReplyPath(response) => (response, None),
+			ResponseInstruction::NoResponse => {
+				log_trace!(self.logger,
+					"Missing reply path when responding to {} onion message with path_id {:02x?}",
+					message_type, path_id);
+				return
+			}
+		};
+
+		let _ = self.find_path_and_enqueue_onion_message(
+			response.message, Destination::BlindedPath(response.reply_path), reply_path,
+			format_args!(
+				"when responding to {} onion message with path_id {:02x?}",
+				message_type,
+				path_id
+			)
+		);
+
 	}
 
 	#[cfg(test)]
