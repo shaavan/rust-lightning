@@ -887,7 +887,9 @@ where
 		)
 	}
 
-	fn handle_onion_message_response<T: OnionMessageContents>(
+	/// Handles the response to an [`OnionMessage`] based on it's [`ResponseInstruction`]
+	/// and enqueueing it for further processing.
+	pub fn handle_onion_message_response<T: OnionMessageContents>(
 		&self, response: ResponseInstruction<T>, message_type: &str, path_id: Option<[u8; 32]>
 	) {
 		if let ResponseInstruction::WithoutReplyPath(response) = response {

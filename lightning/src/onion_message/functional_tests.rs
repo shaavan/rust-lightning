@@ -325,6 +325,48 @@ fn three_blinded_hops() {
 }
 
 #[test]
+fn async_response_over_one_blinded_hop() {
+    // Simulate an asynchronous interaction between two nodes, Alice and Bob.
+
+    // 1. Set up the network with two nodes: Alice and Bob.
+    let nodes = create_nodes(2);
+    let alice = &nodes[0];
+    let bob = &nodes[1];
+
+    // 2. Define the message sent from Bob to Alice.
+    let message = TestCustomMessage::Request;
+    let message_type = message.msg_type();
+    let path_id = Some([2; 32]);
+
+    // 3. Simulate the creation of a Blinded Reply path provided by Bob.
+    let secp_ctx = Secp256k1::new();
+    let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
+
+    // 4. Create a responder using the reply path for Alice.
+    let responder = Some(Responder::new(reply_path));
+
+    // 5. Expect Alice to receive the message and create a response instruction for it.
+    alice.custom_message_handler.expect_message(message.clone());
+    let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
+
+    // 6. Simulate Alice asynchronously responding back to Bob with a response.
+    nodes[0].messenger.handle_onion_message_response(response_instruction, message_type, path_id);
+
+    // 7. Check the message that Alice intends to send to Bob.
+    let events = alice.messenger.release_pending_msgs();
+    let onion_msg =  {
+        let msgs = events.get(&bob.node_id).unwrap();
+        assert_eq!(msgs.len(), 1);
+        msgs[0].clone()
+    };
+
+    // 8. Finally, Bob verifies that the response is of the expected type and handles it appropriately,
+    // simulating correct response creation by Alice and acceptance by Bob.
+    bob.custom_message_handler.expect_message(TestCustomMessage::Response);
+    bob.messenger.handle_onion_message(&alice.node_id, &onion_msg);
+}
+
+#[test]
 fn too_big_packet_error() {
 	// Make sure we error as expected if a packet is too big to send.
 	let nodes = create_nodes(2);
