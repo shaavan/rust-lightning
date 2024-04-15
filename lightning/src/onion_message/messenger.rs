@@ -888,11 +888,16 @@ where
 	}
 
 	fn handle_onion_message_response<T: OnionMessageContents>(
-		&self, response: ResponseInstruction<T>, log_suffix: fmt::Arguments
+		&self, response: ResponseInstruction<T>, message_type: &str, path_id: Option<[u8; 32]>
 	) {
 		if let ResponseInstruction::WithoutReplyPath(response) = response {
 			let _ = self.find_path_and_enqueue_onion_message(
-				response.message, Destination::BlindedPath(response.reply_path), None, log_suffix
+				response.message, Destination::BlindedPath(response.reply_path), None,
+				format_args!(
+					"when responding to {} onion message with path_id {:02x?}",
+					message_type,
+					path_id
+				)
 			);
 		}
 	}
@@ -978,20 +983,12 @@ where
 					ParsedOnionMessageContents::Offers(msg) => {
 						let responder = reply_path.map(|path| Responder::new(path));
 						let response_instructions = self.offers_handler.handle_message(msg, responder);
-						self.handle_onion_message_response(response_instructions, format_args!(
-							"when responding to {} onion message with path_id {:02x?}",
-							message_type,
-							path_id
-						))
+						self.handle_onion_message_response(response_instructions, message_type, path_id);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(|path| Responder::new(path));
 						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
-						self.handle_onion_message_response(response_instructions, format_args!(
-							"when responding to {} onion message with path_id {:02x?}",
-							message_type,
-							path_id
-						))
+						self.handle_onion_message_response(response_instructions, message_type, path_id);
 					},
 				}
 			},
