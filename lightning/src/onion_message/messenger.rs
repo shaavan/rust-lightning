@@ -260,7 +260,7 @@ pub struct Responder {
 
 impl Responder {
 	/// Creates a new [`Responder`] instance with the provided reply path.
-	fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>) -> Self {
+	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>) -> Self {
 		Responder {
 			reply_path,
 			path_id,
@@ -1043,7 +1043,9 @@ where
 		)
 	}
 
-	fn handle_onion_message_response<T: OnionMessageContents>(
+	/// Handles the response to an [`OnionMessage`] based on its [`ResponseInstruction`],
+	/// enqueueing any response for sending.
+	pub fn handle_onion_message_response<T: OnionMessageContents>(
 		&self, response: ResponseInstruction<T>
 	) {
 		if let ResponseInstruction::WithoutReplyPath(response) = response {
