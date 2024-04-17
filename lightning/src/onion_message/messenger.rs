@@ -449,7 +449,7 @@ where
 }
 
 /// A path for sending an [`OnionMessage`].
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OnionMessagePath {
 	/// Nodes on the path between the sender and the destination.
 	pub intermediate_nodes: Vec<PublicKey>,
@@ -831,10 +831,12 @@ where
 		result
 	}
 
-	fn find_path(&self, destination: Destination) -> Result<OnionMessagePath, SendError> {
+	pub fn find_path(&self, destination: Destination) -> Result<OnionMessagePath, SendError> {
 		let sender = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
+
+		println!("-------\n{:?}\n-------", sender);
 
 		let peers = self.message_recipients.lock().unwrap()
 			.iter()
@@ -842,15 +844,19 @@ where
 			.map(|(node_id, _)| *node_id)
 			.collect();
 
+		println!("-------\n{:?}\n-------", peers);
+
 		self.message_router
 			.find_path(sender, peers, destination)
 			.map_err(|_| SendError::PathNotFound)
 	}
 
-	fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
+	pub fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
 		let recipient = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
+
+		println!("-------\n{:?}\n-------", recipient);
 		let secp_ctx = &self.secp_ctx;
 
 		let peers = self.message_recipients.lock().unwrap()
@@ -858,6 +864,8 @@ where
 			.filter(|(_, peer)| matches!(peer, OnionMessageRecipient::ConnectedPeer(_)))
 			.map(|(node_id, _)| *node_id)
 			.collect();
+
+		println!("-------\n{:?}\n-------", peers);
 
 		self.message_router
 			.create_blinded_paths(recipient, peers, secp_ctx)

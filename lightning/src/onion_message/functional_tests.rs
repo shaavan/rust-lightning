@@ -110,6 +110,22 @@ impl TestCustomMessageHandler {
 	fn expect_message(&self, message: TestCustomMessage) {
 		self.expected_messages.lock().unwrap().push_back(message);
 	}
+
+	fn handle_custom_message_with_reply_path(&self, msg: TestCustomMessage, responder: Option<Responder>) -> ResponseInstruction<TestCustomMessage> {
+		match self.expected_messages.lock().unwrap().pop_front() {
+			Some(expected_msg) => assert_eq!(expected_msg, msg),
+			None => panic!("Unexpected message: {:?}", msg),
+		}
+		let response_option = match msg {
+			TestCustomMessage::Request => Some(TestCustomMessage::Response),
+			TestCustomMessage::Response => None,
+		};
+		if let (Some(response), Some(responder)) = (response_option, responder) {
+			responder.respond_with_reply_path(response)
+		} else {
+			ResponseInstruction::NoResponse
+		}
+	}
 }
 
 impl Drop for TestCustomMessageHandler {
@@ -140,6 +156,7 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 			ResponseInstruction::NoResponse
 		}
 	}
+
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {
 		match message_type {
 			CUSTOM_REQUEST_MESSAGE_TYPE => {
@@ -326,44 +343,47 @@ fn three_blinded_hops() {
 
 #[test]
 fn async_response_over_one_blinded_hop() {
-    // Simulate an asynchronous interaction between two nodes, Alice and Bob.
+	// Simulate an asynchronous interaction between two nodes, Alice and Bob.
 
-    // 1. Set up the network with two nodes: Alice and Bob.
-    let nodes = create_nodes(2);
-    let alice = &nodes[0];
-    let bob = &nodes[1];
+	// 1. Set up the network with two nodes: Alice and Bob.
+	let nodes = create_nodes(2);
+	let alice = &nodes[0];
+	let bob = &nodes[1];
 
-    // 2. Define the message sent from Bob to Alice.
-    let message = TestCustomMessage::Request;
-    let message_type = message.msg_type();
-    let path_id = Some([2; 32]);
+	// 2. Define the message sent from Bob to Alice.
+	let message = TestCustomMessage::Request;
+	let message_type = message.msg_type();
+	let path_id = Some([2; 32]);
 
-    // 3. Simulate the creation of a Blinded Reply path provided by Bob.
-    let secp_ctx = Secp256k1::new();
-    let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
+	// 3. Simulate the creation of a Blinded Reply path provided by Bob.
+	let secp_ctx = Secp256k1::new();
+	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
 
-    // 4. Create a responder using the reply path for Alice.
-    let responder = Some(Responder::new(reply_path));
+	// 4. Create a responder using the reply path for Alice.
+	let responder = Some(Responder::new(reply_path));
 
-    // 5. Expect Alice to receive the message and create a response instruction for it.
-    alice.custom_message_handler.expect_message(message.clone());
-    let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
+	// 5. Expect Alice to receive the message and create a response instruction for it.
+	alice.custom_message_handler.expect_message(message.clone());
+	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
 
-    // 6. Simulate Alice asynchronously responding back to Bob with a response.
-    nodes[0].messenger.handle_onion_message_response(response_instruction, message_type, path_id);
+	// 6. Simulate Alice asynchronously responding back to Bob with a response.
+	nodes[0].messenger.handle_onion_message_response(response_instruction, message_type, path_id);
+	bob.custom_message_handler.expect_message(TestCustomMessage::Response);
 
-    // 7. Check the message that Alice intends to send to Bob.
-    let events = alice.messenger.release_pending_msgs();
-    let onion_msg =  {
-        let msgs = events.get(&bob.node_id).unwrap();
-        assert_eq!(msgs.len(), 1);
-        msgs[0].clone()
-    };
+	pass_along_path(&nodes);
 
-    // 8. Finally, Bob verifies that the response is of the expected type and handles it appropriately,
-    // simulating correct response creation by Alice and acceptance by Bob.
-    bob.custom_message_handler.expect_message(TestCustomMessage::Response);
-    bob.messenger.handle_onion_message(&alice.node_id, &onion_msg);
+	// // 7. Check the message that Alice intends to send to Bob.
+	// let events = alice.messenger.release_pending_msgs();
+	// let onion_msg =  {
+	//     let msgs = events.get(&bob.node_id).unwrap();
+	//     assert_eq!(msgs.len(), 1);
+	//     msgs[0].clone()
+	// };
+
+	// // 8. Finally, Bob verifies that the response is of the expected type and handles it appropriately,
+	// // simulating correct response creation by Alice and acceptance by Bob.
+	// bob.custom_message_handler.expect_message(TestCustomMessage::Response);
+	// bob.messenger.handle_onion_message(&alice.node_id, &onion_msg);
 }
 
 #[test]
@@ -456,6 +476,69 @@ fn reply_path() {
 	nodes[0].custom_message_handler.expect_message(TestCustomMessage::Response);
 	nodes.reverse();
 	pass_along_path(&nodes);
+}
+
+#[test]
+fn aync_response_with_reply_path() {
+	// Simulate an asynchronous interaction between two nodes, Alice and Bob.
+
+	// 1. Set up the network with four nodes.
+	let mut nodes = create_nodes(4);
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let charlie = &nodes[2];
+	let dave = &nodes[3];
+
+	// 2. Define the message sent from Dave to Alice.
+	let message = TestCustomMessage::Request;
+	let message_type = message.msg_type();
+	let path_id = Some([2; 32]);
+
+	// 3. Simulate the creation of a Blinded Reply path provided by Dave.
+	let secp_ctx = Secp256k1::new();
+	let reply_path = BlindedPath::new_for_message(&[bob.node_id, charlie.node_id, dave.node_id], &*dave.entropy_source, &secp_ctx).unwrap();
+
+	// 4. Create a responder using the reply path for Alice.
+	let responder = Some(Responder::new(reply_path));
+
+	// 5. Expect Alice to receive the message and create a response instruction for it.
+	alice.custom_message_handler.expect_message(message.clone());
+	let response_instruction = alice.custom_message_handler.handle_custom_message_with_reply_path(message, responder);
+
+	// 6. Simulate Alice asynchronously responding back to Dave with a response.
+	alice.messenger.handle_onion_message_response(response_instruction, message_type, path_id);
+	dave.custom_message_handler.expect_message(TestCustomMessage::Response);
+	pass_along_path(&nodes);
+
+	// Make sure the last node successfully decoded the reply path.
+	nodes[0].custom_message_handler.expect_message(TestCustomMessage::Response);
+	nodes.reverse();
+	pass_along_path(&nodes);
+}
+
+#[test]
+fn reply_path_construction() {
+	let nodes = create_nodes(4);
+	let secp_ctx = Secp256k1::new();
+
+	// Connects every peer to every peer
+
+	// for i in 0..nodes.len() {
+	// 	for j in i..nodes.len() {
+	// 		connect_peers(&nodes[i], &nodes[j]);
+	// 	}
+	// }
+
+	add_channel_to_graph(&nodes[1], &nodes[2], &secp_ctx, 42);
+	add_channel_to_graph(&nodes[2], &nodes[3], &secp_ctx, 43);
+
+	let reply_path = nodes[0].messenger.create_blinded_path();
+	println!("-------\n{:?}\n-------", reply_path);
+
+	let destination = Destination::Node(nodes[3].node_id);
+
+	let path = nodes[0].messenger.find_path(destination);
+	println!("-------\n{:?}\n-------", path);
 }
 
 #[test]
