@@ -76,6 +76,8 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+use super::onion_utils::construct_invoice_request_message;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::offers::offer::DerivedMetadata,
@@ -6010,6 +6012,20 @@ where
 		});
 	}
 
+	pub fn retry_tick_occurred(&self) {
+		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+
+		if invoice_requests.is_empty() { return; }
+
+		if let Ok(reply_path) = self.create_blinded_path() {
+			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+			for invoice_request in invoice_requests {
+				pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path.clone()));
+			}
+		}
+	}
+
 	/// Indicates that the preimage for payment_hash is unknown or the received amount is incorrect
 	/// after a PaymentClaimable event, failing the HTLC back to its origin and freeing resources
 	/// along the path (including in our own channel on which we received it).
@@ -8623,7 +8639,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8740,32 +8756,12 @@ where
 		let expiration = StaleExpiration::TimerTicks(1);
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, Some(invoice_request)
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if offer.paths().is_empty() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(offer.signing_pubkey()),
-				Some(reply_path),
-			);
-			pending_offers_messages.push(message);
-		} else {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
-			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
-				);
-				pending_offers_messages.push(message);
-			}
-		}
+		pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path));
 
 		Ok(())
 	}
