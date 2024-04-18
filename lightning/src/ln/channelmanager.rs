@@ -60,7 +60,7 @@ use crate::ln::outbound_payment::{Bolt12PaymentError, OutboundPayments, PaymentA
 use crate::ln::wire::Encode;
 use crate::offers::invoice::{BlindedPayInfo, Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequestBuilder};
+use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequest, InvoiceRequestBuilder};
 use crate::offers::merkle::SignError;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
@@ -6010,6 +6010,21 @@ where
 		});
 	}
 
+	pub fn timer_tick_occurred_faster(&self) {
+		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+
+		if invoice_requests.len() > 0 {
+			let reply_path = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths).ok();
+			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+			if let Some(reply_path) = reply_path {
+				for invoice_request in invoice_requests {
+					pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path));
+				}
+			}
+		}
+	}
+
 	/// Indicates that the preimage for payment_hash is unknown or the received amount is incorrect
 	/// after a PaymentClaimable event, failing the HTLC back to its origin and freeing resources
 	/// along the path (including in our own channel on which we received it).
@@ -8745,29 +8760,35 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if offer.paths().is_empty() {
+		pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path));
+
+		Ok(())
+	}
+
+	fn get_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_path: BlindedPath) -> Vec<PendingOnionMessage<OffersMessage>> {
+		let mut messages = vec![];
+		if invoice_request.paths().is_empty() {
 			let message = new_pending_onion_message(
 				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(offer.signing_pubkey()),
+				Destination::Node(invoice_request.signing_pubkey()),
 				Some(reply_path),
 			);
-			pending_offers_messages.push(message);
+			messages.push(message);
 		} else {
 			// Send as many invoice requests as there are paths in the offer (with an upper bound).
 			// Using only one path could result in a failure if the path no longer exists. But only
 			// one invoice for a given payment id will be paid, even if more than one is received.
 			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
+			for path in invoice_request.paths().into_iter().take(REQUEST_LIMIT) {
 				let message = new_pending_onion_message(
 					OffersMessage::InvoiceRequest(invoice_request.clone()),
 					Destination::BlindedPath(path.clone()),
 					Some(reply_path.clone()),
 				);
-				pending_offers_messages.push(message);
+				messages.push(message);
 			}
 		}
-
-		Ok(())
+		messages
 	}
 
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion

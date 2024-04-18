@@ -1769,6 +1769,24 @@ impl OutboundPayments {
 	pub fn clear_pending_payments(&self) {
 		self.pending_outbound_payments.lock().unwrap().clear()
 	}
+
+	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<InvoiceRequest> {
+		let pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
+		let mut invoice_requests = vec![];
+		for (_, pending_outbound_payment) in pending_outbound_payments.iter() {
+			let invoice_request = match pending_outbound_payment {
+				PendingOutboundPayment::AwaitingInvoice { invoice_request , .. } => {
+					match invoice_request {
+						Some(invoice_request) => invoice_request.clone(),
+						None => continue,
+					}
+				}
+				_ => continue,
+			};
+			invoice_requests.push(invoice_request);
+		};
+		invoice_requests
+	}
 }
 
 /// Returns whether a payment with the given [`PaymentHash`] and [`PaymentId`] is, in fact, a
