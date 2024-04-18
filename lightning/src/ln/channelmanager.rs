@@ -6013,14 +6013,13 @@ where
 	pub fn timer_tick_occurred_faster(&self) {
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 
-		if invoice_requests.len() > 0 {
-			let reply_path = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths).ok();
+		if invoice_requests.is_empty() { return; }
+
+		if let Ok(reply_path) = self.create_blinded_path() {
 			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 
-			if let Some(reply_path) = reply_path {
-				for invoice_request in invoice_requests {
-					pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path));
-				}
+			for invoice_request in invoice_requests {
+				pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path.clone()));
 			}
 		}
 	}
