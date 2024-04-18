@@ -19,6 +19,7 @@ use crate::offers::parse::Bolt12ParseError;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::util::logger::Logger;
 use crate::util::ser::{Readable, ReadableArgs, Writeable, Writer};
+use crate::onion_message::messenger::{ResponseInstruction, Responder};
 #[cfg(not(c_bindings))]
 use crate::onion_message::messenger::PendingOnionMessage;
 
@@ -39,7 +40,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message(&self, message: OffersMessage) -> Option<OffersMessage>;
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage>;
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
@@ -116,6 +117,9 @@ impl OnionMessageContents for OffersMessage {
 			OffersMessage::Invoice(_) => INVOICE_TLV_TYPE,
 			OffersMessage::InvoiceError(_) => INVOICE_ERROR_TLV_TYPE,
 		}
+	}
+	fn msg_type() -> &'static str {
+		"Offers"
 	}
 }
 
