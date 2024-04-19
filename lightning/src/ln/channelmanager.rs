@@ -6010,7 +6010,7 @@ where
 		});
 	}
 
-	pub fn timer_tick_occurred_faster(&self) {
+	pub fn retry_tick_occured(&self) {
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 
 		if invoice_requests.is_empty() { return; }

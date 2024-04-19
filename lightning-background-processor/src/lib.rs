@@ -97,6 +97,11 @@ const FRESHNESS_TIMER: u64 = 60;
 #[cfg(test)]
 const FRESHNESS_TIMER: u64 = 1;
 
+#[cfg(not(test))]
+const RETRY_TIMER: u64 = 5;
+#[cfg(test)]
+const RETRY_TIMER: u64 = 1;
+
 #[cfg(all(not(test), not(debug_assertions)))]
 const PING_TIMER: u64 = 10;
 /// Signature operations take a lot longer without compiler optimisations.
@@ -134,7 +139,7 @@ const REBROADCAST_TIMER: u64 = 1;
 /// core::cmp::min is not currently const, so we define a trivial (and equivalent) replacement
 const fn min_u64(a: u64, b: u64) -> u64 { if a < b { a } else { b } }
 #[cfg(feature = "futures")]
-const FASTEST_TIMER: u64 = min_u64(min_u64(FRESHNESS_TIMER, PING_TIMER),
+const FASTEST_TIMER: u64 = min_u64(min_64(RETRY_TIMER, min_u64(FRESHNESS_TIMER, PING_TIMER)),
 	min_u64(SCORER_PERSIST_TIMER, min_u64(FIRST_NETWORK_PRUNE_TIMER, REBROADCAST_TIMER)));
 
 /// Either [`P2PGossipSync`] or [`RapidGossipSync`].
@@ -291,6 +296,7 @@ macro_rules! define_run_body {
 		$chain_monitor.rebroadcast_pending_claims();
 
 		let mut last_freshness_call = $get_timer(FRESHNESS_TIMER);
+		let mut last_retry_call = $get_timer(RETRY_TIMER);
 		let mut last_onion_message_handler_call = $get_timer(ONION_MESSAGE_HANDLER_TIMER);
 		let mut last_ping_call = $get_timer(PING_TIMER);
 		let mut last_prune_call = $get_timer(FIRST_NETWORK_PRUNE_TIMER);
@@ -345,6 +351,11 @@ macro_rules! define_run_body {
 				log_trace!($logger, "Calling ChannelManager's timer_tick_occurred");
 				$channel_manager.get_cm().timer_tick_occurred();
 				last_freshness_call = $get_timer(FRESHNESS_TIMER);
+			}
+			if $timer_elapsed(&mut last_retry_call, RETRY_TIMER) {
+				log_trace!($logger, "Calling ChannelManager's retry_tick_occured");
+				$channel_manager.get_cm().retry_tick_occured();
+				last_retry_call = $get_timer(RETRY_TIMER);
 			}
 			if $timer_elapsed(&mut last_onion_message_handler_call, ONION_MESSAGE_HANDLER_TIMER) {
 				log_trace!($logger, "Calling OnionMessageHandler's timer_tick_occurred");
