@@ -60,7 +60,7 @@ use crate::ln::outbound_payment::{Bolt12PaymentError, OutboundPayments, PaymentA
 use crate::ln::wire::Encode;
 use crate::offers::invoice::{BlindedPayInfo, Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequestBuilder};
 use crate::offers::merkle::SignError;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
@@ -76,6 +76,8 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+use super::onion_utils::construct_invoice_request_message;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::offers::offer::DerivedMetadata,
@@ -6010,7 +6012,7 @@ where
 		});
 	}
 
-	pub fn retry_tick_occured(&self) {
+	pub fn retry_tick_occurred(&self) {
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 
 		if invoice_requests.is_empty() { return; }
@@ -6019,7 +6021,7 @@ where
 			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 
 			for invoice_request in invoice_requests {
-				pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path.clone()));
+				pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path.clone()));
 			}
 		}
 	}
@@ -8759,35 +8761,9 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		pending_offers_messages.extend(self.get_invoice_request_messages(invoice_request, reply_path));
+		pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path));
 
 		Ok(())
-	}
-
-	fn get_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_path: BlindedPath) -> Vec<PendingOnionMessage<OffersMessage>> {
-		let mut messages = vec![];
-		if invoice_request.paths().is_empty() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(invoice_request.signing_pubkey()),
-				Some(reply_path),
-			);
-			messages.push(message);
-		} else {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
-			const REQUEST_LIMIT: usize = 10;
-			for path in invoice_request.paths().into_iter().take(REQUEST_LIMIT) {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
-				);
-				messages.push(message);
-			}
-		}
-		messages
 	}
 
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
