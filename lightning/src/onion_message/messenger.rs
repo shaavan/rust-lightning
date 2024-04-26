@@ -1017,24 +1017,24 @@ where
 
 	/// Handles the response to an [`OnionMessage`] based on its [`ResponseInstruction`],
 	/// enqueueing any response for sending.
-	pub fn handle_onion_message_response<T: OnionMessageContents>(
+	pub fn handle_onion_message_response<T: OnionMessageContents> (
 		&self, response: ResponseInstruction<T>
-	) {
+	) -> Result<Option<SendSuccess>, SendError> {
 		let (response, reply_path) = match response {
-			ResponseInstruction::WithReplyPath(response) => (response, self.create_blinded_path().ok()),
+			ResponseInstruction::WithReplyPath(response) => (response, Some(self.create_blinded_path()?)),
 			ResponseInstruction::WithoutReplyPath(response) => (response, None),
-			ResponseInstruction::NoResponse => return,
+			ResponseInstruction::NoResponse => return Ok(None),
 		};
 
 		let message_type = response.message.msg_type();
-		let _ = self.find_path_and_enqueue_onion_message(
+		self.find_path_and_enqueue_onion_message(
 			response.message, Destination::BlindedPath(response.reply_path), reply_path,
 			format_args!(
 				"when responding with {} to an onion message with path_id {:02x?}",
 				message_type,
 				response.path_id
 			)
-		);
+		).map(|result| Some(result))
 	}
 
 	#[cfg(test)]
@@ -1121,14 +1121,14 @@ where
 							|reply_path| Responder::new(reply_path, path_id)
 						);
 						let response_instructions = self.offers_handler.handle_message(msg, responder);
-						self.handle_onion_message_response(response_instructions);
+						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
 							|reply_path| Responder::new(reply_path, path_id)
 						);
 						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
-						self.handle_onion_message_response(response_instructions);
+						let _ = self.handle_onion_message_response(response_instructions);
 					},
 				}
 			},
