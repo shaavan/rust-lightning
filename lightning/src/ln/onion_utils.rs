@@ -1243,7 +1243,7 @@ pub fn construct_invoice_request_message(invoice_request: InvoiceRequest, reply_
 	let mut messages = vec![];
 	if invoice_request.paths().is_empty() {
 		let message = new_pending_onion_message(
-			OffersMessage::InvoiceRequest(invoice_request),
+			OffersMessage::InvoiceRequest(invoice_request.clone()),
 			Destination::Node(invoice_request.signing_pubkey()),
 			Some(reply_path),
 		);
