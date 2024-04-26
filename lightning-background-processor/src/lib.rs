@@ -64,8 +64,9 @@ use alloc::vec::Vec;
 /// * Monitoring whether the [`ChannelManager`] needs to be re-persisted to disk, and if so,
 ///   writing it to disk/backups by invoking the callback given to it at startup.
 ///   [`ChannelManager`] persistence should be done in the background.
-/// * Calling [`ChannelManager::timer_tick_occurred`], [`ChainMonitor::rebroadcast_pending_claims`]
-///   and [`PeerManager::timer_tick_occurred`] at the appropriate intervals.
+/// * Calling [`ChannelManager::timer_tick_occurred`], [`ChannelManager::retry_tick_occurred`]
+///   [`ChainMonitor::rebroadcast_pending_claims`] and [`PeerManager::timer_tick_occurred`]
+///   at the appropriate intervals.
 /// * Calling [`NetworkGraph::remove_stale_channels_and_tracking`] (if a [`GossipSync`] with a
 ///   [`NetworkGraph`] is provided to [`BackgroundProcessor::start`]).
 ///
@@ -81,6 +82,7 @@ use alloc::vec::Vec;
 ///
 /// [`ChannelManager`]: lightning::ln::channelmanager::ChannelManager
 /// [`ChannelManager::timer_tick_occurred`]: lightning::ln::channelmanager::ChannelManager::timer_tick_occurred
+/// [`ChannelManager::retry_tick_occurred`]: lightning::ln::channelmanager::ChannelManager::retry_tick_occurred
 /// [`ChannelMonitor`]: lightning::chain::channelmonitor::ChannelMonitor
 /// [`Event`]: lightning::events::Event
 /// [`PeerManager::timer_tick_occurred`]: lightning::ln::peer_handler::PeerManager::timer_tick_occurred
@@ -96,6 +98,11 @@ pub struct BackgroundProcessor {
 const FRESHNESS_TIMER: u64 = 60;
 #[cfg(test)]
 const FRESHNESS_TIMER: u64 = 1;
+
+#[cfg(not(test))]
+const RETRY_TIMER: u64 = 5;
+#[cfg(test)]
+const RETRY_TIMER: u64 = 1;
 
 #[cfg(all(not(test), not(debug_assertions)))]
 const PING_TIMER: u64 = 10;
@@ -134,7 +141,7 @@ const REBROADCAST_TIMER: u64 = 1;
 /// core::cmp::min is not currently const, so we define a trivial (and equivalent) replacement
 const fn min_u64(a: u64, b: u64) -> u64 { if a < b { a } else { b } }
 #[cfg(feature = "futures")]
-const FASTEST_TIMER: u64 = min_u64(min_u64(FRESHNESS_TIMER, PING_TIMER),
+const FASTEST_TIMER: u64 = min_u64(min_u64(RETRY_TIMER, min_u64(FRESHNESS_TIMER, PING_TIMER)),
 	min_u64(SCORER_PERSIST_TIMER, min_u64(FIRST_NETWORK_PRUNE_TIMER, REBROADCAST_TIMER)));
 
 /// Either [`P2PGossipSync`] or [`RapidGossipSync`].
@@ -291,6 +298,7 @@ macro_rules! define_run_body {
 		$chain_monitor.rebroadcast_pending_claims();
 
 		let mut last_freshness_call = $get_timer(FRESHNESS_TIMER);
+		let mut last_retry_call = $get_timer(RETRY_TIMER);
 		let mut last_onion_message_handler_call = $get_timer(ONION_MESSAGE_HANDLER_TIMER);
 		let mut last_ping_call = $get_timer(PING_TIMER);
 		let mut last_prune_call = $get_timer(FIRST_NETWORK_PRUNE_TIMER);
@@ -345,6 +353,11 @@ macro_rules! define_run_body {
 				log_trace!($logger, "Calling ChannelManager's timer_tick_occurred");
 				$channel_manager.get_cm().timer_tick_occurred();
 				last_freshness_call = $get_timer(FRESHNESS_TIMER);
+			}
+			if $timer_elapsed(&mut last_retry_call, RETRY_TIMER) {
+				log_trace!($logger, "Calling ChannelManager's retry_tick_occurred");
+				$channel_manager.get_cm().retry_tick_occurred();
+				last_retry_call = $get_timer(RETRY_TIMER);
 			}
 			if $timer_elapsed(&mut last_onion_message_handler_call, ONION_MESSAGE_HANDLER_TIMER) {
 				log_trace!($logger, "Calling OnionMessageHandler's timer_tick_occurred");
@@ -1488,6 +1501,7 @@ mod tests {
 		// - `ChainMonitor::rebroadcast_pending_claims` is called every `REBROADCAST_TIMER`,
 		// - `PeerManager::timer_tick_occurred` is called every `PING_TIMER`, and
 		// - `OnionMessageHandler::timer_tick_occurred` is called every `ONION_MESSAGE_HANDLER_TIMER`.
+		// - `ChannelManager::retry_tick_occurred` is called every `RETRY_TIMER`.
 		let (_, nodes) = create_nodes(1, "test_timer_tick_called");
 		let data_dir = nodes[0].kv_store.get_data_dir();
 		let persister = Arc::new(Persister::new(data_dir));
@@ -1499,10 +1513,12 @@ mod tests {
 			let desired_log_2 = "Calling PeerManager's timer_tick_occurred".to_string();
 			let desired_log_3 = "Rebroadcasting monitor's pending claims".to_string();
 			let desired_log_4 = "Calling OnionMessageHandler's timer_tick_occurred".to_string();
+			let desired_log_5 = "Calling ChannelManager's retry_tick_occurred".to_string();
 			if log_entries.get(&("lightning_background_processor", desired_log_1)).is_some() &&
 				log_entries.get(&("lightning_background_processor", desired_log_2)).is_some() &&
 				log_entries.get(&("lightning_background_processor", desired_log_3)).is_some() &&
-				log_entries.get(&("lightning_background_processor", desired_log_4)).is_some() {
+				log_entries.get(&("lightning_background_processor", desired_log_4)).is_some() &&
+				log_entries.get(&("lightning_background_processor", desired_log_5)).is_some() {
 				break
 			}
 		}
