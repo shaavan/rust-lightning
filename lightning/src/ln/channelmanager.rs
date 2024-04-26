@@ -76,6 +76,7 @@ use crate::util::string::UntrustedString;
 use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, MaybeReadable, Writeable, Writer, VecWriter};
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
+use super::onion_utils::construct_invoice_request_message;
 
 #[cfg(not(c_bindings))]
 use {
@@ -6043,6 +6044,27 @@ where
 		});
 	}
 
+	/// Performs actions that should happen roughly once every 5 seconds.
+	/// 
+	/// Currently, this includes retrying the sending of [`InvoiceRequest`] messages using newly
+	/// generated `reply_path` for payments that are still awaiting their corresponding
+	/// [`Bolt12Invoice`].
+	/// 
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	fn retry_invoice_request_messages(&self) -> Result<(), Bolt12SemanticError> {
+		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+		if invoice_requests.is_empty() { return Ok(()); }
+		if let Ok(reply_path) = self.create_blinded_path() {
+			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+			for invoice_request in invoice_requests {
+				pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path.clone())?);
+			}
+		}
+		Ok(())
+	}
+
 	/// Indicates that the preimage for payment_hash is unknown or the received amount is incorrect
 	/// after a PaymentClaimable event, failing the HTLC back to its origin and freeing resources
 	/// along the path (including in our own channel on which we received it).
@@ -8777,30 +8799,7 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if !offer.paths().is_empty() {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
-			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
-				);
-				pending_offers_messages.push(message);
-			}
-		} else if let Some(signing_pubkey) = offer.signing_pubkey() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(signing_pubkey),
-				Some(reply_path),
-			);
-			pending_offers_messages.push(message);
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingSigningPubkey);
-		}
+		pending_offers_messages.extend(construct_invoice_request_message(invoice_request, reply_path)?);
 
 		Ok(())
 	}
