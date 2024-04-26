@@ -76,7 +76,7 @@ use crate::offers::offer::{Offer, OfferContents, OfferTlvStream, OfferTlvStreamR
 use crate::offers::parse::{Bolt12ParseError, ParsedMessage, Bolt12SemanticError};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{Metadata, MetadataMaterial};
-use crate::util::ser::{HighZeroBytesDroppedBigSize, SeekReadable, WithoutLength, Writeable, Writer};
+use crate::util::ser::{HighZeroBytesDroppedBigSize, Readable, SeekReadable, WithoutLength, Writeable, Writer};
 use crate::util::string::PrintableString;
 
 #[cfg(not(c_bindings))]
@@ -960,6 +960,13 @@ impl Writeable for InvoiceRequest {
 impl Writeable for InvoiceRequestContents {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		self.as_tlv_stream().write(writer)
+	}
+}
+
+impl Readable for InvoiceRequest<> {
+	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
+		let bytes: WithoutLength<Vec<u8>> = Readable::read(reader)?;
+		Self::try_from(bytes.0).map_err(|_| DecodeError::InvalidValue)
 	}
 }
 
