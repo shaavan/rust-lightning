@@ -351,7 +351,7 @@ fn async_response_over_one_blinded_hop() {
 	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
 
 	// 6. Simulate Alice asynchronously responding back to Bob with a response.
-	nodes[0].messenger.handle_onion_message_response(response_instruction);
+	let _ = nodes[0].messenger.handle_onion_message_response(response_instruction);
 	bob.custom_message_handler.expect_message(TestCustomMessage::Response);
 
 	pass_along_path(&nodes);
