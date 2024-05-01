@@ -252,14 +252,14 @@ impl OnionMessageRecipient {
 /// for responding to a message.
 pub struct Responder {
 	/// The path along which a response can be sent.
-	reply_path: BlindedPath,
+	reply_path: Option<BlindedPath>,
 	path_id: Option<[u8; 32]>,
 	pub custom_tlvs: Option<Vec<u8>>,
 }
 
 impl Responder {
 	/// Creates a new [`Responder`] instance with the provided reply path.
-	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>, custom_tlvs: Option<Vec<u8>>) -> Self {
+	pub(super) fn new(reply_path: Option<BlindedPath>, path_id: Option<[u8; 32]>, custom_tlvs: Option<Vec<u8>>) -> Self {
 		Responder {
 			reply_path,
 			path_id,
@@ -269,22 +269,36 @@ impl Responder {
 
 	/// Creates the appropriate [`ResponseInstruction`] for a given response.
 	pub fn respond<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
-		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
-			message: response,
-			reply_path: self.reply_path,
-			path_id: self.path_id,
-			custom_tlvs: self.custom_tlvs
-		})
+		match self.reply_path {
+			Some(reply_path) => {
+				ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
+					message: response,
+					reply_path,
+					path_id: self.path_id,
+					custom_tlvs: self.custom_tlvs
+				})
+			}
+			None => {
+				ResponseInstruction::NoResponse
+			}
+		}
 	}
 
 	/// Creates the appropriate [`ResponseInstruction`] for a given response.
 	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
-		ResponseInstruction::WithReplyPath(OnionMessageResponse {
-			message: response,
-			reply_path: self.reply_path,
-			path_id: self.path_id,
-			custom_tlvs: self.custom_tlvs,
-		})
+		match self.reply_path {
+			Some(reply_path) => {
+				ResponseInstruction::WithReplyPath(OnionMessageResponse {
+					message: response,
+					reply_path,
+					path_id: self.path_id,
+					custom_tlvs: self.custom_tlvs,
+				})
+			}
+			None => {
+				ResponseInstruction::NoResponse
+			}
+		}
 	}
 }
 
@@ -1126,14 +1140,14 @@ where
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
+							|reply_path| Responder::new(Some(reply_path), path_id, custom_tlvs)
 						);
 						let response_instructions = self.offers_handler.handle_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
+							|reply_path| Responder::new(Some(reply_path), path_id, custom_tlvs)
 						);
 						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);

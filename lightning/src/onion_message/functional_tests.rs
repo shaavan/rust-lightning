@@ -344,7 +344,7 @@ fn async_response_over_one_blinded_hop() {
 	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
 
 	// 4. Create a responder using the reply path for Alice.
-	let responder = Some(Responder::new(reply_path, path_id, None));
+	let responder = Some(Responder::new(Some(reply_path), path_id, None));
 
 	// 5. Expect Alice to receive the message and create a response instruction for it.
 	alice.custom_message_handler.expect_message(message.clone());
