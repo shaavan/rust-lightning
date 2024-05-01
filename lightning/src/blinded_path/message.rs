@@ -26,12 +26,14 @@ pub(crate) struct ForwardTlvs {
 	pub(crate) next_blinding_override: Option<PublicKey>,
 }
 
+#[derive(Debug)]
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
-pub(crate) struct ReceiveTlvs {
+pub struct ReceiveTlvs {
 	/// If `path_id` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub(crate) path_id: Option<[u8; 32]>,
+	pub(crate) custom_tlvs: Option<Vec<u8>>,
 }
 
 /// The next hop to forward the onion message along its path.
@@ -77,7 +79,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| ForwardTlvs { next_hop: NextHop::NodeId(*pk), next_blinding_override: None })
 		.map(|tlvs| ControlTlvs::Forward(tlvs))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, custom_tlvs: Some(Vec::new()) })));
 
 	utils::construct_blinded_hops(secp_ctx, unblinded_path.iter(), blinded_tlvs, session_priv)
 }
