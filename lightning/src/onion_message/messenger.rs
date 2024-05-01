@@ -19,6 +19,7 @@ use crate::blinded_path::{BlindedPath, IntroductionNode, NodeIdLookUp};
 use crate::blinded_path::message::{advance_path_by_one, ForwardTlvs, NextHop, ReceiveTlvs};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
+use crate::ln::channelmanager::{is_payment_id, PaymentId};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::ln::features::{InitFeatures, NodeFeatures};
 use crate::ln::msgs::{self, OnionMessage, OnionMessageHandler, SocketAddress};
@@ -1117,6 +1118,11 @@ where
 					logger,
 					"Received an onion message with path_id {:02x?} and {} reply_path: {:?}",
 					path_id, if reply_path.is_some() { "a" } else { "no" }, message);
+
+				let payment_id: Option<PaymentId> = match custom_tlvs {
+					Some(custom_tlvs) if is_payment_id(&custom_tlvs) => Some(custom_tlvs.into()),
+					_ => None,
+				};
 
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {

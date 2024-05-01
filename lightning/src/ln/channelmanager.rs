@@ -412,6 +412,21 @@ impl PaymentId {
 	pub const LENGTH: usize = 32;
 }
 
+impl From<Vec<u8>> for PaymentId {
+    fn from(bytes: Vec<u8>) -> PaymentId {
+        let mut payment_id_bytes = [0u8; PaymentId::LENGTH];
+        // Ensure that the length of bytes is exactly PaymentId::LENGTH
+        assert_eq!(bytes.len(), PaymentId::LENGTH);
+        // Copy bytes into the payment_id_bytes array
+        payment_id_bytes.copy_from_slice(&bytes[..]);
+        PaymentId(payment_id_bytes)
+    }
+}
+
+pub fn is_payment_id(bytes: &Vec<u8>) -> bool {
+    bytes.len() == PaymentId::LENGTH
+}
+
 impl Writeable for PaymentId {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		self.0.write(w)
