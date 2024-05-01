@@ -62,7 +62,7 @@ struct MessengerNode {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, _message: OffersMessage, _responder: Responder) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
 }
@@ -126,19 +126,14 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Responder) -> ResponseInstruction<Self::CustomMessage> {
 		match self.expected_messages.lock().unwrap().pop_front() {
 			Some(expected_msg) => assert_eq!(expected_msg, msg),
 			None => panic!("Unexpected message: {:?}", msg),
 		}
-		let response_option = match msg {
-			TestCustomMessage::Request => Some(TestCustomMessage::Response),
-			TestCustomMessage::Response => None,
-		};
-		if let (Some(response), Some(responder)) = (response_option, responder) {
-			responder.respond(response)
-		} else {
-			ResponseInstruction::NoResponse
+		match msg {
+			TestCustomMessage::Request => responder.respond(TestCustomMessage::Response),
+			TestCustomMessage::Response => ResponseInstruction::NoResponse,
 		}
 	}
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, DecodeError> where Self: Sized {
@@ -344,7 +339,7 @@ fn async_response_over_one_blinded_hop() {
 	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
 
 	// 4. Create a responder using the reply path for Alice.
-	let responder = Some(Responder::new(Some(reply_path), path_id, None));
+	let responder = Responder::new(Some(reply_path), path_id, None);
 
 	// 5. Expect Alice to receive the message and create a response instruction for it.
 	alice.custom_message_handler.expect_message(message.clone());

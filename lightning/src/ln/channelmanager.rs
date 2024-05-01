@@ -10361,7 +10361,7 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Responder) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -10375,10 +10375,6 @@ where
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
-				let responder = match responder {
-					Some(responder) => responder,
-					None => return ResponseInstruction::NoResponse,
-				};
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request
 				) {
@@ -10480,26 +10476,18 @@ where
 						}
 					});
 
-				match (responder, response) {
-					(Some(responder), Err(e)) => {
+				match response {
+					Err(e) => {
 						abandon_if_payment(&responder);
 						responder.respond(OffersMessage::InvoiceError(e))
 					},
-					(None, Err(_)) => {
-						// TODO: Having access to payment_id here would require that the responder fields
-						// are available here even when there's no reply_path to respond back onto.
-						log_trace!(
-							self.logger,
-							"A response was generated, but there is no reply_path specified for sending the response."
-						);
-						return ResponseInstruction::NoResponse;
-					}
 					_ => return ResponseInstruction::NoResponse,
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
 				// TODO: Having access to payment_id here would require that the responder fields
 				// are available here even when there's no reply_path to respond back onto.
+				abandon_if_payment(&responder);
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},
