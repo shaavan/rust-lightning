@@ -19,7 +19,6 @@ use crate::blinded_path::{BlindedPath, IntroductionNode, NodeIdLookUp};
 use crate::blinded_path::message::{advance_path_by_one, ForwardTlvs, NextHop, ReceiveTlvs};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
-use crate::ln::channelmanager::{is_payment_id, PaymentId};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::ln::features::{InitFeatures, NodeFeatures};
 use crate::ln::msgs::{self, OnionMessage, OnionMessageHandler, SocketAddress};
@@ -254,15 +253,17 @@ impl OnionMessageRecipient {
 pub struct Responder {
 	/// The path along which a response can be sent.
 	reply_path: BlindedPath,
-	path_id: Option<[u8; 32]>
+	path_id: Option<[u8; 32]>,
+	pub custom_tlvs: Option<Vec<u8>>,
 }
 
 impl Responder {
 	/// Creates a new [`Responder`] instance with the provided reply path.
-	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>) -> Self {
+	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>, custom_tlvs: Option<Vec<u8>>) -> Self {
 		Responder {
 			reply_path,
 			path_id,
+			custom_tlvs,
 		}
 	}
 
@@ -272,6 +273,7 @@ impl Responder {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
+			custom_tlvs: self.custom_tlvs
 		})
 	}
 
@@ -281,6 +283,7 @@ impl Responder {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
+			custom_tlvs: self.custom_tlvs,
 		})
 	}
 }
@@ -290,6 +293,7 @@ pub struct OnionMessageResponse<T: OnionMessageContents> {
 	message: T,
 	reply_path: BlindedPath,
 	path_id: Option<[u8; 32]>,
+	custom_tlvs: Option<Vec<u8>>,
 }
 
 /// `ResponseInstruction` represents instructions for responding to received messages.
@@ -1119,22 +1123,17 @@ where
 					"Received an onion message with path_id {:02x?} and {} reply_path: {:?}",
 					path_id, if reply_path.is_some() { "a" } else { "no" }, message);
 
-				let payment_id: Option<PaymentId> = match custom_tlvs {
-					Some(custom_tlvs) if is_payment_id(&custom_tlvs) => Some(custom_tlvs.into()),
-					_ => None,
-				};
-
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id)
+							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
 						);
 						let response_instructions = self.offers_handler.handle_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id)
+							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
 						);
 						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);

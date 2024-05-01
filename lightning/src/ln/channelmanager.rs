@@ -410,6 +410,18 @@ pub struct PaymentId(pub [u8; Self::LENGTH]);
 impl PaymentId {
 	/// Number of bytes in the id.
 	pub const LENGTH: usize = 32;
+
+	fn parse(bytes: &Option<Vec<u8>>) -> Result<PaymentId, &'static str> {
+        let bytes = match bytes {
+            Some(bytes) => bytes,
+            None => return Err("No bytes provided"),
+        };
+
+        if bytes.len() != PaymentId::LENGTH {
+            return Err("Invalid length for PaymentId");
+        }
+        Ok(PaymentId::from(bytes.clone()))
+    }
 }
 
 impl From<Vec<u8>> for PaymentId {
@@ -421,10 +433,6 @@ impl From<Vec<u8>> for PaymentId {
         payment_id_bytes.copy_from_slice(&bytes[..]);
         PaymentId(payment_id_bytes)
     }
-}
-
-pub fn is_payment_id(bytes: &Vec<u8>) -> bool {
-    bytes.len() == PaymentId::LENGTH
 }
 
 impl Writeable for PaymentId {
@@ -10357,6 +10365,14 @@ where
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
+		let abandon_if_payment = |responder: &Responder| {
+			let payment_id = PaymentId::parse(&responder.custom_tlvs);
+			match payment_id {
+				Ok(payment_id) => self.abandon_payment(payment_id),
+				Err(_) => {},
+			}
+		};
+
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
 				let responder = match responder {
@@ -10465,8 +10481,13 @@ where
 					});
 
 				match (responder, response) {
-					(Some(responder), Err(e)) => responder.respond(OffersMessage::InvoiceError(e)),
+					(Some(responder), Err(e)) => {
+						abandon_if_payment(&responder);
+						responder.respond(OffersMessage::InvoiceError(e))
+					},
 					(None, Err(_)) => {
+						// TODO: Having access to payment_id here would require that the responder fields
+						// are available here even when there's no reply_path to respond back onto.
 						log_trace!(
 							self.logger,
 							"A response was generated, but there is no reply_path specified for sending the response."
@@ -10477,6 +10498,8 @@ where
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
+				// TODO: Having access to payment_id here would require that the responder fields
+				// are available here even when there's no reply_path to respond back onto.
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},
