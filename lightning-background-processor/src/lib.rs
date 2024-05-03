@@ -93,7 +93,7 @@ pub struct BackgroundProcessor {
 }
 
 #[cfg(not(test))]
-const FRESHNESS_TIMER: u64 = 60;
+const FRESHNESS_TIMER: u64 = 6;
 #[cfg(test)]
 const FRESHNESS_TIMER: u64 = 1;
 
