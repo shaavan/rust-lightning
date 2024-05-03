@@ -5773,274 +5773,298 @@ where
 	/// [`ChannelUpdate`]: msgs::ChannelUpdate
 	/// [`ChannelConfig`]: crate::util::config::ChannelConfig
 	pub fn timer_tick_occurred(&self) {
-		PersistenceNotifierGuard::optionally_notify(self, || {
-			let mut should_persist = NotifyOption::SkipPersistNoEvents;
 
-			let non_anchor_feerate = self.fee_estimator.bounded_sat_per_1000_weight(ConfirmationTarget::NonAnchorChannelFee);
-			let anchor_feerate = self.fee_estimator.bounded_sat_per_1000_weight(ConfirmationTarget::AnchorChannelFee);
+		// Define a static counter to keep track of the number of calls to the function
+		static mut CALL_COUNT: usize = 0;
 
-			let mut handle_errors: Vec<(Result<(), _>, _)> = Vec::new();
-			let mut timed_out_mpp_htlcs = Vec::new();
-			let mut pending_peers_awaiting_removal = Vec::new();
-			let mut shutdown_channels = Vec::new();
+		#[cfg(not(test))]
+		let factor = 10;
+		#[cfg(test)]
+		let factor = 1;
 
-			let mut process_unfunded_channel_tick = |
-				chan_id: &ChannelId,
-				context: &mut ChannelContext<SP>,
-				unfunded_context: &mut UnfundedChannelContext,
-				pending_msg_events: &mut Vec<MessageSendEvent>,
-				counterparty_node_id: PublicKey,
-			| {
-				context.maybe_expire_prev_config();
-				if unfunded_context.should_expire_unfunded_channel() {
-					let logger = WithChannelContext::from(&self.logger, context);
-					log_error!(logger,
-						"Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
-					update_maps_on_chan_removal!(self, &context);
-					shutdown_channels.push(context.force_shutdown(false, ClosureReason::HolderForceClosed));
-					pending_msg_events.push(MessageSendEvent::HandleError {
-						node_id: counterparty_node_id,
-						action: msgs::ErrorAction::SendErrorMessage {
-							msg: msgs::ErrorMessage {
-								channel_id: *chan_id,
-								data: "Force-closing pending channel due to timeout awaiting establishment handshake".to_owned(),
+		// Increment the call count
+		unsafe {
+			CALL_COUNT += 1;
+		}
+
+		self.retry_invoice_request_messages();
+
+		// Execute the internal code only if the call count is a multiple of 10
+		if unsafe { CALL_COUNT % factor == 0 } {
+			PersistenceNotifierGuard::optionally_notify(self, || {
+				let mut should_persist = NotifyOption::SkipPersistNoEvents;
+
+				let non_anchor_feerate = self.fee_estimator.bounded_sat_per_1000_weight(ConfirmationTarget::NonAnchorChannelFee);
+				let anchor_feerate = self.fee_estimator.bounded_sat_per_1000_weight(ConfirmationTarget::AnchorChannelFee);
+
+				let mut handle_errors: Vec<(Result<(), _>, _)> = Vec::new();
+				let mut timed_out_mpp_htlcs = Vec::new();
+				let mut pending_peers_awaiting_removal = Vec::new();
+				let mut shutdown_channels = Vec::new();
+
+				let mut process_unfunded_channel_tick = |
+					chan_id: &ChannelId,
+					context: &mut ChannelContext<SP>,
+					unfunded_context: &mut UnfundedChannelContext,
+					pending_msg_events: &mut Vec<MessageSendEvent>,
+					counterparty_node_id: PublicKey,
+				| {
+					context.maybe_expire_prev_config();
+					if unfunded_context.should_expire_unfunded_channel() {
+						let logger = WithChannelContext::from(&self.logger, context);
+						log_error!(logger,
+							"Force-closing pending channel with ID {} for not establishing in a timely manner", chan_id);
+						update_maps_on_chan_removal!(self, &context);
+						shutdown_channels.push(context.force_shutdown(false, ClosureReason::HolderForceClosed));
+						pending_msg_events.push(MessageSendEvent::HandleError {
+							node_id: counterparty_node_id,
+							action: msgs::ErrorAction::SendErrorMessage {
+								msg: msgs::ErrorMessage {
+									channel_id: *chan_id,
+									data: "Force-closing pending channel due to timeout awaiting establishment handshake".to_owned(),
+								},
 							},
-						},
-					});
-					false
-				} else {
-					true
-				}
-			};
+						});
+						false
+					} else {
+						true
+					}
+				};
 
-			{
-				let per_peer_state = self.per_peer_state.read().unwrap();
-				for (counterparty_node_id, peer_state_mutex) in per_peer_state.iter() {
-					let mut peer_state_lock = peer_state_mutex.lock().unwrap();
-					let peer_state = &mut *peer_state_lock;
-					let pending_msg_events = &mut peer_state.pending_msg_events;
-					let counterparty_node_id = *counterparty_node_id;
-					peer_state.channel_by_id.retain(|chan_id, phase| {
-						match phase {
-							ChannelPhase::Funded(chan) => {
-								let new_feerate = if chan.context.get_channel_type().supports_anchors_zero_fee_htlc_tx() {
-									anchor_feerate
-								} else {
-									non_anchor_feerate
-								};
-								let chan_needs_persist = self.update_channel_fee(chan_id, chan, new_feerate);
-								if chan_needs_persist == NotifyOption::DoPersist { should_persist = NotifyOption::DoPersist; }
+				{
+					let per_peer_state = self.per_peer_state.read().unwrap();
+					for (counterparty_node_id, peer_state_mutex) in per_peer_state.iter() {
+						let mut peer_state_lock = peer_state_mutex.lock().unwrap();
+						let peer_state = &mut *peer_state_lock;
+						let pending_msg_events = &mut peer_state.pending_msg_events;
+						let counterparty_node_id = *counterparty_node_id;
+						peer_state.channel_by_id.retain(|chan_id, phase| {
+							match phase {
+								ChannelPhase::Funded(chan) => {
+									let new_feerate = if chan.context.get_channel_type().supports_anchors_zero_fee_htlc_tx() {
+										anchor_feerate
+									} else {
+										non_anchor_feerate
+									};
+									let chan_needs_persist = self.update_channel_fee(chan_id, chan, new_feerate);
+									if chan_needs_persist == NotifyOption::DoPersist { should_persist = NotifyOption::DoPersist; }
 
-								if let Err(e) = chan.timer_check_closing_negotiation_progress() {
-									let (needs_close, err) = convert_chan_phase_err!(self, e, chan, chan_id, FUNDED_CHANNEL);
-									handle_errors.push((Err(err), counterparty_node_id));
-									if needs_close { return false; }
-								}
+									if let Err(e) = chan.timer_check_closing_negotiation_progress() {
+										let (needs_close, err) = convert_chan_phase_err!(self, e, chan, chan_id, FUNDED_CHANNEL);
+										handle_errors.push((Err(err), counterparty_node_id));
+										if needs_close { return false; }
+									}
 
-								match chan.channel_update_status() {
-									ChannelUpdateStatus::Enabled if !chan.context.is_live() => chan.set_channel_update_status(ChannelUpdateStatus::DisabledStaged(0)),
-									ChannelUpdateStatus::Disabled if chan.context.is_live() => chan.set_channel_update_status(ChannelUpdateStatus::EnabledStaged(0)),
-									ChannelUpdateStatus::DisabledStaged(_) if chan.context.is_live()
-										=> chan.set_channel_update_status(ChannelUpdateStatus::Enabled),
-									ChannelUpdateStatus::EnabledStaged(_) if !chan.context.is_live()
-										=> chan.set_channel_update_status(ChannelUpdateStatus::Disabled),
-									ChannelUpdateStatus::DisabledStaged(mut n) if !chan.context.is_live() => {
-										n += 1;
-										if n >= DISABLE_GOSSIP_TICKS {
-											chan.set_channel_update_status(ChannelUpdateStatus::Disabled);
-											if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-												let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
-												pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
-													msg: update
-												});
+									match chan.channel_update_status() {
+										ChannelUpdateStatus::Enabled if !chan.context.is_live() => chan.set_channel_update_status(ChannelUpdateStatus::DisabledStaged(0)),
+										ChannelUpdateStatus::Disabled if chan.context.is_live() => chan.set_channel_update_status(ChannelUpdateStatus::EnabledStaged(0)),
+										ChannelUpdateStatus::DisabledStaged(_) if chan.context.is_live()
+											=> chan.set_channel_update_status(ChannelUpdateStatus::Enabled),
+										ChannelUpdateStatus::EnabledStaged(_) if !chan.context.is_live()
+											=> chan.set_channel_update_status(ChannelUpdateStatus::Disabled),
+										ChannelUpdateStatus::DisabledStaged(mut n) if !chan.context.is_live() => {
+											n += 1;
+											if n >= DISABLE_GOSSIP_TICKS {
+												chan.set_channel_update_status(ChannelUpdateStatus::Disabled);
+												if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
+													let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+													pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
+														msg: update
+													});
+												}
+												should_persist = NotifyOption::DoPersist;
+											} else {
+												chan.set_channel_update_status(ChannelUpdateStatus::DisabledStaged(n));
 											}
-											should_persist = NotifyOption::DoPersist;
-										} else {
-											chan.set_channel_update_status(ChannelUpdateStatus::DisabledStaged(n));
-										}
-									},
-									ChannelUpdateStatus::EnabledStaged(mut n) if chan.context.is_live() => {
-										n += 1;
-										if n >= ENABLE_GOSSIP_TICKS {
-											chan.set_channel_update_status(ChannelUpdateStatus::Enabled);
-											if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
-												let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
-												pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
-													msg: update
-												});
-											}
-											should_persist = NotifyOption::DoPersist;
-										} else {
-											chan.set_channel_update_status(ChannelUpdateStatus::EnabledStaged(n));
-										}
-									},
-									_ => {},
-								}
-
-								chan.context.maybe_expire_prev_config();
-
-								if chan.should_disconnect_peer_awaiting_response() {
-									let logger = WithChannelContext::from(&self.logger, &chan.context);
-									log_debug!(logger, "Disconnecting peer {} due to not making any progress on channel {}",
-											counterparty_node_id, chan_id);
-									pending_msg_events.push(MessageSendEvent::HandleError {
-										node_id: counterparty_node_id,
-										action: msgs::ErrorAction::DisconnectPeerWithWarning {
-											msg: msgs::WarningMessage {
-												channel_id: *chan_id,
-												data: "Disconnecting due to timeout awaiting response".to_owned(),
-											},
 										},
-									});
-								}
+										ChannelUpdateStatus::EnabledStaged(mut n) if chan.context.is_live() => {
+											n += 1;
+											if n >= ENABLE_GOSSIP_TICKS {
+												chan.set_channel_update_status(ChannelUpdateStatus::Enabled);
+												if let Ok(update) = self.get_channel_update_for_broadcast(&chan) {
+													let mut pending_broadcast_messages = self.pending_broadcast_messages.lock().unwrap();
+													pending_broadcast_messages.push(events::MessageSendEvent::BroadcastChannelUpdate {
+														msg: update
+													});
+												}
+												should_persist = NotifyOption::DoPersist;
+											} else {
+												chan.set_channel_update_status(ChannelUpdateStatus::EnabledStaged(n));
+											}
+										},
+										_ => {},
+									}
 
-								true
-							},
-							ChannelPhase::UnfundedInboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
-							},
-							ChannelPhase::UnfundedOutboundV1(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
-							},
-							#[cfg(any(dual_funding, splicing))]
-							ChannelPhase::UnfundedInboundV2(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
-							},
-							#[cfg(any(dual_funding, splicing))]
-							ChannelPhase::UnfundedOutboundV2(chan) => {
-								process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
-									pending_msg_events, counterparty_node_id)
-							},
-						}
-					});
+									chan.context.maybe_expire_prev_config();
 
-					for (chan_id, req) in peer_state.inbound_channel_request_by_id.iter_mut() {
-						if { req.ticks_remaining -= 1 ; req.ticks_remaining } <= 0 {
-							let logger = WithContext::from(&self.logger, Some(counterparty_node_id), Some(*chan_id));
-							log_error!(logger, "Force-closing unaccepted inbound channel {} for not accepting in a timely manner", &chan_id);
-							peer_state.pending_msg_events.push(
-								events::MessageSendEvent::HandleError {
-									node_id: counterparty_node_id,
-									action: msgs::ErrorAction::SendErrorMessage {
-										msg: msgs::ErrorMessage { channel_id: chan_id.clone(), data: "Channel force-closed".to_owned() }
-									},
-								}
-							);
-						}
-					}
-					peer_state.inbound_channel_request_by_id.retain(|_, req| req.ticks_remaining > 0);
+									if chan.should_disconnect_peer_awaiting_response() {
+										let logger = WithChannelContext::from(&self.logger, &chan.context);
+										log_debug!(logger, "Disconnecting peer {} due to not making any progress on channel {}",
+												counterparty_node_id, chan_id);
+										pending_msg_events.push(MessageSendEvent::HandleError {
+											node_id: counterparty_node_id,
+											action: msgs::ErrorAction::DisconnectPeerWithWarning {
+												msg: msgs::WarningMessage {
+													channel_id: *chan_id,
+													data: "Disconnecting due to timeout awaiting response".to_owned(),
+												},
+											},
+										});
+									}
 
-					if peer_state.ok_to_remove(true) {
-						pending_peers_awaiting_removal.push(counterparty_node_id);
-					}
-				}
-			}
-
-			// When a peer disconnects but still has channels, the peer's `peer_state` entry in the
-			// `per_peer_state` is not removed by the `peer_disconnected` function. If the channels
-			// of to that peer is later closed while still being disconnected (i.e. force closed),
-			// we therefore need to remove the peer from `peer_state` separately.
-			// To avoid having to take the `per_peer_state` `write` lock once the channels are
-			// closed, we instead remove such peers awaiting removal here on a timer, to limit the
-			// negative effects on parallelism as much as possible.
-			if pending_peers_awaiting_removal.len() > 0 {
-				let mut per_peer_state = self.per_peer_state.write().unwrap();
-				for counterparty_node_id in pending_peers_awaiting_removal {
-					match per_peer_state.entry(counterparty_node_id) {
-						hash_map::Entry::Occupied(entry) => {
-							// Remove the entry if the peer is still disconnected and we still
-							// have no channels to the peer.
-							let remove_entry = {
-								let peer_state = entry.get().lock().unwrap();
-								peer_state.ok_to_remove(true)
-							};
-							if remove_entry {
-								entry.remove_entry();
+									true
+								},
+								ChannelPhase::UnfundedInboundV1(chan) => {
+									process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+										pending_msg_events, counterparty_node_id)
+								},
+								ChannelPhase::UnfundedOutboundV1(chan) => {
+									process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+										pending_msg_events, counterparty_node_id)
+								},
+								#[cfg(any(dual_funding, splicing))]
+								ChannelPhase::UnfundedInboundV2(chan) => {
+									process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+										pending_msg_events, counterparty_node_id)
+								},
+								#[cfg(any(dual_funding, splicing))]
+								ChannelPhase::UnfundedOutboundV2(chan) => {
+									process_unfunded_channel_tick(chan_id, &mut chan.context, &mut chan.unfunded_context,
+										pending_msg_events, counterparty_node_id)
+								},
 							}
-						},
-						hash_map::Entry::Vacant(_) => { /* The PeerState has already been removed */ }
+						});
+
+						for (chan_id, req) in peer_state.inbound_channel_request_by_id.iter_mut() {
+							if { req.ticks_remaining -= 1 ; req.ticks_remaining } <= 0 {
+								let logger = WithContext::from(&self.logger, Some(counterparty_node_id), Some(*chan_id));
+								log_error!(logger, "Force-closing unaccepted inbound channel {} for not accepting in a timely manner", &chan_id);
+								peer_state.pending_msg_events.push(
+									events::MessageSendEvent::HandleError {
+										node_id: counterparty_node_id,
+										action: msgs::ErrorAction::SendErrorMessage {
+											msg: msgs::ErrorMessage { channel_id: chan_id.clone(), data: "Channel force-closed".to_owned() }
+										},
+									}
+								);
+							}
+						}
+						peer_state.inbound_channel_request_by_id.retain(|_, req| req.ticks_remaining > 0);
+
+						if peer_state.ok_to_remove(true) {
+							pending_peers_awaiting_removal.push(counterparty_node_id);
+						}
 					}
 				}
-			}
 
-			self.claimable_payments.lock().unwrap().claimable_payments.retain(|payment_hash, payment| {
-				if payment.htlcs.is_empty() {
-					// This should be unreachable
-					debug_assert!(false);
-					return false;
+				// When a peer disconnects but still has channels, the peer's `peer_state` entry in the
+				// `per_peer_state` is not removed by the `peer_disconnected` function. If the channels
+				// of to that peer is later closed while still being disconnected (i.e. force closed),
+				// we therefore need to remove the peer from `peer_state` separately.
+				// To avoid having to take the `per_peer_state` `write` lock once the channels are
+				// closed, we instead remove such peers awaiting removal here on a timer, to limit the
+				// negative effects on parallelism as much as possible.
+				if pending_peers_awaiting_removal.len() > 0 {
+					let mut per_peer_state = self.per_peer_state.write().unwrap();
+					for counterparty_node_id in pending_peers_awaiting_removal {
+						match per_peer_state.entry(counterparty_node_id) {
+							hash_map::Entry::Occupied(entry) => {
+								// Remove the entry if the peer is still disconnected and we still
+								// have no channels to the peer.
+								let remove_entry = {
+									let peer_state = entry.get().lock().unwrap();
+									peer_state.ok_to_remove(true)
+								};
+								if remove_entry {
+									entry.remove_entry();
+								}
+							},
+							hash_map::Entry::Vacant(_) => { /* The PeerState has already been removed */ }
+						}
+					}
 				}
-				if let OnionPayload::Invoice { .. } = payment.htlcs[0].onion_payload {
-					// Check if we've received all the parts we need for an MPP (the value of the parts adds to total_msat).
-					// In this case we're not going to handle any timeouts of the parts here.
-					// This condition determining whether the MPP is complete here must match
-					// exactly the condition used in `process_pending_htlc_forwards`.
-					if payment.htlcs[0].total_msat <= payment.htlcs.iter()
-						.fold(0, |total, htlc| total + htlc.sender_intended_value)
-					{
-						return true;
-					} else if payment.htlcs.iter_mut().any(|htlc| {
-						htlc.timer_ticks += 1;
-						return htlc.timer_ticks >= MPP_TIMEOUT_TICKS
-					}) {
-						timed_out_mpp_htlcs.extend(payment.htlcs.drain(..)
-							.map(|htlc: ClaimableHTLC| (htlc.prev_hop, *payment_hash)));
+
+				self.claimable_payments.lock().unwrap().claimable_payments.retain(|payment_hash, payment| {
+					if payment.htlcs.is_empty() {
+						// This should be unreachable
+						debug_assert!(false);
 						return false;
 					}
+					if let OnionPayload::Invoice { .. } = payment.htlcs[0].onion_payload {
+						// Check if we've received all the parts we need for an MPP (the value of the parts adds to total_msat).
+						// In this case we're not going to handle any timeouts of the parts here.
+						// This condition determining whether the MPP is complete here must match
+						// exactly the condition used in `process_pending_htlc_forwards`.
+						if payment.htlcs[0].total_msat <= payment.htlcs.iter()
+							.fold(0, |total, htlc| total + htlc.sender_intended_value)
+						{
+							return true;
+						} else if payment.htlcs.iter_mut().any(|htlc| {
+							htlc.timer_ticks += 1;
+							return htlc.timer_ticks >= MPP_TIMEOUT_TICKS
+						}) {
+							timed_out_mpp_htlcs.extend(payment.htlcs.drain(..)
+								.map(|htlc: ClaimableHTLC| (htlc.prev_hop, *payment_hash)));
+							return false;
+						}
+					}
+					true
+				});
+
+				for htlc_source in timed_out_mpp_htlcs.drain(..) {
+					let source = HTLCSource::PreviousHopData(htlc_source.0.clone());
+					let reason = HTLCFailReason::from_failure_code(23);
+					let receiver = HTLCDestination::FailedPayment { payment_hash: htlc_source.1 };
+					self.fail_htlc_backwards_internal(&source, &htlc_source.1, &reason, receiver);
 				}
-				true
+
+				for (err, counterparty_node_id) in handle_errors.drain(..) {
+					let _ = handle_error!(self, err, counterparty_node_id);
+				}
+
+				for shutdown_res in shutdown_channels {
+					self.finish_close_channel(shutdown_res);
+				}
+
+				#[cfg(feature = "std")]
+				let duration_since_epoch = std::time::SystemTime::now()
+					.duration_since(std::time::SystemTime::UNIX_EPOCH)
+					.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+				#[cfg(not(feature = "std"))]
+				let duration_since_epoch = Duration::from_secs(
+					self.highest_seen_timestamp.load(Ordering::Acquire).saturating_sub(7200) as u64
+				);
+
+				self.pending_outbound_payments.remove_stale_payments(
+					duration_since_epoch, &self.pending_events
+				);
+
+				// Technically we don't need to do this here, but if we have holding cell entries in a
+				// channel that need freeing, it's better to do that here and block a background task
+				// than block the message queueing pipeline.
+				if self.check_free_holding_cells() {
+					should_persist = NotifyOption::DoPersist;
+				}
+
+				// Reset the call count to 0 after executing the internal code
+				unsafe {
+					CALL_COUNT = 0;
+				}
+
+				should_persist
 			});
-
-			for htlc_source in timed_out_mpp_htlcs.drain(..) {
-				let source = HTLCSource::PreviousHopData(htlc_source.0.clone());
-				let reason = HTLCFailReason::from_failure_code(23);
-				let receiver = HTLCDestination::FailedPayment { payment_hash: htlc_source.1 };
-				self.fail_htlc_backwards_internal(&source, &htlc_source.1, &reason, receiver);
-			}
-
-			for (err, counterparty_node_id) in handle_errors.drain(..) {
-				let _ = handle_error!(self, err, counterparty_node_id);
-			}
-
-			for shutdown_res in shutdown_channels {
-				self.finish_close_channel(shutdown_res);
-			}
-
-			#[cfg(feature = "std")]
-			let duration_since_epoch = std::time::SystemTime::now()
-				.duration_since(std::time::SystemTime::UNIX_EPOCH)
-				.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
-			#[cfg(not(feature = "std"))]
-			let duration_since_epoch = Duration::from_secs(
-				self.highest_seen_timestamp.load(Ordering::Acquire).saturating_sub(7200) as u64
-			);
-
-			self.pending_outbound_payments.remove_stale_payments(
-				duration_since_epoch, &self.pending_events
-			);
-
-			// Technically we don't need to do this here, but if we have holding cell entries in a
-			// channel that need freeing, it's better to do that here and block a background task
-			// than block the message queueing pipeline.
-			if self.check_free_holding_cells() {
-				should_persist = NotifyOption::DoPersist;
-			}
-
-			should_persist
-		});
+		}
 	}
 
 	/// Performs actions that should happen roughly once every 5 seconds.
-	/// 
+	///
 	/// Currently, this includes retrying the sending of [`InvoiceRequest`] messages using newly
 	/// generated `reply_path` for payments that are still awaiting their corresponding
 	/// [`Bolt12Invoice`].
-	/// 
+	///
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn retry_tick_occurred(&self) {
+	fn retry_invoice_request_messages(&self) {
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 
 		if invoice_requests.is_empty() { return; }
