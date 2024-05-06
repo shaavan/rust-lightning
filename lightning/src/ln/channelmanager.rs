@@ -10361,12 +10361,12 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
-		let abandon_if_payment = |responder: &Responder| {
-			let payment_id = PaymentId::parse(&responder.custom_tlvs);
+		let abandon_if_payment = || {
+			let payment_id = PaymentId::parse(&custom_tlvs);
 			match payment_id {
 				Ok(payment_id) => self.abandon_payment(payment_id),
 				Err(_) => {},
@@ -10383,13 +10383,13 @@ where
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs),
 				};
 				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10400,7 +10400,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10414,7 +10414,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10459,8 +10459,8 @@ where
 				};
 
 				match response {
-					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice)),
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice), custom_tlvs),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs),
 				}
 			},
 			OffersMessage::Invoice(invoice) => {
@@ -10482,12 +10482,13 @@ where
 
 				match (responder, response) {
 					(Some(responder), Err(e)) => {
-						abandon_if_payment(&responder);
-						responder.respond(OffersMessage::InvoiceError(e))
+						abandon_if_payment();
+						responder.respond(OffersMessage::InvoiceError(e), custom_tlvs)
 					},
 					(None, Err(_)) => {
 						// TODO: Having access to payment_id here would require that the responder fields
 						// are available here even when there's no reply_path to respond back onto.
+						abandon_if_payment();
 						log_trace!(
 							self.logger,
 							"A response was generated, but there is no reply_path specified for sending the response."
@@ -10500,6 +10501,7 @@ where
 			OffersMessage::InvoiceError(invoice_error) => {
 				// TODO: Having access to payment_id here would require that the responder fields
 				// are available here even when there's no reply_path to respond back onto.
+				abandon_if_payment();
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},

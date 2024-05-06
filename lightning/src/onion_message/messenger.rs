@@ -254,36 +254,34 @@ pub struct Responder {
 	/// The path along which a response can be sent.
 	reply_path: BlindedPath,
 	path_id: Option<[u8; 32]>,
-	pub custom_tlvs: Option<Vec<u8>>,
 }
 
 impl Responder {
 	/// Creates a new [`Responder`] instance with the provided reply path.
-	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>, custom_tlvs: Option<Vec<u8>>) -> Self {
+	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>) -> Self {
 		Responder {
 			reply_path,
 			path_id,
-			custom_tlvs,
 		}
 	}
 
 	/// Creates the appropriate [`ResponseInstruction`] for a given response.
-	pub fn respond<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+	pub fn respond<T: OnionMessageContents>(self, response: T, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<T> {
 		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
-			custom_tlvs: self.custom_tlvs
+			custom_tlvs,
 		})
 	}
 
 	/// Creates the appropriate [`ResponseInstruction`] for a given response.
-	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<T> {
 		ResponseInstruction::WithReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
-			custom_tlvs: self.custom_tlvs,
+			custom_tlvs,
 		})
 	}
 }
@@ -608,7 +606,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage>;
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<Self::CustomMessage>;
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -1126,16 +1124,16 @@ where
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
+							|reply_path| Responder::new(reply_path, path_id)
 						);
-						let response_instructions = self.offers_handler.handle_message(msg, responder);
+						let response_instructions = self.offers_handler.handle_message(msg, responder, custom_tlvs);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id, custom_tlvs)
+							|reply_path| Responder::new(reply_path, path_id)
 						);
-						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
+						let response_instructions = self.custom_handler.handle_custom_message(msg, responder, custom_tlvs);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 				}
