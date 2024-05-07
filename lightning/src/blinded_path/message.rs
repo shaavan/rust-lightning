@@ -79,7 +79,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| ForwardTlvs { next_hop: NextHop::NodeId(*pk), next_blinding_override: None })
 		.map(|tlvs| ControlTlvs::Forward(tlvs))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, custom_tlvs: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, custom_tlvs: Some(Vec::new()) })));
 
 	utils::construct_blinded_hops(secp_ctx, unblinded_path.iter(), blinded_tlvs, session_priv)
 }

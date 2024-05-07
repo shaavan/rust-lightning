@@ -127,7 +127,7 @@ struct TestCustomMessageHandler {}
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
 		match responder {
 			Some(responder) => responder.respond(message),
 			None => ResponseInstruction::NoResponse

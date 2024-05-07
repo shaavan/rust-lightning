@@ -412,7 +412,7 @@ impl PaymentId {
 	pub const LENGTH: usize = 32;
 
 	fn parse(bytes: &Option<Vec<u8>>) -> Result<PaymentId, &'static str> {
-		let bytes = match bytes {
+        let bytes = match bytes {
             Some(bytes) => bytes,
             None => return Err("No bytes provided"),
         };
@@ -10366,11 +10366,11 @@ where
 		let expanded_key = &self.inbound_payment_key;
 
 		let abandon_if_payment = || {
-		    let payment_id = PaymentId::parse(&custom_tlvs);
-		    match payment_id {
-		            Ok(payment_id) => self.abandon_payment(payment_id),
-		            Err(_) => {},
-		    }
+			let payment_id = PaymentId::parse(&custom_tlvs);
+			match payment_id {
+				Ok(payment_id) => self.abandon_payment(payment_id),
+				Err(_) => {},
+			}
 		};
 
 		match message {
@@ -10383,13 +10383,13 @@ where
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs),
 				};
 				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10400,7 +10400,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10414,7 +10414,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs);
 					},
 				};
 
@@ -10459,8 +10459,8 @@ where
 				};
 
 				match response {
-					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice)),
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice), custom_tlvs),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), custom_tlvs),
 				}
 			},
 			OffersMessage::Invoice(invoice) => {
@@ -10483,7 +10483,7 @@ where
 				match (responder, response) {
 					(Some(responder), Err(e)) => {
 						abandon_if_payment();
-						responder.respond(OffersMessage::InvoiceError(e))
+						responder.respond(OffersMessage::InvoiceError(e), custom_tlvs)
 					},
 					(None, Err(_)) => {
 						abandon_if_payment();
