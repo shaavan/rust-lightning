@@ -410,6 +410,29 @@ pub struct PaymentId(pub [u8; Self::LENGTH]);
 impl PaymentId {
 	/// Number of bytes in the id.
 	pub const LENGTH: usize = 32;
+
+	fn parse(bytes: &Option<Vec<u8>>) -> Result<PaymentId, &'static str> {
+		let bytes = match bytes {
+            Some(bytes) => bytes,
+            None => return Err("No bytes provided"),
+        };
+
+        if bytes.len() != PaymentId::LENGTH {
+            return Err("Invalid length for PaymentId");
+        }
+        Ok(PaymentId::from(bytes.clone()))
+    }
+}
+
+impl From<Vec<u8>> for PaymentId {
+    fn from(bytes: Vec<u8>) -> PaymentId {
+        let mut payment_id_bytes = [0u8; PaymentId::LENGTH];
+        // Ensure that the length of bytes is exactly PaymentId::LENGTH
+        assert_eq!(bytes.len(), PaymentId::LENGTH);
+        // Copy bytes into the payment_id_bytes array
+        payment_id_bytes.copy_from_slice(&bytes[..]);
+        PaymentId(payment_id_bytes)
+    }
 }
 
 impl Writeable for PaymentId {
@@ -10338,9 +10361,17 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, custom_tlvs: Option<Vec<u8>>) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
+
+		let abandon_if_payment = || {
+		    let payment_id = PaymentId::parse(&custom_tlvs);
+		    match payment_id {
+		            Ok(payment_id) => self.abandon_payment(payment_id),
+		            Err(_) => {},
+		    }
+		};
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
@@ -10450,8 +10481,12 @@ where
 					});
 
 				match (responder, response) {
-					(Some(responder), Err(e)) => responder.respond(OffersMessage::InvoiceError(e)),
+					(Some(responder), Err(e)) => {
+						abandon_if_payment();
+						responder.respond(OffersMessage::InvoiceError(e))
+					},
 					(None, Err(_)) => {
+						abandon_if_payment();
 						log_trace!(
 							self.logger,
 							"A response was generated, but there is no reply_path specified for sending the response."
@@ -10462,6 +10497,7 @@ where
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
+				abandon_if_payment();
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},
