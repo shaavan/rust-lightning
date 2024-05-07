@@ -658,7 +658,7 @@ where
 {
 	path.destination.resolve(network_graph);
 	create_onion_message(
-		entropy_source, node_signer, node_id_lookup, secp_ctx, path, contents, reply_path,
+		entropy_source, node_signer, node_id_lookup, secp_ctx, path, contents, reply_path, None,
 	)
 }
 
@@ -676,7 +676,7 @@ where
 pub fn create_onion_message<ES: Deref, NS: Deref, NL: Deref, T: OnionMessageContents>(
 	entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
 	secp_ctx: &Secp256k1<secp256k1::All>, path: OnionMessagePath, contents: T,
-	reply_path: Option<BlindedPath>,
+	reply_path: Option<BlindedPath>, custom_tlvs: Option<Vec<u8>>
 ) -> Result<(PublicKey, OnionMessage, Option<Vec<SocketAddress>>), SendError>
 where
 	ES::Target: EntropySource,
@@ -732,7 +732,7 @@ where
 		}
 	};
 	let (packet_payloads, packet_keys) = packet_payloads_and_keys(
-		&secp_ctx, &intermediate_nodes, destination, contents, reply_path, &blinding_secret
+		&secp_ctx, &intermediate_nodes, destination, contents, reply_path, custom_tlvs, &blinding_secret
 	)?;
 
 	let prng_seed = entropy_source.get_secure_random_bytes();
@@ -884,20 +884,20 @@ where
 		&self, contents: T, destination: Destination, reply_path: Option<BlindedPath>
 	) -> Result<SendSuccess, SendError> {
 		self.find_path_and_enqueue_onion_message(
-			contents, destination, reply_path, format_args!("")
+			contents, destination, reply_path, None, format_args!("")
 		)
 	}
 
 	fn find_path_and_enqueue_onion_message<T: OnionMessageContents>(
 		&self, contents: T, destination: Destination, reply_path: Option<BlindedPath>,
-		log_suffix: fmt::Arguments
+		custom_tlvs: Option<Vec<u8>>, log_suffix: fmt::Arguments
 	) -> Result<SendSuccess, SendError> {
 		let mut logger = WithContext::from(&self.logger, None, None);
 		let result = self.find_path(destination)
 			.and_then(|path| {
 				let first_hop = path.intermediate_nodes.get(0).map(|p| *p);
 				logger = WithContext::from(&self.logger, first_hop, None);
-				self.enqueue_onion_message(path, contents, reply_path, log_suffix)
+				self.enqueue_onion_message(path, contents, reply_path, custom_tlvs, log_suffix)
 			});
 
 		match result.as_ref() {
@@ -961,13 +961,13 @@ where
 
 	fn enqueue_onion_message<T: OnionMessageContents>(
 		&self, path: OnionMessagePath, contents: T, reply_path: Option<BlindedPath>,
-		log_suffix: fmt::Arguments
+		custom_tlvs: Option<Vec<u8>>, log_suffix: fmt::Arguments
 	) -> Result<SendSuccess, SendError> {
 		log_trace!(self.logger, "Constructing onion message {}: {:?}", log_suffix, contents);
 
 		let (first_node_id, onion_message, addresses) = create_onion_message(
 			&self.entropy_source, &self.node_signer, &self.node_id_lookup, &self.secp_ctx, path,
-			contents, reply_path,
+			contents, reply_path, custom_tlvs,
 		)?;
 
 		let mut message_recipients = self.message_recipients.lock().unwrap();
@@ -999,7 +999,7 @@ where
 	pub fn send_onion_message_using_path<T: OnionMessageContents>(
 		&self, path: OnionMessagePath, contents: T, reply_path: Option<BlindedPath>
 	) -> Result<SendSuccess, SendError> {
-		self.enqueue_onion_message(path, contents, reply_path, format_args!(""))
+		self.enqueue_onion_message(path, contents, reply_path, None, format_args!(""))
 	}
 
 	pub(crate) fn peel_onion_message(
@@ -1029,7 +1029,7 @@ where
 
 		let res = self.find_path_and_enqueue_onion_message(
 			response.message, Destination::BlindedPath(response.reply_path), reply_path,
-			format_args!(
+			response.custom_tlvs, format_args!(
 				"when responding to {} onion message with path_id {:02x?}",
 				T::msg_type(),
 				response.path_id
@@ -1250,7 +1250,7 @@ where
 			#[cfg(c_bindings)]
 			let (contents, destination, reply_path) = message;
 			let _ = self.find_path_and_enqueue_onion_message(
-				contents, destination, reply_path, format_args!("when sending OffersMessage")
+				contents, destination, reply_path, None, format_args!("when sending OffersMessage")
 			);
 		}
 
@@ -1261,7 +1261,7 @@ where
 			#[cfg(c_bindings)]
 			let (contents, destination, reply_path) = message;
 			let _ = self.find_path_and_enqueue_onion_message(
-				contents, destination, reply_path, format_args!("when sending CustomMessage")
+				contents, destination, reply_path, None, format_args!("when sending CustomMessage")
 			);
 		}
 
@@ -1315,7 +1315,7 @@ pub type SimpleRefOnionMessenger<
 /// `unblinded_path` to the given `destination`.
 fn packet_payloads_and_keys<T: OnionMessageContents, S: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<S>, unblinded_path: &[PublicKey], destination: Destination, message: T,
-	mut reply_path: Option<BlindedPath>, session_priv: &SecretKey
+	mut reply_path: Option<BlindedPath>, custom_tlvs: Option<Vec<u8>>, session_priv: &SecretKey
 ) -> Result<(Vec<(Payload<T>, [u8; 32])>, Vec<onion_utils::OnionKeys>), SendError> {
 	let num_hops = unblinded_path.len() + destination.num_hops();
 	let mut payloads = Vec::with_capacity(num_hops);
@@ -1390,7 +1390,7 @@ fn packet_payloads_and_keys<T: OnionMessageContents, S: secp256k1::Signing + sec
 		}, prev_control_tlvs_ss.unwrap()));
 	} else {
 		payloads.push((Payload::Receive {
-			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, custom_tlvs: Some(Vec::new()), }),
+			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, custom_tlvs, }),
 			reply_path: reply_path.take(),
 			message,
 		}, prev_control_tlvs_ss.unwrap()));
