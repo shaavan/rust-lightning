@@ -10,7 +10,7 @@
 //! Creating blinded paths and related utilities live here.
 
 pub mod payment;
-pub(crate) mod message;
+pub mod message;
 pub(crate) mod utils;
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};

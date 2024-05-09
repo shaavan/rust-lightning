@@ -1,3 +1,7 @@
+//! Data structures and methods for constructing [`BlindedPath`]s to send a message over.
+//!
+//! [`BlindedPath`]: crate::blinded_path::BlindedPath
+
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::ln::channelmanager::PaymentId;
