@@ -1,5 +1,6 @@
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -32,6 +33,22 @@ pub(crate) struct ReceiveTlvs {
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub(crate) path_id: Option<[u8; 32]>,
+	pub recipient_data: RecipientData,
+}
+
+#[derive(Clone, Debug)]
+pub struct RecipientData {
+	pub payment_id: Option<PaymentId>
+	// TODO: Introduce a more general form of RecipientData
+	// that can be used by Custom Messages
+}
+
+impl RecipientData {
+	pub fn new() -> Self {
+		RecipientData {
+			payment_id: None,
+		}
+	}
 }
 
 impl Writeable for ForwardTlvs {
@@ -68,7 +85,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| ForwardTlvs { next_hop: NextMessageHop::NodeId(*pk), next_blinding_override: None })
 		.map(|tlvs| ControlTlvs::Forward(tlvs))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, recipient_data: RecipientData::new() })));
 
 	utils::construct_blinded_hops(secp_ctx, unblinded_path.iter(), blinded_tlvs, session_priv)
 }

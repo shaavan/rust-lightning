@@ -16,7 +16,7 @@ use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedPath, IntroductionNode, NextMessageHop, NodeIdLookUp};
-use crate::blinded_path::message::{advance_path_by_one, ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::message::{advance_path_by_one, ForwardTlvs, ReceiveTlvs, RecipientData};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
@@ -631,7 +631,7 @@ pub enum PeeledOnion<T: OnionMessageContents> {
 	/// Forwarded onion, with the next node id and a new onion
 	Forward(NextMessageHop, OnionMessage),
 	/// Received onion message, with decrypted contents, path_id, and reply path
-	Receive(ParsedOnionMessageContents<T>, Option<[u8; 32]>, Option<BlindedPath>)
+	Receive(ParsedOnionMessageContents<T>, Option<[u8; 32]>, RecipientData, Option<BlindedPath>)
 }
 
 
@@ -781,9 +781,9 @@ where
 		(control_tlvs_ss, custom_handler.deref(), logger.deref())
 	) {
 		Ok((Payload::Receive::<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>> {
-			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id }), reply_path,
+			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id , recipient_data }), reply_path,
 		}, None)) => {
-			Ok(PeeledOnion::Receive(message, path_id, reply_path))
+			Ok(PeeledOnion::Receive(message, path_id, recipient_data, reply_path))
 		},
 		Ok((Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
 			next_hop, next_blinding_override
@@ -1106,7 +1106,7 @@ where
 	fn handle_onion_message(&self, peer_node_id: &PublicKey, msg: &OnionMessage) {
 		let logger = WithContext::from(&self.logger, Some(*peer_node_id), None);
 		match self.peel_onion_message(msg) {
-			Ok(PeeledOnion::Receive(message, path_id, reply_path)) => {
+			Ok(PeeledOnion::Receive(message, path_id, _, reply_path)) => {
 				log_trace!(
 					logger,
 					"Received an onion message with path_id {:02x?} and {} reply_path: {:?}",
@@ -1381,7 +1381,7 @@ fn packet_payloads_and_keys<T: OnionMessageContents, S: secp256k1::Signing + sec
 		}, prev_control_tlvs_ss.unwrap()));
 	} else {
 		payloads.push((Payload::Receive {
-			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, }),
+			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: None, recipient_data: RecipientData::new() }),
 			reply_path: reply_path.take(),
 			message,
 		}, prev_control_tlvs_ss.unwrap()));
