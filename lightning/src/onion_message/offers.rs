@@ -11,6 +11,7 @@
 
 use core::fmt;
 use crate::io::{self, Read};
+use crate::ln::channelmanager::PaymentId;
 use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
@@ -40,7 +41,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage>;
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, recipient_data: Option<PaymentId>) -> ResponseInstruction<OffersMessage>;
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///

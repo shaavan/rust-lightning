@@ -10360,9 +10360,15 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, recipient_data: Option<PaymentId>) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
+
+		let abandon_if_payment = |payment_id| {
+			if let Some(payment_id) = payment_id {
+				self.abandon_payment(payment_id);
+			}
+		};
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
@@ -10472,8 +10478,12 @@ where
 					});
 
 				match (responder, response) {
-					(Some(responder), Err(e)) => responder.respond(OffersMessage::InvoiceError(e)),
+					(Some(responder), Err(e)) => {
+						abandon_if_payment(recipient_data);
+						responder.respond(OffersMessage::InvoiceError(e))
+					},
 					(None, Err(_)) => {
+						abandon_if_payment(recipient_data);
 						log_trace!(
 							self.logger,
 							"A response was generated, but there is no reply_path specified for sending the response."
@@ -10484,6 +10494,7 @@ where
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
+				abandon_if_payment(recipient_data);
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},
