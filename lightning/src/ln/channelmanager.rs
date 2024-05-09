@@ -31,6 +31,7 @@ use bitcoin::secp256k1::{SecretKey,PublicKey};
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
+use crate::blinded_path::message::RecipientData;
 use crate::blinded_path::{BlindedPath, NodeIdLookUp};
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
 use crate::chain;
@@ -10350,9 +10351,15 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, recipient_data: RecipientData) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
+
+		let abandon_if_payment = |payment_id| {
+			if let Some(payment_id) = payment_id {
+				self.abandon_payment(payment_id);
+			}
+		};
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
@@ -10462,8 +10469,12 @@ where
 					});
 
 				match (responder, response) {
-					(Some(responder), Err(e)) => responder.respond(OffersMessage::InvoiceError(e)),
+					(Some(responder), Err(e)) => {
+						abandon_if_payment(recipient_data.payment_id);
+						responder.respond(OffersMessage::InvoiceError(e))
+					},
 					(None, Err(_)) => {
+						abandon_if_payment(recipient_data.payment_id);
 						log_trace!(
 							self.logger,
 							"A response was generated, but there is no reply_path specified for sending the response."
@@ -10474,6 +10485,7 @@ where
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
+				abandon_if_payment(recipient_data.payment_id);
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				return ResponseInstruction::NoResponse;
 			},

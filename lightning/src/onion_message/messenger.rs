@@ -603,7 +603,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage>;
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, recipient_data: RecipientData) -> ResponseInstruction<Self::CustomMessage>;
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -1106,7 +1106,7 @@ where
 	fn handle_onion_message(&self, peer_node_id: &PublicKey, msg: &OnionMessage) {
 		let logger = WithContext::from(&self.logger, Some(*peer_node_id), None);
 		match self.peel_onion_message(msg) {
-			Ok(PeeledOnion::Receive(message, path_id, _, reply_path)) => {
+			Ok(PeeledOnion::Receive(message, path_id, recipient_data, reply_path)) => {
 				log_trace!(
 					logger,
 					"Received an onion message with path_id {:02x?} and {} reply_path: {:?}",
@@ -1117,14 +1117,14 @@ where
 						let responder = reply_path.map(
 							|reply_path| Responder::new(reply_path, path_id)
 						);
-						let response_instructions = self.offers_handler.handle_message(msg, responder);
+						let response_instructions = self.offers_handler.handle_message(msg, responder, recipient_data);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
 							|reply_path| Responder::new(reply_path, path_id)
 						);
-						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
+						let response_instructions = self.custom_handler.handle_custom_message(msg, responder, recipient_data);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 				}

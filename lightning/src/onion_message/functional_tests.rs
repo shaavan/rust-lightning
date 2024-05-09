@@ -9,6 +9,7 @@
 
 //! Onion message testing and test utilities live here.
 
+use crate::blinded_path::message::RecipientData;
 use crate::blinded_path::{BlindedPath, EmptyNodeIdLookUp};
 use crate::events::{Event, EventsProvider};
 use crate::ln::features::{ChannelFeatures, InitFeatures};
@@ -62,7 +63,7 @@ struct MessengerNode {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder>, _recipient_data: RecipientData) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
 }
@@ -126,7 +127,7 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>, _recipient_data: RecipientData) -> ResponseInstruction<Self::CustomMessage> {
 		match self.expected_messages.lock().unwrap().pop_front() {
 			Some(expected_msg) => assert_eq!(expected_msg, msg),
 			None => panic!("Unexpected message: {:?}", msg),
@@ -348,7 +349,7 @@ fn async_response_over_one_blinded_hop() {
 
 	// 5. Expect Alice to receive the message and create a response instruction for it.
 	alice.custom_message_handler.expect_message(message.clone());
-	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
+	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder, RecipientData::new());
 
 	// 6. Simulate Alice asynchronously responding back to Bob with a response.
 	let _ = nodes[0].messenger.handle_onion_message_response(response_instruction);
