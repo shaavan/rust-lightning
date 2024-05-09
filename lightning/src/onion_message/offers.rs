@@ -10,6 +10,7 @@
 //! Message handling for BOLT 12 Offers.
 
 use core::fmt;
+use crate::blinded_path::message::RecipientData;
 use crate::io::{self, Read};
 use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_error::InvoiceError;
@@ -40,7 +41,7 @@ pub trait OffersMessageHandler {
 	/// The returned [`OffersMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	///
 	/// [`OnionMessenger`]: crate::onion_message::messenger::OnionMessenger
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage>;
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, recipient_data: RecipientData) -> ResponseInstruction<OffersMessage>;
 
 	/// Releases any [`OffersMessage`]s that need to be sent.
 	///
