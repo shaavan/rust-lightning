@@ -13,6 +13,7 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -56,6 +57,31 @@ pub(crate) struct ReceiveTlvs {
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub(crate) path_id: Option<[u8; 32]>,
+	pub recipient_data: RecipientData,
+}
+
+/// Represents additional data appended along with the sent reply path.
+///
+/// This data can be utilized by the final recipient for further processing
+/// upon receiving it back.
+#[derive(Clone, Debug)]
+pub enum RecipientData {
+    /// Payment ID of the outbound BOLT12 payment.
+    Offers(PaymentId),
+    /// Custom data represented as a vector of bytes.
+    Custom(Vec<u8>),
+}
+
+impl RecipientData {
+    /// Creates a new, empty RecipientData instance of the Offers variant.
+    pub fn offers(payment_id: PaymentId) -> Self {
+        RecipientData::Offers(payment_id)
+    }
+
+    /// Creates a new, empty RecipientData instance of the Custom variant.
+    pub fn custom(data: Vec<u8>) -> Self {
+        RecipientData::Custom(Vec::new())
+    }
 }
 
 impl Writeable for ForwardTlvs {
@@ -77,8 +103,22 @@ impl Writeable for ForwardTlvs {
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		// TODO: write padding
+		let mut payment_id = None;
+		let mut custom_data = None;
+
+		match &self.recipient_data {
+			RecipientData::Offers(id) => {
+				payment_id = Some(id);
+			}
+			RecipientData::Custom(data) => {
+				custom_data = Some(data);
+			}
+		}
+
 		encode_tlv_stream!(writer, {
 			(6, self.path_id, option),
+			(65537, payment_id, option),
+			(65539, custom_data, optional_vec),
 		});
 		Ok(())
 	}
@@ -99,7 +139,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, recipient_data: RecipientData::custom(Vec::new()) })));
 
 	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
 }

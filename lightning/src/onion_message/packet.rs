@@ -13,7 +13,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::{BlindedPath, NextMessageHop};
-use crate::blinded_path::message::{ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::message::{ForwardTlvs, ReceiveTlvs, RecipientData};
 use crate::blinded_path::utils::Padding;
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
@@ -304,6 +304,8 @@ impl Readable for ControlTlvs {
 			(4, next_node_id, option),
 			(6, path_id, option),
 			(8, next_blinding_override, option),
+			(65537, payment_id, option),
+			(65539, custom_data, optional_vec),
 		});
 		let _padding: Option<Padding> = _padding;
 
@@ -317,6 +319,17 @@ impl Readable for ControlTlvs {
 		let valid_fwd_fmt = next_hop.is_some() && path_id.is_none();
 		let valid_recv_fmt = next_hop.is_none() && next_blinding_override.is_none();
 
+		// Make sure not both offer recipient_data (aka payment_id), and custom recipient_data, are provided together.
+		assert!(payment_id.is_none() || custom_data.is_none());
+		
+		let recipient_data = if let Some(payment_id) = payment_id {
+			RecipientData::Offers(payment_id)
+		} else if let Some(data) = custom_data {
+			RecipientData::Custom(data)
+		} else {
+			RecipientData::Custom(Vec::new())
+		};
+
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
 				next_hop: next_hop.unwrap(),
@@ -325,6 +338,7 @@ impl Readable for ControlTlvs {
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs {
 				path_id,
+				recipient_data,
 			})
 		} else {
 			return Err(DecodeError::InvalidValue)
