@@ -93,7 +93,7 @@ pub struct BackgroundProcessor {
 }
 
 #[cfg(not(test))]
-const FRESHNESS_TIMER: u64 = 60;
+const FRESHNESS_TIMER: u64 = 1;
 #[cfg(test)]
 const FRESHNESS_TIMER: u64 = 1;
 
@@ -960,7 +960,7 @@ mod tests {
 	use lightning_rapid_gossip_sync::RapidGossipSync;
 	use super::{BackgroundProcessor, GossipSync, FRESHNESS_TIMER};
 
-	const EVENT_DEADLINE: u64 = 5 * FRESHNESS_TIMER;
+	const EVENT_DEADLINE: u64 = 5 * 60 * FRESHNESS_TIMER;
 
 	#[derive(Clone, Hash, PartialEq, Eq)]
 	struct TestDescriptor{}
