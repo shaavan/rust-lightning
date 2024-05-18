@@ -80,20 +80,61 @@ impl OffersMessageHandler for TestOffersMessageHandler {
 
 #[derive(Clone, Debug, PartialEq)]
 enum TestCustomMessage {
+	/// A variant to test the onion exchange request mechanism.
+	/// When this variant is used, [`handle_custom_message`] will create
+	/// the corresponding [`Response`] and interpret that no further response
+	/// is expected from the peer.
+	/// Therefore, it will not signal the addition of a reply path to the onion
+	/// message and will create a [`ResponseInstruction::WithoutReplyPath`] for it.
+	///
+	/// [`handle_custom_message`]: TestCustomMessageHandler::handle_custom_message
+	/// [`Response`]: TestCustomMessage::Response
 	Request,
+
+	/// The counterpart to the [`Request`] variant in the onion exchange
+	/// request-response mechanism.
+	///
+	/// [`Request`]: TestCustomMessage::Request
 	Response,
+
+	/// A variant to enable response ping-pong.
+	/// When this variant is used, [`handle_custom_message`] interprets that
+	/// a reply path should be appended to the onion message to facilitate response
+	/// ping-pong. Consequently, it will create the corresponding
+	/// [`ResponseInstruction::WithReplyPath`] for it.
+	///
+	/// [`handle_custom_message`]: TestCustomMessageHandler::handle_custom_message
+	ResponseA,
+
+	/// The counterpart to the [`ResponseA`] variant for the response
+	/// ping-pong mechanism.
+	/// Similar to [`ResponseA`], when this variant is used, [`handle_custom_message`]
+	/// interprets that a reply path should be appended to the onion message
+	/// to facilitate response ping-pong. Therefore, it will create the corresponding
+	/// [`ResponseInstruction::WithReplyPath`] for it.
+	///
+	/// [`handle_custom_message`]: TestCustomMessageHandler::handle_custom_message
+	/// [`ResponseA`]: TestCustomMessage::ResponseA
+	ResponseB,
 }
 
 const CUSTOM_REQUEST_MESSAGE_TYPE: u64 = 4242;
 const CUSTOM_RESPONSE_MESSAGE_TYPE: u64 = 4343;
+const CUSTOM_RESPONSE_A_MESSAGE_TYPE: u64 = 4344;
+const CUSTOM_RESPONSE_B_MESSAGE_TYPE: u64 = 4345;
+
 const CUSTOM_REQUEST_MESSAGE_CONTENTS: [u8; 32] = [42; 32];
 const CUSTOM_RESPONSE_MESSAGE_CONTENTS: [u8; 32] = [43; 32];
+const CUSTOM_RESPONSE_A_MESSAGE_CONTENTS: [u8; 32] = [44; 32];
+const CUSTOM_RESPONSE_B_MESSAGE_CONTENTS: [u8; 32] = [45; 32];
 
 impl OnionMessageContents for TestCustomMessage {
 	fn tlv_type(&self) -> u64 {
 		match self {
 			TestCustomMessage::Request => CUSTOM_REQUEST_MESSAGE_TYPE,
 			TestCustomMessage::Response => CUSTOM_RESPONSE_MESSAGE_TYPE,
+			TestCustomMessage::ResponseA => CUSTOM_RESPONSE_A_MESSAGE_TYPE,
+			TestCustomMessage::ResponseB => CUSTOM_RESPONSE_B_MESSAGE_TYPE,
 		}
 	}
 	fn msg_type(&self) -> &'static str {
@@ -106,6 +147,8 @@ impl Writeable for TestCustomMessage {
 		match self {
 			TestCustomMessage::Request => Ok(CUSTOM_REQUEST_MESSAGE_CONTENTS.write(w)?),
 			TestCustomMessage::Response => Ok(CUSTOM_RESPONSE_MESSAGE_CONTENTS.write(w)?),
+			TestCustomMessage::ResponseA => Ok(CUSTOM_RESPONSE_A_MESSAGE_CONTENTS.write(w)?),
+			TestCustomMessage::ResponseB => Ok(CUSTOM_RESPONSE_B_MESSAGE_CONTENTS.write(w)?),
 		}
 	}
 }
@@ -145,6 +188,8 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 		let response_option = match msg {
 			TestCustomMessage::Request => Some(TestCustomMessage::Response),
 			TestCustomMessage::Response => None,
+			TestCustomMessage::ResponseA => Some(TestCustomMessage::ResponseB),
+			TestCustomMessage::ResponseB => Some(TestCustomMessage::ResponseA),
 		};
 		if let (Some(response), Some(responder)) = (response_option, responder) {
 			responder.respond(response)
@@ -164,6 +209,16 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 				assert_eq!(buf, CUSTOM_RESPONSE_MESSAGE_CONTENTS);
 				Ok(Some(TestCustomMessage::Response))
 			},
+			CUSTOM_RESPONSE_A_MESSAGE_TYPE => {
+				let buf = read_to_end(buffer)?;
+				assert_eq!(buf, CUSTOM_RESPONSE_A_MESSAGE_CONTENTS);
+				Ok(Some(TestCustomMessage::ResponseA))
+			},
+			CUSTOM_RESPONSE_B_MESSAGE_TYPE => {
+				let buf = read_to_end(buffer)?;
+				assert_eq!(buf, CUSTOM_RESPONSE_B_MESSAGE_CONTENTS);
+				Ok(Some(TestCustomMessage::ResponseB))
+			}
 			_ => Ok(None),
 		}
 	}
