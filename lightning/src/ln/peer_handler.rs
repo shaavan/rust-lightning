@@ -143,7 +143,7 @@ impl OffersMessageHandler for IgnoringMessageHandler {
 }
 impl CustomOnionMessageHandler for IgnoringMessageHandler {
 	type CustomMessage = Infallible;
-	fn handle_custom_message(&self, _message: Self::CustomMessage, _responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, _message: Self::CustomMessage, _responder: Option<Responder>, _add_reply_path: bool) -> ResponseInstruction<Self::CustomMessage> {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
