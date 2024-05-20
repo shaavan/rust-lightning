@@ -615,6 +615,9 @@ pub trait CustomOnionMessageHandler {
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
 	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage>;
 
+	#[cfg(test)]
+	fn test_handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, add_reply_path: bool) -> ResponseInstruction<Self::CustomMessage>;
+
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
 	fn read_custom_message<R: io::Read>(&self, message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, msgs::DecodeError>;

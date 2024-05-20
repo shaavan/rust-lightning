@@ -147,6 +147,11 @@ impl CustomOnionMessageHandler for IgnoringMessageHandler {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
+	#[cfg(test)]
+	fn test_handle_custom_message(&self, _message: Self::CustomMessage, _responder: Option<Responder>, _add_reply_path: bool) -> ResponseInstruction<Self::CustomMessage> {
+		// Since we always return `None` in the read the handle method should never be called.
+		unreachable!();
+	}
 	fn read_custom_message<R: io::Read>(&self, _msg_type: u64, _buffer: &mut R) -> Result<Option<Infallible>, msgs::DecodeError> where Self: Sized {
 		Ok(None)
 	}
@@ -190,7 +195,6 @@ impl CustomMessageHandler for IgnoringMessageHandler {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
-
 	fn get_and_clear_pending_msg(&self) -> Vec<(PublicKey, Self::CustomMessage)> { Vec::new() }
 
 	fn provided_node_features(&self) -> NodeFeatures { NodeFeatures::empty() }

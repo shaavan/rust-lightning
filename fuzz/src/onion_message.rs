@@ -133,6 +133,19 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 			None => ResponseInstruction::NoResponse
 		}
 	}
+	#[cfg(test)]
+	fn test_handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, add_reply_path: bool) -> ResponseInstruction<Self::CustomMessage> {
+		match responder {
+			Some(responder) => {
+				if add_reply_path {
+					responder.respond_with_reply_path(message)
+				} else {
+					responder.respond(message)
+				}
+			}
+			_ => ResponseInstruction::NoResponse,
+		}
+	}
 	fn read_custom_message<R: io::Read>(&self, _message_type: u64, buffer: &mut R) -> Result<Option<Self::CustomMessage>, msgs::DecodeError> {
 		let mut buf = Vec::new();
 		buffer.read_to_end(&mut buf)?;
