@@ -190,7 +190,6 @@ impl CustomMessageHandler for IgnoringMessageHandler {
 		// Since we always return `None` in the read the handle method should never be called.
 		unreachable!();
 	}
-
 	fn get_and_clear_pending_msg(&self) -> Vec<(PublicKey, Self::CustomMessage)> { Vec::new() }
 
 	fn provided_node_features(&self) -> NodeFeatures { NodeFeatures::empty() }
