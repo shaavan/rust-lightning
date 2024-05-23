@@ -32,7 +32,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
 use crate::blinded_path::{BlindedPath, NodeIdLookUp};
-use crate::blinded_path::message::{ForwardNode, OffersData};
+use crate::blinded_path::message::{ForwardNode, OffersData, RecipientData};
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
 use crate::chain;
 use crate::chain::{Confirm, ChannelMonitorUpdateStatus, Watch, BestBlock};
@@ -8572,7 +8572,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
-		let path = $self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let path = $self.create_blinded_path(None).map_err(|_| Bolt12SemanticError::MissingPaths)?;
 		let builder = OfferBuilder::deriving_signing_pubkey(
 			node_id, expanded_key, entropy, secp_ctx
 		)
@@ -8639,7 +8639,8 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
-		let path = $self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let recipient_data = RecipientData::offers(payment_id);
+		let path = $self.create_blinded_path(Some(recipient_data)).map_err(|_| Bolt12SemanticError::MissingPaths)?;
 		let builder = RefundBuilder::deriving_payer_id(
 			node_id, expanded_key, entropy, secp_ctx, amount_msats, payment_id
 		)?
@@ -8762,7 +8763,8 @@ where
 			Some(payer_note) => builder.payer_note(payer_note),
 		};
 		let invoice_request = builder.build_and_sign()?;
-		let reply_path = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let recipient_data = RecipientData::offers(payment_id);
+		let reply_path = self.create_blinded_path(Some(recipient_data)).map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
@@ -8862,7 +8864,7 @@ where
 				)?;
 				let builder: InvoiceBuilder<DerivedSigningPubkey> = builder.into();
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
-				let reply_path = self.create_blinded_path()
+				let reply_path = self.create_blinded_path(None)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -8991,7 +8993,7 @@ where
 	/// Creates a blinded path by delegating to [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors or returns an empty `Vec`.
-	fn create_blinded_path(&self) -> Result<BlindedPath, ()> {
+	fn create_blinded_path(&self, recipient_data: Option<RecipientData>) -> Result<BlindedPath, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9010,7 +9012,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, peers, secp_ctx)
+			.create_blinded_paths(recipient, recipient_data, peers, secp_ctx)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 	}
 

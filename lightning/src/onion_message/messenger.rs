@@ -71,7 +71,7 @@ pub(super) const MAX_TIMER_TICKS: usize = 2;
 /// # use bitcoin::hashes::hex::FromHex;
 /// # use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey, self};
 /// # use lightning::blinded_path::{BlindedPath, EmptyNodeIdLookUp};
-/// # use lightning::blinded_path::message::ForwardNode;
+/// # use lightning::blinded_path::message::{ForwardNode, RecipientData};
 /// # use lightning::sign::{EntropySource, KeysManager};
 /// # use lightning::ln::peer_handler::IgnoringMessageHandler;
 /// # use lightning::onion_message::messenger::{Destination, MessageRouter, OnionMessagePath, OnionMessenger};
@@ -98,7 +98,8 @@ pub(super) const MAX_TIMER_TICKS: usize = 2;
 /// #         })
 /// #     }
 /// #     fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-/// #         &self, _recipient: PublicKey, _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>
+/// #         &self, _recipient: PublicKey, _recipient_data: Option<RecipientData>,
+/// 		  _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>
 /// #     ) -> Result<Vec<BlindedPath>, ()> {
 /// #         unreachable!()
 /// #     }
@@ -150,7 +151,8 @@ pub(super) const MAX_TIMER_TICKS: usize = 2;
 /// 	ForwardNode { node_id: hop_node_id3, short_channel_id: None },
 /// 	ForwardNode { node_id: hop_node_id4, short_channel_id: None },
 /// ];
-/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, &keys_manager, &secp_ctx).unwrap();
+/// let recipient_data = Some(RecipientData::custom(Vec::new()));
+/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, recipient_data, &keys_manager, &secp_ctx).unwrap();
 ///
 /// // Send a custom onion message to a blinded path.
 /// let destination = Destination::BlindedPath(blinded_path);
@@ -357,7 +359,8 @@ pub trait MessageRouter {
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, recipient_data: Option<RecipientData>,
+		peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()>;
 }
 
@@ -424,7 +427,8 @@ where
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, recipient_data: Option<RecipientData>,
+		peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		// Limit the number of blinded paths that are computed.
 		const MAX_PATHS: usize = 3;
@@ -456,7 +460,8 @@ where
 
 		let paths = peer_info.into_iter()
 			.map(|(peer, _, _)| {
-				BlindedPath::new_for_message(&[peer], recipient, &*self.entropy_source, secp_ctx)
+				BlindedPath::new_for_message(&[peer], recipient, recipient_data.clone(),
+				&*self.entropy_source, secp_ctx)
 			})
 			.take(MAX_PATHS)
 			.collect::<Result<Vec<_>, _>>();
@@ -465,7 +470,7 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedPath::one_hop_for_message(recipient, &*self.entropy_source, secp_ctx)
+					BlindedPath::one_hop_for_message(recipient, recipient_data, &*self.entropy_source, secp_ctx)
 						.map(|path| vec![path])
 				} else {
 					Err(())
@@ -1001,7 +1006,7 @@ where
 			.map_err(|_| SendError::PathNotFound)
 	}
 
-	fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
+	fn create_blinded_path(&self, recipient_data: Option<RecipientData>) -> Result<BlindedPath, SendError> {
 		let recipient = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
@@ -1023,7 +1028,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.message_router
-			.create_blinded_paths(recipient, peers, secp_ctx)
+			.create_blinded_paths(recipient, recipient_data, peers, secp_ctx)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| SendError::PathNotFound)
 	}
@@ -1121,7 +1126,7 @@ where
 
 		let message_type = response.message.msg_type();
 		let reply_path = if create_reply_path {
-			match self.create_blinded_path() {
+			match self.create_blinded_path(None) {
 				Ok(reply_path) => Some(reply_path),
 				Err(err) => {
 					log_trace!(
