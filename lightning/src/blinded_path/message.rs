@@ -1,3 +1,7 @@
+//! Data structures and methods for constructing [`BlindedPath`]s to send a message over.
+//!
+//! [`BlindedPath`]: crate::blinded_path::BlindedPath
+
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::ln::channelmanager::PaymentId;
@@ -87,13 +91,15 @@ impl Writeable for ReceiveTlvs {
 
 /// Construct blinded onion message hops for the given `unblinded_path`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
-	secp_ctx: &Secp256k1<T>, unblinded_path: &[PublicKey], session_priv: &SecretKey
+	secp_ctx: &Secp256k1<T>, unblinded_path: &[PublicKey], recipient_data: Option<RecipientData>,
+	session_priv: &SecretKey
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
+	let recipient_data = recipient_data.unwrap_or(RecipientData::new());
 	let blinded_tlvs = unblinded_path.iter()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| ForwardTlvs { next_hop: NextMessageHop::NodeId(*pk), next_blinding_override: None })
 		.map(|tlvs| ControlTlvs::Forward(tlvs))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, recipient_data: RecipientData::new() })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None, recipient_data })));
 
 	utils::construct_blinded_hops(secp_ctx, unblinded_path.iter(), blinded_tlvs, session_priv)
 }
