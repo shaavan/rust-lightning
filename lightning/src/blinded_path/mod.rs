@@ -10,7 +10,7 @@
 //! Creating blinded paths and related utilities live here.
 
 pub mod payment;
-pub(crate) mod message;
+pub mod message;
 pub(crate) mod utils;
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
@@ -20,6 +20,7 @@ use crate::offers::invoice::BlindedPayInfo;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
 use crate::sign::EntropySource;
 use crate::util::ser::{Readable, Writeable, Writer};
+use crate::blinded_path::message::RecipientData;
 
 use crate::io;
 use crate::prelude::*;
@@ -116,9 +117,9 @@ pub struct BlindedHop {
 impl BlindedPath {
 	/// Create a one-hop blinded path for a message.
 	pub fn one_hop_for_message<ES: EntropySource + ?Sized, T: secp256k1::Signing + secp256k1::Verification>(
-		recipient_node_id: PublicKey, entropy_source: &ES, secp_ctx: &Secp256k1<T>
+		recipient_node_id: PublicKey, recipient_data: Option<RecipientData>, entropy_source: &ES, secp_ctx: &Secp256k1<T>
 	) -> Result<Self, ()> {
-		Self::new_for_message(&[recipient_node_id], entropy_source, secp_ctx)
+		Self::new_for_message(&[recipient_node_id], recipient_data, entropy_source, secp_ctx)
 	}
 
 	/// Create a blinded path for an onion message, to be forwarded along `node_pks`. The last node
@@ -127,7 +128,7 @@ impl BlindedPath {
 	/// Errors if no hops are provided or if `node_pk`(s) are invalid.
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new_for_message<ES: EntropySource + ?Sized, T: secp256k1::Signing + secp256k1::Verification>(
-		node_pks: &[PublicKey], entropy_source: &ES, secp_ctx: &Secp256k1<T>
+		node_pks: &[PublicKey], recipient_data: Option<RecipientData>, entropy_source: &ES, secp_ctx: &Secp256k1<T>
 	) -> Result<Self, ()> {
 		if node_pks.is_empty() { return Err(()) }
 		let blinding_secret_bytes = entropy_source.get_secure_random_bytes();
@@ -137,7 +138,7 @@ impl BlindedPath {
 		Ok(BlindedPath {
 			introduction_node,
 			blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
-			blinded_hops: message::blinded_hops(secp_ctx, node_pks, &blinding_secret).map_err(|_| ())?,
+			blinded_hops: message::blinded_hops(secp_ctx, node_pks, recipient_data, &blinding_secret).map_err(|_| ())?,
 		})
 	}
 
