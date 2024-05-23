@@ -111,16 +111,37 @@ impl Writeable for TestCustomMessage {
 }
 
 struct TestCustomMessageHandler {
-	expected_messages: Mutex<VecDeque<TestCustomMessage>>,
+	expectations: Mutex<VecDeque<OnHandleCustomMessage>>,
+}
+
+struct OnHandleCustomMessage {
+	expect: TestCustomMessage,
+	include_reply_path: bool,
 }
 
 impl TestCustomMessageHandler {
 	fn new() -> Self {
-		Self { expected_messages: Mutex::new(VecDeque::new()) }
+		Self {
+			expectations : Mutex::new(VecDeque::new()),
+		}
 	}
 
 	fn expect_message(&self, message: TestCustomMessage) {
-		self.expected_messages.lock().unwrap().push_back(message);
+		self.expectations.lock().unwrap().push_back(
+			OnHandleCustomMessage {
+				expect: message,
+				include_reply_path: false,
+			}
+		);
+	}
+
+	fn expect_message_and_response(&self, message: TestCustomMessage) {
+		self.expectations .lock().unwrap().push_back(
+			OnHandleCustomMessage {
+				expect: message,
+				include_reply_path: true,
+			}
+		);
 	}
 }
 
@@ -131,23 +152,34 @@ impl Drop for TestCustomMessageHandler {
 				return;
 			}
 		}
-		assert!(self.expected_messages.lock().unwrap().is_empty());
+		assert!(self.expectations .lock().unwrap().is_empty());
 	}
 }
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
 	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
-		match self.expected_messages.lock().unwrap().pop_front() {
-			Some(expected_msg) => assert_eq!(expected_msg, msg),
+		let include_reply_path = match self.expectations .lock().unwrap().pop_front() {
+			Some(OnHandleCustomMessage {expect, include_reply_path}) => {
+				assert_eq!(msg, expect);
+				include_reply_path
+			},
 			None => panic!("Unexpected message: {:?}", msg),
-		}
-		let response_option = match msg {
-			TestCustomMessage::Ping => Some(TestCustomMessage::Pong),
-			TestCustomMessage::Pong => None,
 		};
-		if let (Some(response), Some(responder)) = (response_option, responder) {
-			responder.respond(response)
+		let response = match msg {
+			TestCustomMessage::Ping => TestCustomMessage::Pong,
+			TestCustomMessage::Pong => TestCustomMessage::Ping,
+		};
+		// Sanity check: expecting to include reply path when responder is absent should panic.
+		if include_reply_path && responder.is_none() {
+			panic!("Expected to include a reply_path, but the responder was absent.")
+		}
+		if let Some(responder) = responder {
+			if include_reply_path {
+				responder.respond_with_reply_path(response)
+			} else {
+				responder.respond(response)
+			}
 		} else {
 			ResponseInstruction::NoResponse
 		}
