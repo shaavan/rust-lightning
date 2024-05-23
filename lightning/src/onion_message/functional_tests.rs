@@ -111,16 +111,37 @@ impl Writeable for TestCustomMessage {
 }
 
 struct TestCustomMessageHandler {
-	expected_messages: Mutex<VecDeque<TestCustomMessage>>,
+	expected_messages: Mutex<VecDeque<Expectations>>,
+}
+
+struct Expectations {
+	message: TestCustomMessage,
+	add_reply_path: bool,
 }
 
 impl TestCustomMessageHandler {
 	fn new() -> Self {
-		Self { expected_messages: Mutex::new(VecDeque::new()) }
+		Self {
+			expected_messages: Mutex::new(VecDeque::new()),
+		}
 	}
 
 	fn expect_message(&self, message: TestCustomMessage) {
-		self.expected_messages.lock().unwrap().push_back(message);
+		self.expected_messages.lock().unwrap().push_back(
+			Expectations {
+				message,
+				add_reply_path: false,
+			}
+		);
+	}
+
+	fn expect_message_and_response(&self, message: TestCustomMessage) {
+		self.expected_messages.lock().unwrap().push_back(
+			Expectations {
+				message,
+				add_reply_path: true,
+			}
+		);
 	}
 }
 
@@ -138,16 +159,23 @@ impl Drop for TestCustomMessageHandler {
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
 	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
-		match self.expected_messages.lock().unwrap().pop_front() {
-			Some(expected_msg) => assert_eq!(expected_msg, msg),
+		let add_reply_path = match self.expected_messages.lock().unwrap().pop_front() {
+			Some(Expectations { message: expected_msg, add_reply_path }) => {
+				assert_eq!(expected_msg, msg);
+				add_reply_path
+			},
 			None => panic!("Unexpected message: {:?}", msg),
-		}
+		};
 		let response_option = match msg {
 			TestCustomMessage::Ping => Some(TestCustomMessage::Pong),
-			TestCustomMessage::Pong => None,
+			TestCustomMessage::Pong => Some(TestCustomMessage::Ping),
 		};
 		if let (Some(response), Some(responder)) = (response_option, responder) {
-			responder.respond(response)
+			if add_reply_path {
+				responder.respond_with_reply_path(response)
+			} else {
+				responder.respond(response)
+			}
 		} else {
 			ResponseInstruction::NoResponse
 		}
@@ -399,6 +427,62 @@ fn async_response_over_one_blinded_hop() {
 	bob.custom_message_handler.expect_message(TestCustomMessage::Pong);
 
 	pass_along_path(&nodes);
+}
+
+fn do_test_async_response_with_reply_path_over_one_blinded_hop(reply_path_succeed: bool) {
+	// Simulate an asynchronous interaction between two nodes, Alice and Bob.
+
+	let mut nodes = create_nodes(2);
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+
+	// Alice receives a message from Bob with a reply path
+	let message = TestCustomMessage::Ping;
+	let path_id = Some([2; 32]);
+
+	let secp_ctx = Secp256k1::new();
+	let reply_path = BlindedPath::new_for_message(&[bob.node_id], &*bob.entropy_source, &secp_ctx).unwrap();
+
+	if reply_path_succeed {
+		// Add a channel so that nodes are announced to each other.
+		// This will allow creating the reply path by Alice to include in the response.
+		add_channel_to_graph(alice, bob, &secp_ctx, 24);
+	}
+
+	let responder = Some(Responder::new(reply_path, path_id));
+	alice.custom_message_handler.expect_message_and_response(message.clone());
+
+	// Alice handles the message reponse, and creates the appropriate ResponseInstruction for it.
+	let response_instruction = alice.custom_message_handler.handle_custom_message(message, responder);
+
+	if !reply_path_succeed {
+		// Simulate Alice attempting to asynchronously respond back to Bob
+		// but failing to create a reply path.
+		assert_eq!(
+			alice.messenger.handle_onion_message_response(response_instruction),
+			Err(SendError::PathNotFound),
+		);
+	} else {
+		// Simulate Alice asynchronously responding back to Bob with a response.
+		assert_eq!(
+			alice.messenger.handle_onion_message_response(response_instruction),
+			Ok(Some(SendSuccess::Buffered)),
+		);
+
+		bob.custom_message_handler.expect_message(TestCustomMessage::Pong);
+		pass_along_path(&nodes);
+
+		// Simulate Bob responding back to Alice through the reply path created by her.
+		alice.custom_message_handler.expect_message(TestCustomMessage::Ping);
+		nodes.reverse();
+		pass_along_path(&nodes);
+	}
+}
+
+#[test]
+fn async_response_with_reply_path_over_one_blinded_hop() {
+	do_test_async_response_with_reply_path_over_one_blinded_hop(true);
+	do_test_async_response_with_reply_path_over_one_blinded_hop(false);
 }
 
 #[test]
