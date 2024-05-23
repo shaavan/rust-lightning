@@ -270,22 +270,24 @@ impl Responder {
 	/// Creates a [`ResponseInstruction::WithoutReplyPath`] for a given response.
 	///
 	/// Use when the recipient doesn't need to send back a reply to us.
-	pub fn respond<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+	pub fn respond<T: OnionMessageContents>(self, response: T, recipient_data: RecipientData) -> ResponseInstruction<T> {
 		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
+			recipient_data
 		})
 	}
 
 	/// Creates a [`ResponseInstruction::WithReplyPath`] for a given response.
 	///
 	/// Use when the recipient needs to send back a reply to us.
-	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T) -> ResponseInstruction<T> {
+	pub fn respond_with_reply_path<T: OnionMessageContents>(self, response: T, recipient_data: RecipientData) -> ResponseInstruction<T> {
 		ResponseInstruction::WithReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
 			path_id: self.path_id,
+			recipient_data
 		})
 	}
 }
@@ -295,6 +297,7 @@ pub struct OnionMessageResponse<T: OnionMessageContents> {
 	message: T,
 	reply_path: BlindedPath,
 	path_id: Option<[u8; 32]>,
+	recipient_data: RecipientData
 }
 
 /// `ResponseInstruction` represents instructions for responding to received messages.

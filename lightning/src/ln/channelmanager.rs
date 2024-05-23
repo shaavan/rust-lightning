@@ -10373,13 +10373,13 @@ where
 					&invoice_request
 				) {
 					Ok(amount_msats) => amount_msats,
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), recipient_data),
 				};
 				let invoice_request = match invoice_request.verify(expanded_key, secp_ctx) {
 					Ok(invoice_request) => invoice_request,
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidMetadata;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), recipient_data);
 					},
 				};
 
@@ -10390,7 +10390,7 @@ where
 					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
 					Err(()) => {
 						let error = Bolt12SemanticError::InvalidAmount;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), recipient_data);
 					},
 				};
 
@@ -10404,7 +10404,7 @@ where
 					Ok(payment_paths) => payment_paths,
 					Err(()) => {
 						let error = Bolt12SemanticError::MissingPaths;
-						return responder.respond(OffersMessage::InvoiceError(error.into()));
+						return responder.respond(OffersMessage::InvoiceError(error.into()), recipient_data);
 					},
 				};
 
@@ -10449,8 +10449,8 @@ where
 				};
 
 				match response {
-					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice)),
-					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into())),
+					Ok(invoice) => return responder.respond(OffersMessage::Invoice(invoice), recipient_data),
+					Err(error) => return responder.respond(OffersMessage::InvoiceError(error.into()), recipient_data),
 				}
 			},
 			OffersMessage::Invoice(invoice) => {
@@ -10473,7 +10473,7 @@ where
 				match (responder, response) {
 					(Some(responder), Err(e)) => {
 						abandon_if_payment(recipient_data.payment_id);
-						responder.respond(OffersMessage::InvoiceError(e))
+						responder.respond(OffersMessage::InvoiceError(e), recipient_data)
 					},
 					(None, Err(_)) => {
 						abandon_if_payment(recipient_data.payment_id);

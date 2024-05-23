@@ -153,7 +153,7 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>, _recipient_data: RecipientData) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>, recipient_data: RecipientData) -> ResponseInstruction<Self::CustomMessage> {
 		match self.expected_messages.lock().unwrap().pop_front() {
 			Some(expected_msg) => assert_eq!(expected_msg, msg),
 			None => panic!("Unexpected message: {:?}", msg),
@@ -164,9 +164,9 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 		};
 		if let (Some(response), Some(responder)) = (response_option, responder) {
 			if self.read_and_reset_add_reply_path() {
-				responder.respond_with_reply_path(response)
+				responder.respond_with_reply_path(response, recipient_data)
 			} else {
-				responder.respond(response)
+				responder.respond(response, recipient_data)
 			}
 		} else {
 			ResponseInstruction::NoResponse
@@ -442,11 +442,12 @@ fn do_test_async_response_with_reply_path_over_one_blinded_hop(reply_path_succee
 	}
 
 	let responder = Some(Responder::new(reply_path, path_id));
+	let recipient_data = RecipientData::new();
 	alice.custom_message_handler.expect_message(message.clone());
 	alice.custom_message_handler.include_reply_path();
 
 	// Alice handles the message reponse, and creates the appropriate ResponseInstruction for it.
-	let response_instruction = alice.custom_message_handler.handle_custom_message(message, responder);
+	let response_instruction = alice.custom_message_handler.handle_custom_message(message, responder, recipient_data);
 
 	if !reply_path_succeed {
 		// Simulate Alice attempting to asynchronously respond back to Bob
