@@ -294,6 +294,7 @@ impl Responder {
 	}
 }
 
+#[derive(Debug)]
 /// This struct contains the information needed to reply to a received message.
 pub struct OnionMessageResponse<T: OnionMessageContents> {
 	message: T,
@@ -302,6 +303,7 @@ pub struct OnionMessageResponse<T: OnionMessageContents> {
 	recipient_data: RecipientData
 }
 
+#[derive(Debug)]
 /// `ResponseInstruction` represents instructions for responding to received messages.
 pub enum ResponseInstruction<T: OnionMessageContents> {
 	/// Indicates that a response should be sent including a reply path for
@@ -433,6 +435,8 @@ where
 		// Ensure peers have at least three channels so that it is more difficult to infer the
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
+
+		println!("\n\nIn create_blinded_paths: {:?}\n\n", recipient_data);
 
 		let network_graph = self.network_graph.deref().read_only();
 		let is_recipient_announced =
@@ -796,8 +800,9 @@ where
 		(control_tlvs_ss, custom_handler.deref(), logger.deref())
 	) {
 		Ok((Payload::Receive::<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>> {
-			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id , recipient_data }), reply_path,
+			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id, recipient_data }), reply_path,
 		}, None)) => {
+			println!("\n\nIn peeled_onion_message: {:?}\n\n", recipient_data);
 			Ok(PeeledOnion::Receive(message, path_id, recipient_data, reply_path))
 		},
 		Ok((Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
@@ -1098,6 +1103,8 @@ where
 		};
 
 		let recipient_data = response.recipient_data;
+
+		println!("\n\nin handle_onion_message response: {:?} \n\n", recipient_data);
 		let message_type = response.message.msg_type();
 		let reply_path = if create_reply_path {
 			match self.create_blinded_path(Some(recipient_data)) {

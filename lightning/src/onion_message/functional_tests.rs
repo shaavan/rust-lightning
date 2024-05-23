@@ -12,6 +12,7 @@
 use crate::blinded_path::message::RecipientData;
 use crate::blinded_path::{BlindedPath, EmptyNodeIdLookUp};
 use crate::events::{Event, EventsProvider};
+use crate::ln::channelmanager::PaymentId;
 use crate::ln::features::{ChannelFeatures, InitFeatures};
 use crate::ln::msgs::{self, DecodeError, OnionMessageHandler};
 use crate::routing::gossip::{NetworkGraph, P2PGossipSync};
@@ -477,6 +478,52 @@ fn do_test_async_response_with_reply_path_over_one_blinded_hop(reply_path_succee
 fn async_response_with_reply_path_over_one_blinded_hop() {
 	do_test_async_response_with_reply_path_over_one_blinded_hop(true);
 	do_test_async_response_with_reply_path_over_one_blinded_hop(false);
+}
+
+#[test]
+fn test_recipient_data_send_and_receive() {
+	// Simulate an asynchronous interaction between two nodes, Alice and Bob.
+
+	// 1. Set up the network with two nodes: Alice and Bob.
+	let nodes = create_nodes(2);
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let secp_ctx = Secp256k1::new();
+	
+	add_channel_to_graph(alice, bob, &secp_ctx, 24);
+
+	// 2. Define the message sent from Bob to Alice.
+	let message = TestCustomMessage::Ping;
+	let path_id = Some([2; 32]);
+
+	// 3. Simulate the creation of a Blinded Reply path provided by Bob.
+	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], None, &*nodes[1].entropy_source, &secp_ctx).unwrap();
+
+	println!("\n\n\n-----------------------------\n\n\n");
+	// 4. Create a responder using the reply path for Alice.
+	let responder = Some(Responder::new(reply_path, path_id));
+
+	// 5. Expect Alice to receive the message and create a response instruction for it.
+	alice.custom_message_handler.expect_message(message.clone());
+	alice.custom_message_handler.include_reply_path();
+	let recipient_data = RecipientData { payment_id: Some(PaymentId([42; 32]))};
+	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder, recipient_data);
+
+	// Correct till here. Response instruction contains the recipientData
+	println!("\n\nResponse Instruction: \n{:?}\n\n\n", response_instruction);
+
+	// 6. Simulate Alice asynchronously responding back to Bob with a response.
+	assert_eq!(
+		nodes[0].messenger.handle_onion_message_response(response_instruction),
+		Ok(Some(SendSuccess::Buffered)),
+	);
+
+	let alice_next_message = &alice.messenger.next_onion_message_for_peer(bob.node_id).unwrap();
+
+	let peeled_message = bob.messenger.peel_onion_message(&alice_next_message);
+	println!("\n\nAlice Message for Bob: \n{:?}\n\n", peeled_message);
+	
+	assert!(false);
 }
 
 #[test]

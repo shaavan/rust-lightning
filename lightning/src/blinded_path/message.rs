@@ -83,6 +83,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	session_priv: &SecretKey
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let recipient_data = recipient_data.unwrap_or(RecipientData::new());
+
+	println!("\n\nIn blinded_hops: {:?}\n\n", recipient_data);
 	let blinded_tlvs = unblinded_path.iter()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.map(|pk| ForwardTlvs { next_hop: NextMessageHop::NodeId(*pk), next_blinding_override: None })
