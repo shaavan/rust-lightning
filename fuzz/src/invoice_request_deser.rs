@@ -74,8 +74,8 @@ fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<UnsignedBolt12Invoice, Bolt12SemanticError> {
 	let entropy_source = Randomness {};
 	let paths = vec![
-		BlindedPath::new_for_message(&[pubkey(43), pubkey(44), pubkey(42)], &entropy_source, secp_ctx).unwrap(),
-		BlindedPath::new_for_message(&[pubkey(45), pubkey(46), pubkey(42)], &entropy_source, secp_ctx).unwrap(),
+		BlindedPath::new_for_message(&[pubkey(43), pubkey(44), pubkey(42)], None, &entropy_source, secp_ctx).unwrap(),
+		BlindedPath::new_for_message(&[pubkey(45), pubkey(46), pubkey(42)], None, &entropy_source, secp_ctx).unwrap(),
 	];
 
 	let payinfo = vec![

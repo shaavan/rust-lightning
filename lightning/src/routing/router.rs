@@ -11,6 +11,7 @@
 
 use bitcoin::secp256k1::{PublicKey, Secp256k1, self};
 
+use crate::blinded_path::message::RecipientData;
 use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode};
 use crate::blinded_path::payment::{ForwardNode, ForwardTlvs, PaymentConstraints, PaymentRelay, ReceiveTlvs};
 use crate::ln::{PaymentHash, PaymentPreimage};
@@ -171,9 +172,9 @@ impl< G: Deref<Target = NetworkGraph<L>> + Clone, L: Deref, ES: Deref, S: Deref,
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, recipient: PublicKey, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, recipient_data: Option<RecipientData>, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
-		self.message_router.create_blinded_paths(recipient, peers, secp_ctx)
+		self.message_router.create_blinded_paths(recipient, recipient_data, peers, secp_ctx)
 	}
 }
 
