@@ -358,7 +358,7 @@ fn one_blinded_hop() {
 	let test_msg = TestCustomMessage::Pong;
 
 	let secp_ctx = Secp256k1::new();
-	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id], None, &*nodes[1].entropy_source, &secp_ctx).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 	nodes[0].messenger.send_onion_message(test_msg, destination, None).unwrap();
 	nodes[1].custom_message_handler.expect_message(TestCustomMessage::Pong);
@@ -371,7 +371,7 @@ fn two_unblinded_two_blinded() {
 	let test_msg = TestCustomMessage::Pong;
 
 	let secp_ctx = Secp256k1::new();
-	let blinded_path = BlindedPath::new_for_message(&[nodes[3].node_id, nodes[4].node_id], &*nodes[4].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[3].node_id, nodes[4].node_id], None, &*nodes[4].entropy_source, &secp_ctx).unwrap();
 	let path = OnionMessagePath {
 		intermediate_nodes: vec![nodes[1].node_id, nodes[2].node_id],
 		destination: Destination::BlindedPath(blinded_path),
@@ -389,7 +389,7 @@ fn three_blinded_hops() {
 	let test_msg = TestCustomMessage::Pong;
 
 	let secp_ctx = Secp256k1::new();
-	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id, nodes[3].node_id], &*nodes[3].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id, nodes[3].node_id], None, &*nodes[3].entropy_source, &secp_ctx).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 
 	nodes[0].messenger.send_onion_message(test_msg, destination, None).unwrap();
@@ -412,7 +412,7 @@ fn async_response_over_one_blinded_hop() {
 
 	// 3. Simulate the creation of a Blinded Reply path provided by Bob.
 	let secp_ctx = Secp256k1::new();
-	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
+	let reply_path = BlindedPath::new_for_message(&[nodes[1].node_id], None, &*nodes[1].entropy_source, &secp_ctx).unwrap();
 
 	// 4. Create a responder using the reply path for Alice.
 	let responder = Some(Responder::new(reply_path, path_id));
@@ -448,7 +448,9 @@ fn async_response_with_reply_path_succeeds() {
 	// Alice receives a message from Bob with an added reply_path for responding back.
 	let message = TestCustomMessage::Ping;
 	let path_id = Some([2; 32]);
-	let reply_path = BlindedPath::new_for_message(&[bob.node_id], &*bob.entropy_source, &secp_ctx).unwrap();
+
+	let secp_ctx = Secp256k1::new();
+	let reply_path = BlindedPath::new_for_message(&[bob.node_id], None, &*bob.entropy_source, &secp_ctx).unwrap();
 
 	// Alice asynchronously responds to Bob, expecting a response back from him.
 	let responder = Responder::new(reply_path, path_id);
@@ -485,7 +487,7 @@ fn async_response_with_reply_path_fails() {
 	// Alice receives a message from Bob with an added reply_path for responding back.
 	let message = TestCustomMessage::Ping;
 	let path_id = Some([2; 32]);
-	let reply_path = BlindedPath::new_for_message(&[bob.node_id], &*bob.entropy_source, &secp_ctx).unwrap();
+	let reply_path = BlindedPath::new_for_message(&[bob.node_id], None, &*bob.entropy_source, &secp_ctx).unwrap();
 
 	// Alice tries to asynchronously respond to Bob, but fails because the nodes are unannounced.
 	// Therefore, the reply_path cannot be used for the response.
@@ -524,7 +526,7 @@ fn we_are_intro_node() {
 	let test_msg = TestCustomMessage::Pong;
 
 	let secp_ctx = Secp256k1::new();
-	let blinded_path = BlindedPath::new_for_message(&[nodes[0].node_id, nodes[1].node_id, nodes[2].node_id], &*nodes[2].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[0].node_id, nodes[1].node_id, nodes[2].node_id], None, &*nodes[2].entropy_source, &secp_ctx).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 
 	nodes[0].messenger.send_onion_message(test_msg.clone(), destination, None).unwrap();
@@ -532,7 +534,7 @@ fn we_are_intro_node() {
 	pass_along_path(&nodes);
 
 	// Try with a two-hop blinded path where we are the introduction node.
-	let blinded_path = BlindedPath::new_for_message(&[nodes[0].node_id, nodes[1].node_id], &*nodes[1].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[0].node_id, nodes[1].node_id], None, &*nodes[1].entropy_source, &secp_ctx).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 	nodes[0].messenger.send_onion_message(test_msg, destination, None).unwrap();
 	nodes[1].custom_message_handler.expect_message(TestCustomMessage::Pong);
@@ -547,7 +549,7 @@ fn invalid_blinded_path_error() {
 	let test_msg = TestCustomMessage::Pong;
 
 	let secp_ctx = Secp256k1::new();
-	let mut blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id], &*nodes[2].entropy_source, &secp_ctx).unwrap();
+	let mut blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id], None, &*nodes[2].entropy_source, &secp_ctx).unwrap();
 	blinded_path.blinded_hops.clear();
 	let destination = Destination::BlindedPath(blinded_path);
 	let err = nodes[0].messenger.send_onion_message(test_msg, destination, None).unwrap_err();
@@ -566,7 +568,7 @@ fn reply_path() {
 		destination: Destination::Node(nodes[3].node_id),
 		first_node_addresses: None,
 	};
-	let reply_path = BlindedPath::new_for_message(&[nodes[2].node_id, nodes[1].node_id, nodes[0].node_id], &*nodes[0].entropy_source, &secp_ctx).unwrap();
+	let reply_path = BlindedPath::new_for_message(&[nodes[2].node_id, nodes[1].node_id, nodes[0].node_id], None, &*nodes[0].entropy_source, &secp_ctx).unwrap();
 	nodes[0].messenger.send_onion_message_using_path(path, test_msg.clone(), Some(reply_path)).unwrap();
 	nodes[3].custom_message_handler.expect_message(TestCustomMessage::Ping);
 	pass_along_path(&nodes);
@@ -576,9 +578,9 @@ fn reply_path() {
 	pass_along_path(&nodes);
 
 	// Destination::BlindedPath
-	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id, nodes[3].node_id], &*nodes[3].entropy_source, &secp_ctx).unwrap();
+	let blinded_path = BlindedPath::new_for_message(&[nodes[1].node_id, nodes[2].node_id, nodes[3].node_id], None, &*nodes[3].entropy_source, &secp_ctx).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
-	let reply_path = BlindedPath::new_for_message(&[nodes[2].node_id, nodes[1].node_id, nodes[0].node_id], &*nodes[0].entropy_source, &secp_ctx).unwrap();
+	let reply_path = BlindedPath::new_for_message(&[nodes[2].node_id, nodes[1].node_id, nodes[0].node_id], None, &*nodes[0].entropy_source, &secp_ctx).unwrap();
 
 	nodes[0].messenger.send_onion_message(test_msg, destination, Some(reply_path)).unwrap();
 	nodes[3].custom_message_handler.expect_message(TestCustomMessage::Ping);
@@ -659,7 +661,7 @@ fn requests_peer_connection_for_buffered_messages() {
 	add_channel_to_graph(&nodes[0], &nodes[1], &secp_ctx, 42);
 
 	let blinded_path = BlindedPath::new_for_message(
-		&[nodes[1].node_id, nodes[2].node_id], &*nodes[0].entropy_source, &secp_ctx
+		&[nodes[1].node_id, nodes[2].node_id], None, &*nodes[0].entropy_source, &secp_ctx
 	).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 
@@ -696,7 +698,7 @@ fn drops_buffered_messages_waiting_for_peer_connection() {
 	add_channel_to_graph(&nodes[0], &nodes[1], &secp_ctx, 42);
 
 	let blinded_path = BlindedPath::new_for_message(
-		&[nodes[1].node_id, nodes[2].node_id], &*nodes[0].entropy_source, &secp_ctx
+		&[nodes[1].node_id, nodes[2].node_id], None, &*nodes[0].entropy_source, &secp_ctx
 	).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 
@@ -745,7 +747,7 @@ fn intercept_offline_peer_oms() {
 	let message = TestCustomMessage::Pong;
 	let secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPath::new_for_message(
-		&[nodes[1].node_id, nodes[2].node_id], &*nodes[2].entropy_source, &secp_ctx
+		&[nodes[1].node_id, nodes[2].node_id], None, &*nodes[2].entropy_source, &secp_ctx
 	).unwrap();
 	let destination = Destination::BlindedPath(blinded_path);
 
