@@ -112,15 +112,30 @@ impl Writeable for TestCustomMessage {
 
 struct TestCustomMessageHandler {
 	expected_messages: Mutex<VecDeque<TestCustomMessage>>,
+	add_reply_path: Mutex<bool>,
 }
 
 impl TestCustomMessageHandler {
 	fn new() -> Self {
-		Self { expected_messages: Mutex::new(VecDeque::new()) }
+		Self {
+			expected_messages: Mutex::new(VecDeque::new()),
+			add_reply_path: Mutex::new(false),
+		}
 	}
 
 	fn expect_message(&self, message: TestCustomMessage) {
 		self.expected_messages.lock().unwrap().push_back(message);
+	}
+
+	fn include_reply_path(&self) {
+		*self.add_reply_path.lock().unwrap() = true;
+	}
+
+	fn read_and_reset_add_reply_path(&self) -> bool {
+		let mut add_reply_path = self.add_reply_path.lock().unwrap();
+		let was_set = *add_reply_path;
+		*add_reply_path = false;
+		was_set
 	}
 }
 
@@ -144,10 +159,14 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 		}
 		let response_option = match msg {
 			TestCustomMessage::Ping => Some(TestCustomMessage::Pong),
-			TestCustomMessage::Pong => None,
+			TestCustomMessage::Pong => Some(TestCustomMessage::Ping),
 		};
 		if let (Some(response), Some(responder)) = (response_option, responder) {
-			responder.respond(response)
+			if self.read_and_reset_add_reply_path() {
+				responder.respond_with_reply_path(response)
+			} else {
+				responder.respond(response)
+			}
 		} else {
 			ResponseInstruction::NoResponse
 		}
@@ -399,6 +418,63 @@ fn async_response_over_one_blinded_hop() {
 	bob.custom_message_handler.expect_message(TestCustomMessage::Pong);
 
 	pass_along_path(&nodes);
+}
+
+fn do_test_async_response_with_reply_path_over_one_blinded_hop(reply_path_succeed: bool) {
+	// Simulate an asynchronous interaction between two nodes, Alice and Bob.
+
+	let mut nodes = create_nodes(2);
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+
+	// Alice receives a message from Bob with a reply path
+	let message = TestCustomMessage::Ping;
+	let path_id = Some([2; 32]);
+
+	let secp_ctx = Secp256k1::new();
+	let reply_path = BlindedPath::new_for_message(&[bob.node_id], &*bob.entropy_source, &secp_ctx).unwrap();
+
+	if reply_path_succeed {
+		// Add a channel so that nodes are announced to each other.
+		// This will allow creating the reply path by Alice to include in the response.
+		add_channel_to_graph(alice, bob, &secp_ctx, 24);
+	}
+
+	let responder = Some(Responder::new(reply_path, path_id));
+	alice.custom_message_handler.expect_message(message.clone());
+	alice.custom_message_handler.include_reply_path();
+
+	// Alice handles the message reponse, and creates the appropriate ResponseInstruction for it.
+	let response_instruction = alice.custom_message_handler.handle_custom_message(message, responder);
+
+	if !reply_path_succeed {
+		// Simulate Alice attempting to asynchronously respond back to Bob
+		// but failing to create a reply path.
+		assert_eq!(
+			alice.messenger.handle_onion_message_response(response_instruction),
+			Err(SendError::PathNotFound),
+		);
+	} else {
+		// Simulate Alice asynchronously responding back to Bob with a response.
+		assert_eq!(
+			alice.messenger.handle_onion_message_response(response_instruction),
+			Ok(Some(SendSuccess::Buffered)),
+		);
+
+		bob.custom_message_handler.expect_message(TestCustomMessage::Pong);
+		pass_along_path(&nodes);
+
+		// Simulate Bob responding back to Alice through the reply path created by her.
+		alice.custom_message_handler.expect_message(TestCustomMessage::Ping);
+		nodes.reverse();
+		pass_along_path(&nodes);
+	}
+}
+
+#[test]
+fn async_response_with_reply_path_over_one_blinded_hop() {
+	do_test_async_response_with_reply_path_over_one_blinded_hop(true);
+	do_test_async_response_with_reply_path_over_one_blinded_hop(false);
 }
 
 #[test]
