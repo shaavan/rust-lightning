@@ -8897,6 +8897,34 @@ where
 		}
 	}
 
+	#[cfg(test)]
+	pub fn request_refund_payment_fails(
+		&self, refund: &Refund
+	) -> Bolt12SemanticError {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		if refund.paths().is_empty() {
+			let error = Bolt12SemanticError::InvalidMetadata;
+			let message = new_pending_onion_message(
+				OffersMessage::InvoiceError(error.into()),
+				Destination::Node(refund.payer_id()),
+				None,
+			);
+			pending_offers_messages.push(message);
+		} else {
+			for path in refund.paths() {
+				let error = Bolt12SemanticError::InvalidMetadata;
+				let message = new_pending_onion_message(
+					OffersMessage::InvoiceError(error.into()),
+					Destination::BlindedPath(path.clone()),
+					None,
+				);
+				pending_offers_messages.push(message);
+			}
+		}
+		Bolt12SemanticError::InvalidMetadata
+	}
+
 	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
 	/// to pay us.
 	///
