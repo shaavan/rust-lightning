@@ -59,6 +59,7 @@ use crate::routing::gossip::{NodeAlias, NodeId};
 use crate::sign::{NodeSigner, Recipient};
 
 use crate::prelude::*;
+use crate::util::string::UntrustedString;
 
 macro_rules! expect_recent_payment {
 	($node: expr, $payment_state: path, $payment_id: expr) => {
@@ -639,6 +640,65 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 
 	claim_bolt12_payment(bob, &[alice], payment_context);
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
+}
+
+/// Checks that when a refund is failed to be paid because we received InvoiceError from counterparty's side,
+/// We drop this Outbound payment from the list of our pending_outbound_payments
+#[test]
+fn creates_refund_and_fails_removing_payment() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let alice_id = alice.node.get_our_node_id();
+	let bob = &nodes[1];
+	let bob_id = bob.node.get_our_node_id();
+
+	let absolute_expiry = Duration::from_secs(u64::MAX);
+	let payment_id = PaymentId([1; 32]);
+
+	// Alice creates the refund expecting creating a payment to bob.
+	let refund = alice.node
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
+		.unwrap()
+		.build().unwrap();
+
+	assert_eq!(refund.amount_msats(), 10_000_000);
+	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
+	assert_ne!(refund.payer_id(), bob_id);
+	assert!(!refund.paths().is_empty());
+
+	for path in refund.paths() {
+		assert_eq!(path.introduction_node, IntroductionNode::NodeId(alice_id));
+	}
+
+	expect_recent_payment!(alice, RecentPaymentDetails::AwaitingInvoice, payment_id);
+	assert_eq!(alice.node.list_recent_payments().len(), 1);
+
+	// For some reason, bob fails to process the Refund, and hence sends back an InvoiceError.
+	let expected_invoice_error = bob.node.request_refund_payment_fails(&refund);
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	alice.onion_messenger.handle_onion_message(&alice_id, &onion_message);
+
+	let InvoiceError { message, .. } = extract_invoice_error(alice, &onion_message);
+	assert_eq!(message, UntrustedString(format!("{:?}", expected_invoice_error)));
+
+	// Make sure we abandon the payment for which we have received the InvoiceError.
+	let events = alice.node.get_and_clear_pending_events();
+	assert_eq!(events.len(), 1);
+	match events[0] {
+		Event::InvoiceRequestFailed { payment_id: pay_id } => {
+			assert_eq!(pay_id, payment_id);
+		}
+		_ => panic!("Unexpected event")
+	}
+
+	assert_eq!(alice.node.list_recent_payments().len(), 0);
 }
 
 /// Checks that an invoice for an offer without any blinded paths can be requested. Note that while
