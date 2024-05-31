@@ -345,11 +345,17 @@ fn prefers_more_connected_nodes_in_blinded_paths() {
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(bob_id));
-	assert!(!offer.paths().is_empty());
-	for path in offer.paths() {
-		let introduction_node_id = resolve_introduction_node(david, &path);
-		assert_eq!(introduction_node_id, nodes[4].node.get_our_node_id());
-	}
+
+	// Ensure both potential paths are calculated for the offer.
+	assert_eq!(offer.paths().len(), 2);
+
+	// Verify that the most connected introduction node is chosen first.
+	let introduction_node_id_1 = resolve_introduction_node(david, &offer.paths()[0]);
+	assert_eq!(introduction_node_id_1, nodes[4].node.get_our_node_id());
+
+	// Verify that the next most connected introduction node is chosen second.
+	let introduction_node_id_2 = resolve_introduction_node(david, &offer.paths()[1]);
+	assert_eq!(introduction_node_id_2, charlie.node.get_our_node_id());
 }
 
 /// Checks that an offer can be paid through blinded paths and that ephemeral pubkeys are used

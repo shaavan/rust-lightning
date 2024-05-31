@@ -38,8 +38,8 @@
 //! # #[cfg(feature = "std")]
 //! # use std::time::SystemTime;
 //! #
-//! # fn create_blinded_path() -> BlindedPath { unimplemented!() }
-//! # fn create_another_blinded_path() -> BlindedPath { unimplemented!() }
+//! # fn create_blinded_path(count: usize) -> Vec<BlindedPath> { unimplemented!() }
+//! # fn create_another_blinded_path(count: usize) -> Vec<BlindedPath> { unimplemented!() }
 //! #
 //! # #[cfg(feature = "std")]
 //! # fn build() -> Result<(), Bolt12ParseError> {
@@ -52,8 +52,8 @@
 //!     .description("coffee, large".to_string())
 //!     .absolute_expiry(expiration.duration_since(SystemTime::UNIX_EPOCH).unwrap())
 //!     .issuer("Foo Bar".to_string())
-//!     .path(create_blinded_path())
-//!     .path(create_another_blinded_path())
+//!     .path(create_blinded_path(1))
+//!     .path(create_another_blinded_path(1))
 //!     .chain(Network::Bitcoin)
 //!     .payer_note("refund for order #12345".to_string())
 //!     .build()?;
@@ -248,8 +248,11 @@ macro_rules! refund_builder_methods { (
 	///
 	/// Successive calls to this method will add another blinded path. Caller is responsible for not
 	/// adding duplicate paths.
-	pub fn path($($self_mut)* $self: $self_type, path: BlindedPath) -> $return_type {
-		$self.refund.paths.get_or_insert_with(Vec::new).push(path);
+	pub fn path($($self_mut)* $self: $self_type, paths: Vec<BlindedPath>) -> $return_type {
+		let entry = $self.refund.paths.get_or_insert_with(Vec::new);
+		for path in paths {
+			entry.push(path);
+		}
 		$return_value
 	}
 
@@ -1078,14 +1081,14 @@ mod tests {
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
 
-		let blinded_path = BlindedPath {
+		let blinded_path = vec![BlindedPath {
 			introduction_node: IntroductionNode::NodeId(pubkey(40)),
 			blinding_point: pubkey(41),
 			blinded_hops: vec![
 				BlindedHop { blinded_node_id: pubkey(43), encrypted_payload: vec![0; 43] },
 				BlindedHop { blinded_node_id: node_id, encrypted_payload: vec![0; 44] },
 			],
-		};
+		}];
 
 		let refund = RefundBuilder
 			::deriving_payer_id(node_id, &expanded_key, &entropy, &secp_ctx, 1000, payment_id)
@@ -1186,8 +1189,7 @@ mod tests {
 		];
 
 		let refund = RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap()
-			.path(paths[0].clone())
-			.path(paths[1].clone())
+			.path(paths.clone())
 			.build()
 			.unwrap();
 		let (_, _, invoice_request_tlv_stream) = refund.as_tlv_stream();
@@ -1405,8 +1407,7 @@ mod tests {
 		let refund = RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap()
 			.absolute_expiry(past_expiry)
 			.issuer("bar".into())
-			.path(paths[0].clone())
-			.path(paths[1].clone())
+			.path(paths.clone())
 			.chain(Network::Testnet)
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.quantity(10)

@@ -1833,14 +1833,14 @@ mod tests {
 		let entropy = FixedEntropy {};
 		let secp_ctx = Secp256k1::new();
 
-		let blinded_path = BlindedPath {
+		let blinded_path = vec![BlindedPath {
 			introduction_node: IntroductionNode::NodeId(pubkey(40)),
 			blinding_point: pubkey(41),
 			blinded_hops: vec![
 				BlindedHop { blinded_node_id: pubkey(42), encrypted_payload: vec![0; 43] },
 				BlindedHop { blinded_node_id: node_id, encrypted_payload: vec![0; 44] },
 			],
-		};
+		}];
 
 		#[cfg(c_bindings)]
 		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
@@ -2409,8 +2409,7 @@ mod tests {
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.clear_signing_pubkey()
 			.amount_msats(1000)
-			.path(paths[0].clone())
-			.path(paths[1].clone())
+			.path(paths.clone())
 			.build().unwrap()
 			.request_invoice(vec![1; 32], payer_pubkey()).unwrap()
 			.build().unwrap()
@@ -2431,8 +2430,7 @@ mod tests {
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.clear_signing_pubkey()
 			.amount_msats(1000)
-			.path(paths[0].clone())
-			.path(paths[1].clone())
+			.path(paths.clone())
 			.build().unwrap()
 			.request_invoice(vec![1; 32], payer_pubkey()).unwrap()
 			.build().unwrap()
