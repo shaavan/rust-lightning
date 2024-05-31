@@ -98,7 +98,7 @@ pub(super) const MAX_TIMER_TICKS: usize = 2;
 /// #         })
 /// #     }
 /// #     fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-/// #         &self, _recipient: PublicKey, _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>
+/// #         &self, _recipient: PublicKey, _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>, count: usize
 /// #     ) -> Result<Vec<BlindedPath>, ()> {
 /// #         unreachable!()
 /// #     }
@@ -341,7 +341,7 @@ pub trait MessageRouter {
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>, count: usize,
 	) -> Result<Vec<BlindedPath>, ()>;
 }
 
@@ -408,11 +408,8 @@ where
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>, count: usize
 	) -> Result<Vec<BlindedPath>, ()> {
-		// Limit the number of blinded paths that are computed.
-		const MAX_PATHS: usize = 3;
-
 		// Ensure peers have at least three channels so that it is more difficult to infer the
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
@@ -442,7 +439,7 @@ where
 			.map(|(peer, _, _)| {
 				BlindedPath::new_for_message(&[peer], recipient, &*self.entropy_source, secp_ctx)
 			})
-			.take(MAX_PATHS)
+			.take(count)
 			.collect::<Result<Vec<_>, _>>();
 
 		let mut paths = match paths {

@@ -33,8 +33,8 @@
 //! # #[cfg(feature = "std")]
 //! # use std::time::SystemTime;
 //! #
-//! # fn create_blinded_path() -> BlindedPath { unimplemented!() }
-//! # fn create_another_blinded_path() -> BlindedPath { unimplemented!() }
+//! # fn create_blinded_path(count: usize) -> Vec<BlindedPath> { unimplemented!() }
+//! # fn create_another_blinded_path(count: usize) -> Vec<BlindedPath> { unimplemented!() }
 //! #
 //! # #[cfg(feature = "std")]
 //! # fn build() -> Result<(), Bolt12ParseError> {
@@ -49,8 +49,8 @@
 //!     .supported_quantity(Quantity::Unbounded)
 //!     .absolute_expiry(expiration.duration_since(SystemTime::UNIX_EPOCH).unwrap())
 //!     .issuer("Foo Bar".to_string())
-//!     .path(create_blinded_path())
-//!     .path(create_another_blinded_path())
+//!     .path(create_blinded_path(1))
+//!     .path(create_another_blinded_path(1))
 //!     .build()?;
 //!
 //! // Encode as a bech32 string for use in a QR code.
@@ -344,8 +344,9 @@ macro_rules! offer_builder_methods { (
 	///
 	/// Successive calls to this method will add another blinded path. Caller is responsible for not
 	/// adding duplicate paths.
-	pub fn path($($self_mut)* $self: $self_type, path: BlindedPath) -> $return_type {
-		$self.offer.paths.get_or_insert_with(Vec::new).push(path);
+	pub fn path($($self_mut)* $self: $self_type, paths: Vec<BlindedPath>) -> $return_type {
+		let entry = $self.offer.paths.get_or_insert_with(Vec::new);
+		entry.extend(paths);
 		$return_value
 	}
 
@@ -1316,14 +1317,14 @@ mod tests {
 		let entropy = FixedEntropy {};
 		let secp_ctx = Secp256k1::new();
 
-		let blinded_path = BlindedPath {
+		let blinded_path = vec![BlindedPath {
 			introduction_node: IntroductionNode::NodeId(pubkey(40)),
 			blinding_point: pubkey(41),
 			blinded_hops: vec![
 				BlindedHop { blinded_node_id: pubkey(42), encrypted_payload: vec![0; 43] },
 				BlindedHop { blinded_node_id: node_id, encrypted_payload: vec![0; 44] },
 			],
-		};
+		}];
 
 		#[cfg(c_bindings)]
 		use super::OfferWithDerivedMetadataBuilder as OfferBuilder;
@@ -1509,8 +1510,7 @@ mod tests {
 		];
 
 		let offer = OfferBuilder::new(pubkey(42))
-			.path(paths[0].clone())
-			.path(paths[1].clone())
+			.path(paths.clone())
 			.build()
 			.unwrap();
 		let tlv_stream = offer.as_tlv_stream();
@@ -1693,22 +1693,21 @@ mod tests {
 	#[test]
 	fn parses_offer_with_paths() {
 		let offer = OfferBuilder::new(pubkey(42))
-			.path(BlindedPath {
+			.path(vec![BlindedPath {
 				introduction_node: IntroductionNode::NodeId(pubkey(40)),
 				blinding_point: pubkey(41),
 				blinded_hops: vec![
 					BlindedHop { blinded_node_id: pubkey(43), encrypted_payload: vec![0; 43] },
 					BlindedHop { blinded_node_id: pubkey(44), encrypted_payload: vec![0; 44] },
 				],
-			})
-			.path(BlindedPath {
+			}, BlindedPath {
 				introduction_node: IntroductionNode::NodeId(pubkey(40)),
 				blinding_point: pubkey(41),
 				blinded_hops: vec![
 					BlindedHop { blinded_node_id: pubkey(45), encrypted_payload: vec![0; 45] },
 					BlindedHop { blinded_node_id: pubkey(46), encrypted_payload: vec![0; 46] },
 				],
-			})
+			}])
 			.build()
 			.unwrap();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
@@ -1716,14 +1715,14 @@ mod tests {
 		}
 
 		let offer = OfferBuilder::new(pubkey(42))
-			.path(BlindedPath {
+			.path(vec![BlindedPath {
 				introduction_node: IntroductionNode::NodeId(pubkey(40)),
 				blinding_point: pubkey(41),
 				blinded_hops: vec![
 					BlindedHop { blinded_node_id: pubkey(43), encrypted_payload: vec![0; 43] },
 					BlindedHop { blinded_node_id: pubkey(44), encrypted_payload: vec![0; 44] },
 				],
-			})
+			}])
 			.clear_signing_pubkey()
 			.build()
 			.unwrap();
