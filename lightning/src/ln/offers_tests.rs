@@ -345,6 +345,7 @@ fn prefers_more_connected_nodes_in_blinded_paths() {
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(bob_id));
+
 	assert!(!offer.paths().is_empty());
 	for path in offer.paths() {
 		let introduction_node_id = resolve_introduction_node(david, &path);
