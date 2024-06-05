@@ -9426,6 +9426,37 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
+	fn retry_invoice_requests(&self) {
+		let reply_path = self.create_blinded_path().map_err(|_| return).ok().unwrap();
+		for invoice_request in self.pending_outbound_payments.get_invoice_request_awaiting_invoice() {
+			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+			if !invoice_request.paths().is_empty() {
+				// Send as many invoice requests as there are paths in the offer (with an upper bound).
+				// Using only one path could result in a failure if the path no longer exists. But only
+				// one invoice for a given payment id will be paid, even if more than one is received.
+				const REQUEST_LIMIT: usize = 10;
+				for path in invoice_request.paths().into_iter().take(REQUEST_LIMIT) {
+					let message = new_pending_onion_message(
+						OffersMessage::InvoiceRequest(invoice_request.clone()),
+						Destination::BlindedPath(path.clone()),
+						Some(reply_path.clone()),
+					);
+					pending_offers_messages.push(message);
+				}
+			} else if let Some(signing_pubkey) = invoice_request.signing_pubkey() {
+				let message = new_pending_onion_message(
+					OffersMessage::InvoiceRequest(invoice_request.clone()),
+					Destination::Node(signing_pubkey),
+					Some(reply_path.clone()),
+				);
+				pending_offers_messages.push(message);
+			} else {
+				debug_assert!(false);
+				return
+			}
+		}		
+	}
+
 	fn handle_open_channel(&self, counterparty_node_id: &PublicKey, msg: &msgs::OpenChannel) {
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// open_channel message - pre-funded channels are never written so there should be no
