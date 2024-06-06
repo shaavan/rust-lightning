@@ -162,7 +162,7 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, CMH> where
 /// #         })
 /// #     }
 /// #     fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-/// #         &self, _recipient: PublicKey, _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>
+/// #         &self, _recipient: PublicKey, _peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>, count: usize
 /// #     ) -> Result<Vec<BlindedPath>, ()> {
 /// #         unreachable!()
 /// #     }
@@ -426,7 +426,7 @@ pub trait MessageRouter {
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>, count: usize,
 	) -> Result<Vec<BlindedPath>, ()>;
 }
 
@@ -492,11 +492,8 @@ where
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>, count: usize
 	) -> Result<Vec<BlindedPath>, ()> {
-		// Limit the number of blinded paths that are computed.
-		const MAX_PATHS: usize = 3;
-
 		// Ensure peers have at least three channels so that it is more difficult to infer the
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
@@ -526,7 +523,7 @@ where
 			.map(|(peer, _, _)| {
 				BlindedPath::new_for_message(&[peer], recipient, &*self.entropy_source, secp_ctx)
 			})
-			.take(MAX_PATHS)
+			.take(count)
 			.collect::<Result<Vec<_>, _>>();
 
 		let mut paths = match paths {
@@ -1073,6 +1070,8 @@ where
 	}
 
 	fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
+		// Maximum number of unique reply paths to be calculated.
+		const MAX_REPLY_PATHS: usize = 1;
 		let recipient = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
@@ -1088,7 +1087,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.message_router
-			.create_blinded_paths(recipient, peers, secp_ctx)
+			.create_blinded_paths(recipient, peers, secp_ctx, MAX_REPLY_PATHS)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| SendError::PathNotFound)
 	}
