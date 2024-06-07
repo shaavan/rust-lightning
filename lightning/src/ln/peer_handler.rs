@@ -1727,6 +1727,8 @@ impl<Descriptor: SocketDescriptor, CM: Deref, RM: Deref, OM: Deref, L: Deref, CM
 
 		let mut should_forward = None;
 
+		let _ = self.message_handler.chan_handler.retry_invoice_requests();
+
 		match message {
 			// Setup and Control messages:
 			wire::Message::Init(_) => {
