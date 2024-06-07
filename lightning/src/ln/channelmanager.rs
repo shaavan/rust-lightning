@@ -9428,8 +9428,12 @@ where
 {
 	fn retry_invoice_requests(&self) {
 		let reply_path = self.create_blinded_path().map_err(|_| return).ok().unwrap();
-		for invoice_request in self.pending_outbound_payments.get_invoice_request_awaiting_invoice() {
-			let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+		if invoice_requests.is_empty() { return }
+		
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		for invoice_request in invoice_requests {
 			if !invoice_request.paths().is_empty() {
 				// Send as many invoice requests as there are paths in the offer (with an upper bound).
 				// Using only one path could result in a failure if the path no longer exists. But only

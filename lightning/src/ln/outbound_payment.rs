@@ -32,7 +32,7 @@ use crate::util::ser::ReadableArgs;
 
 use core::fmt::{self, Display, Formatter};
 use core::ops::Deref;
-use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::prelude::*;
@@ -1794,17 +1794,19 @@ impl OutboundPayments {
 	}
 
 	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<InvoiceRequest> {
-		let pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
+		if !self.pending_payments_awaiting_invoice.load(Ordering::SeqCst) {
+			return vec![];
+		}
+		let mut pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
+		let invoice_requests = pending_outbound_payments.values_mut()
+            .filter_map(|payment| match payment {
+				PendingOutboundPayment::AwaitingInvoice { invoice_request, .. } => invoice_request.take(),
+				_ => None,
+            })
+			.collect();
 
-		pending_outbound_payments.iter().filter_map(
-			|(_, payment)| {
-				if let PendingOutboundPayment::AwaitingInvoice { invoice_request, .. } = payment {
-					invoice_request.clone()
-				} else {
-					None
-				}
-			}
-		).collect()
+		self.pending_payments_awaiting_invoice.store(false, Ordering::SeqCst);
+		invoice_requests
 	}
 }
 
