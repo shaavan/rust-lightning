@@ -224,9 +224,7 @@ impl MessageSendEventsProvider for ErroringMessageHandler {
 	}
 }
 impl ChannelMessageHandler for ErroringMessageHandler {
-	fn retry_invoice_requests(&self) {
-		todo!();
-	}
+	fn retry_invoice_requests(&self) -> Result<(), ()> { Ok(()) }
 	// Any messages which are related to a specific channel generate an error message to let the
 	// peer know we don't care about channels.
 	fn handle_open_channel(&self, their_node_id: &PublicKey, msg: &msgs::OpenChannel) {

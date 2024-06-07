@@ -62,7 +62,7 @@ use crate::ln::outbound_payment::{Bolt12PaymentError, OutboundPayments, PaymentA
 use crate::ln::wire::Encode;
 use crate::offers::invoice::{BlindedPayInfo, Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequestBuilder};
+use crate::offers::invoice_request::{DerivedPayerId, InvoiceRequest, InvoiceRequestBuilder};
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
@@ -8379,6 +8379,39 @@ where
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
+	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_path: BlindedPath)
+	-> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
+
+		let mut pending_offers_messages = vec![];
+
+		if !invoice_request.paths().is_empty() {
+			// Send as many invoice requests as there are paths in the offer (with an upper bound).
+			// Using only one path could result in a failure if the path no longer exists. But only
+			// one invoice for a given payment id will be paid, even if more than one is received.
+			const REQUEST_LIMIT: usize = 10;
+			for path in invoice_request.paths().into_iter().take(REQUEST_LIMIT) {
+				let message = new_pending_onion_message(
+					OffersMessage::InvoiceRequest(invoice_request.clone()),
+					Destination::BlindedPath(path.clone()),
+					Some(reply_path.clone()),
+				);
+				pending_offers_messages.push(message);
+			}
+		} else if let Some(signing_pubkey) = invoice_request.signing_pubkey() {
+			let message = new_pending_onion_message(
+				OffersMessage::InvoiceRequest(invoice_request),
+				Destination::Node(signing_pubkey),
+				Some(reply_path),
+			);
+			pending_offers_messages.push(message);
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingSigningPubkey);
+		}
+
+		Ok(pending_offers_messages)
+	}
+
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
 	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
 	/// [`Bolt12Invoice`] once it is received.
@@ -8472,30 +8505,7 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if !offer.paths().is_empty() {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
-			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
-				);
-				pending_offers_messages.push(message);
-			}
-		} else if let Some(signing_pubkey) = offer.signing_pubkey() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(signing_pubkey),
-				Some(reply_path),
-			);
-			pending_offers_messages.push(message);
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingSigningPubkey);
-		}
+		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_path)?);
 
 		Ok(())
 	}
@@ -9426,39 +9436,19 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn retry_invoice_requests(&self) {
+	fn retry_invoice_requests(&self) -> Result<(), ()> {
 		let reply_path = self.create_blinded_path().map_err(|_| return).ok().unwrap();
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
-		if invoice_requests.is_empty() { return }
-		
+		if invoice_requests.is_empty() { return Ok(());}
+
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 
 		for invoice_request in invoice_requests {
-			if !invoice_request.paths().is_empty() {
-				// Send as many invoice requests as there are paths in the offer (with an upper bound).
-				// Using only one path could result in a failure if the path no longer exists. But only
-				// one invoice for a given payment id will be paid, even if more than one is received.
-				const REQUEST_LIMIT: usize = 10;
-				for path in invoice_request.paths().into_iter().take(REQUEST_LIMIT) {
-					let message = new_pending_onion_message(
-						OffersMessage::InvoiceRequest(invoice_request.clone()),
-						Destination::BlindedPath(path.clone()),
-						Some(reply_path.clone()),
-					);
-					pending_offers_messages.push(message);
-				}
-			} else if let Some(signing_pubkey) = invoice_request.signing_pubkey() {
-				let message = new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::Node(signing_pubkey),
-					Some(reply_path.clone()),
-				);
-				pending_offers_messages.push(message);
-			} else {
-				debug_assert!(false);
-				return
-			}
-		}		
+			pending_offers_messages.extend(self.create_invoice_request_messages(
+				invoice_request, reply_path.clone()).map_err(|_| ())?);
+		}
+
+		Ok(())
 	}
 
 	fn handle_open_channel(&self, counterparty_node_id: &PublicKey, msg: &msgs::OpenChannel) {
