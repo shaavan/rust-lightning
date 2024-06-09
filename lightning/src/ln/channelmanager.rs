@@ -9452,6 +9452,8 @@ where
 	}
 
 	fn handle_open_channel(&self, counterparty_node_id: &PublicKey, msg: &msgs::OpenChannel) {
+
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// open_channel message - pre-funded channels are never written so there should be no
 		// change to the contents.
@@ -9470,12 +9472,14 @@ where
 	}
 
 	fn handle_open_channel_v2(&self, counterparty_node_id: &PublicKey, msg: &msgs::OpenChannelV2) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.common_fields.temporary_channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_accept_channel(&self, counterparty_node_id: &PublicKey, msg: &msgs::AcceptChannel) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// accept_channel message - pre-funded channels are never written so there should be no
 		// change to the contents.
@@ -9486,22 +9490,26 @@ where
 	}
 
 	fn handle_accept_channel_v2(&self, counterparty_node_id: &PublicKey, msg: &msgs::AcceptChannelV2) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.common_fields.temporary_channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_funding_created(&self, counterparty_node_id: &PublicKey, msg: &msgs::FundingCreated) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_funding_created(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_funding_signed(&self, counterparty_node_id: &PublicKey, msg: &msgs::FundingSigned) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_funding_signed(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_channel_ready(&self, counterparty_node_id: &PublicKey, msg: &msgs::ChannelReady) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// channel_ready message - while the channel's state will change, any channel_ready message
 		// will ultimately be re-sent on startup and the `ChannelMonitor` won't be updated so we
@@ -9518,6 +9526,7 @@ where
 	}
 
 	fn handle_stfu(&self, counterparty_node_id: &PublicKey, msg: &msgs::Stfu) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Quiescence not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
@@ -9525,6 +9534,7 @@ where
 
 	#[cfg(splicing)]
 	fn handle_splice(&self, counterparty_node_id: &PublicKey, msg: &msgs::Splice) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Splicing not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
@@ -9532,6 +9542,7 @@ where
 
 	#[cfg(splicing)]
 	fn handle_splice_ack(&self, counterparty_node_id: &PublicKey, msg: &msgs::SpliceAck) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Splicing not supported (splice_ack)".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
@@ -9539,22 +9550,26 @@ where
 
 	#[cfg(splicing)]
 	fn handle_splice_locked(&self, counterparty_node_id: &PublicKey, msg: &msgs::SpliceLocked) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Splicing not supported (splice_locked)".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_shutdown(&self, counterparty_node_id: &PublicKey, msg: &msgs::Shutdown) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_shutdown(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_closing_signed(&self, counterparty_node_id: &PublicKey, msg: &msgs::ClosingSigned) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_closing_signed(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_update_add_htlc(&self, counterparty_node_id: &PublicKey, msg: &msgs::UpdateAddHTLC) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// update_add_htlc message - the message itself doesn't change our channel state only the
 		// `commitment_signed` message afterwards will.
@@ -9571,11 +9586,13 @@ where
 	}
 
 	fn handle_update_fulfill_htlc(&self, counterparty_node_id: &PublicKey, msg: &msgs::UpdateFulfillHTLC) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_update_fulfill_htlc(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_update_fail_htlc(&self, counterparty_node_id: &PublicKey, msg: &msgs::UpdateFailHTLC) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// update_fail_htlc message - the message itself doesn't change our channel state only the
 		// `commitment_signed` message afterwards will.
@@ -9592,6 +9609,7 @@ where
 	}
 
 	fn handle_update_fail_malformed_htlc(&self, counterparty_node_id: &PublicKey, msg: &msgs::UpdateFailMalformedHTLC) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// update_fail_malformed_htlc message - the message itself doesn't change our channel state
 		// only the `commitment_signed` message afterwards will.
@@ -9608,16 +9626,19 @@ where
 	}
 
 	fn handle_commitment_signed(&self, counterparty_node_id: &PublicKey, msg: &msgs::CommitmentSigned) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_commitment_signed(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_revoke_and_ack(&self, counterparty_node_id: &PublicKey, msg: &msgs::RevokeAndACK) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_revoke_and_ack(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_update_fee(&self, counterparty_node_id: &PublicKey, msg: &msgs::UpdateFee) {
+		let _ = self.retry_invoice_requests();
 		// Note that we never need to persist the updated ChannelManager for an inbound
 		// update_fee message - the message itself doesn't change our channel state only the
 		// `commitment_signed` message afterwards will.
@@ -9634,11 +9655,13 @@ where
 	}
 
 	fn handle_announcement_signatures(&self, counterparty_node_id: &PublicKey, msg: &msgs::AnnouncementSignatures) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let _ = handle_error!(self, self.internal_announcement_signatures(counterparty_node_id, msg), *counterparty_node_id);
 	}
 
 	fn handle_channel_update(&self, counterparty_node_id: &PublicKey, msg: &msgs::ChannelUpdate) {
+		let _ = self.retry_invoice_requests();
 		PersistenceNotifierGuard::optionally_notify(self, || {
 			if let Ok(persist) = handle_error!(self, self.internal_channel_update(counterparty_node_id, msg), *counterparty_node_id) {
 				persist
@@ -9649,6 +9672,7 @@ where
 	}
 
 	fn handle_channel_reestablish(&self, counterparty_node_id: &PublicKey, msg: &msgs::ChannelReestablish) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::optionally_notify(self, || {
 			let res = self.internal_channel_reestablish(counterparty_node_id, msg);
 			let persist = match &res {
@@ -9662,6 +9686,7 @@ where
 	}
 
 	fn peer_disconnected(&self, counterparty_node_id: &PublicKey) {
+		let _ = self.retry_invoice_requests();
 		let _persistence_guard = PersistenceNotifierGuard::optionally_notify(
 			self, || NotifyOption::SkipPersistHandleEvents);
 		let mut failed_channels = Vec::new();
@@ -9784,6 +9809,7 @@ where
 	}
 
 	fn peer_connected(&self, counterparty_node_id: &PublicKey, init_msg: &msgs::Init, inbound: bool) -> Result<(), ()> {
+		let _ = self.retry_invoice_requests();
 		let logger = WithContext::from(&self.logger, Some(*counterparty_node_id), None, None);
 		if !init_msg.features.supports_static_remote_key() {
 			log_debug!(logger, "Peer {} does not support static remote key, disconnecting", log_pubkey!(counterparty_node_id));
@@ -9898,6 +9924,7 @@ where
 	}
 
 	fn handle_error(&self, counterparty_node_id: &PublicKey, msg: &msgs::ErrorMessage) {
+		let _ = self.retry_invoice_requests();
 		match &msg.data as &str {
 			"cannot co-op close channel w/ active htlcs"|
 			"link failed to shutdown" =>
@@ -10017,54 +10044,63 @@ where
 	}
 
 	fn handle_tx_add_input(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxAddInput) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_add_output(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxAddOutput) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_remove_input(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxRemoveInput) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_remove_output(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxRemoveOutput) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_complete(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxComplete) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_signatures(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxSignatures) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_init_rbf(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxInitRbf) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_ack_rbf(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxAckRbf) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
 	fn handle_tx_abort(&self, counterparty_node_id: &PublicKey, msg: &msgs::TxAbort) {
+		let _ = self.retry_invoice_requests();
 		let _: Result<(), _> = handle_error!(self, Err(MsgHandleErrInternal::send_err_msg_no_close(
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
