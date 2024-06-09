@@ -8506,6 +8506,7 @@ where
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_path)?);
+		self.pending_outbound_payments.pending_payments_awaiting_invoice.store(true, Ordering::SeqCst);
 
 		Ok(())
 	}
@@ -9437,10 +9438,10 @@ where
 	L::Target: Logger,
 {
 	fn retry_invoice_requests(&self) -> Result<(), ()> {
-		let reply_path = self.create_blinded_path().map_err(|_| return).ok().unwrap();
 		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 		if invoice_requests.is_empty() { return Ok(());}
 
+		let reply_path = self.create_blinded_path()?;
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 
 		for invoice_request in invoice_requests {
