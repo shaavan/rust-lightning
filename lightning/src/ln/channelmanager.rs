@@ -8708,7 +8708,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8826,7 +8826,7 @@ where
 		let expiration = StaleExpiration::TimerTicks(1);
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, Some(invoice_request.clone())
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8855,6 +8855,8 @@ where
 			debug_assert!(false);
 			return Err(Bolt12SemanticError::MissingSigningPubkey);
 		}
+
+		self.pending_outbound_payments.awaiting_invoice_flag.store(true, Ordering::SeqCst);
 
 		Ok(())
 	}
@@ -11866,8 +11868,11 @@ where
 		}
 		let pending_outbounds = OutboundPayments {
 			pending_outbound_payments: Mutex::new(pending_outbound_payments.unwrap()),
+			awaiting_invoice_flag: AtomicBool::new(false),
 			retry_lock: Mutex::new(())
 		};
+
+		pending_outbounds.set_awaiting_invoice_flag();
 
 		// We have to replay (or skip, if they were completed after we wrote the `ChannelManager`)
 		// each `ChannelMonitorUpdate` in `in_flight_monitor_updates`. After doing so, we have to
