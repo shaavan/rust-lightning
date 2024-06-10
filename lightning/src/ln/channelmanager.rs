@@ -8350,7 +8350,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8467,7 +8467,7 @@ where
 		let expiration = StaleExpiration::TimerTicks(1);
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, Some(invoice_request.clone())
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -8496,6 +8496,8 @@ where
 			debug_assert!(false);
 			return Err(Bolt12SemanticError::MissingSigningPubkey);
 		}
+
+		self.pending_outbound_payments.pending_payments_awaiting_invoice.store(true, Ordering::SeqCst);
 
 		Ok(())
 	}
@@ -10714,6 +10716,7 @@ where
 		let pending_inbound_payments = self.pending_inbound_payments.lock().unwrap();
 		let claimable_payments = self.claimable_payments.lock().unwrap();
 		let pending_outbound_payments = self.pending_outbound_payments.pending_outbound_payments.lock().unwrap();
+		let pending_payments_awaiting_invoice_opt = Some(self.pending_outbound_payments.pending_payments_awaiting_invoice.load(Ordering::SeqCst));
 
 		let mut htlc_purposes: Vec<&events::PaymentPurpose> = Vec::new();
 		let mut htlc_onion_fields: Vec<&_> = Vec::new();
@@ -10861,6 +10864,7 @@ where
 			(11, self.probing_cookie_secret, required),
 			(13, htlc_onion_fields, optional_vec),
 			(14, decode_update_add_htlcs_opt, option),
+			(15, pending_payments_awaiting_invoice_opt, option),
 		});
 
 		Ok(())
@@ -11310,6 +11314,7 @@ where
 		// pending_outbound_payments_no_retry is for compatibility with 0.0.101 clients.
 		let mut pending_outbound_payments_no_retry: Option<HashMap<PaymentId, HashSet<[u8; 32]>>> = None;
 		let mut pending_outbound_payments = None;
+		let mut pending_payments_awaiting_invoice = None;
 		let mut pending_intercepted_htlcs: Option<HashMap<InterceptId, PendingAddHTLCInfo>> = Some(new_hash_map());
 		let mut received_network_pubkey: Option<PublicKey> = None;
 		let mut fake_scid_rand_bytes: Option<[u8; 32]> = None;
@@ -11335,6 +11340,7 @@ where
 			(11, probing_cookie_secret, option),
 			(13, claimable_htlc_onion_fields, optional_vec),
 			(14, decode_update_add_htlcs, option),
+			(15, pending_payments_awaiting_invoice, option),
 		});
 		let mut decode_update_add_htlcs = decode_update_add_htlcs.unwrap_or_else(|| new_hash_map());
 		if fake_scid_rand_bytes.is_none() {
@@ -11364,6 +11370,7 @@ where
 		}
 		let pending_outbounds = OutboundPayments {
 			pending_outbound_payments: Mutex::new(pending_outbound_payments.unwrap()),
+			pending_payments_awaiting_invoice: AtomicBool::new(pending_payments_awaiting_invoice.unwrap_or(false)),
 			retry_lock: Mutex::new(())
 		};
 
