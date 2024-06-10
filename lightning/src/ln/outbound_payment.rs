@@ -31,6 +31,7 @@ use crate::util::ser::ReadableArgs;
 
 use core::fmt::{self, Display, Formatter};
 use core::ops::Deref;
+use core::sync::atomic::{AtomicBool, Ordering};
 use core::time::Duration;
 
 use crate::prelude::*;
@@ -677,6 +678,7 @@ pub(super) struct SendAlongPathArgs<'a> {
 
 pub(super) struct OutboundPayments {
 	pub(super) pending_outbound_payments: Mutex<HashMap<PaymentId, PendingOutboundPayment>>,
+	pub(super) awaiting_invoice_flag: AtomicBool,
 	pub(super) retry_lock: Mutex<()>,
 }
 
@@ -684,6 +686,7 @@ impl OutboundPayments {
 	pub(super) fn new() -> Self {
 		Self {
 			pending_outbound_payments: Mutex::new(new_hash_map()),
+			awaiting_invoice_flag: AtomicBool::new(false),
 			retry_lock: Mutex::new(()),
 		}
 	}
