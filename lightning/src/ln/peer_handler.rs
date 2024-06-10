@@ -387,6 +387,8 @@ impl ChannelMessageHandler for ErroringMessageHandler {
 	fn handle_tx_abort(&self, their_node_id: &PublicKey, msg: &msgs::TxAbort) {
 		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
 	}
+
+	fn message_received(&self) {}
 }
 
 impl Deref for ErroringMessageHandler {
@@ -1622,6 +1624,8 @@ impl<Descriptor: SocketDescriptor, CM: Deref, RM: Deref, OM: Deref, L: Deref, CM
 	) -> Result<Option<wire::Message<<<CMH as Deref>::Target as wire::CustomMessageReader>::CustomMessage>>, MessageHandlingError> {
 		let their_node_id = peer_lock.their_node_id.clone().expect("We know the peer's public key by the time we receive messages").0;
 		let logger = WithContext::from(&self.logger, Some(their_node_id), None, None);
+
+		self.message_handler.chan_handler.message_received();
 
 		let message = match self.do_handle_message_holding_peer_lock(peer_lock, message, &their_node_id, &logger)? {
 			Some(processed_message) => processed_message,
