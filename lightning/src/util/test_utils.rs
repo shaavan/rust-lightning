@@ -907,6 +907,8 @@ impl msgs::ChannelMessageHandler for TestChannelMessageHandler {
 	fn handle_tx_abort(&self, _their_node_id: &PublicKey, msg: &msgs::TxAbort) {
 		self.received_msg(wire::Message::TxAbort(msg.clone()));
 	}
+
+	fn retry_invoice_requests(&self) -> Result<(), ()> { Ok(()) }
 }
 
 impl events::MessageSendEventsProvider for TestChannelMessageHandler {
