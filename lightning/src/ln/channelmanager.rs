@@ -10706,6 +10706,46 @@ where
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
+
+	fn handle_message_received(&self) {
+		let entropy = &*self.entropy_source;
+		for (payment_id, invoice_request) in self
+			.pending_outbound_payments
+			.release_invoice_request_awaiting_invoice()
+		{
+			let nonce = Nonce::from_entropy_source(entropy);
+			let context = OffersContext::OutboundPayment { payment_id, nonce };
+
+			match self.create_blinded_paths(context) {
+				Ok(reply_paths) => match self.enqueue_invoice_request(invoice_request, reply_paths) {
+					Ok(_) => {}
+					Err(Bolt12SemanticError::MissingSigningPubkey) => {
+						log_info!(
+							self.logger,
+							"Retry failed for invoice request with payment id: {}. \
+								Reason: Invoice Request is missing Signing Pubkey",
+							payment_id
+						);
+					}
+					Err(_) => {
+						log_info!(
+							self.logger,
+							"Retry failed for invoice request with payment id: {}.",
+							payment_id
+						);
+					}
+				},
+				Err(_) => {
+					log_info!(
+						self.logger,
+						"Retry failed for invoice request with payment id: {}. \
+							Reason: router could not find a blinded path to include as the reply path",
+						payment_id
+					);
+				}
+			}
+		}
+	}
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
