@@ -1550,6 +1550,13 @@ pub trait ChannelMessageHandler : MessageSendEventsProvider {
 	/// If it's `None`, then no particular network chain hash compatibility will be enforced when
 	/// connecting to peers.
 	fn get_chain_hashes(&self) -> Option<Vec<ChainHash>>;
+
+	/// Retries the [`InvoiceRequest`] message for pending outbound payments
+	/// that are still awaiting a [`Bolt12Invoice`].
+	///
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	fn retry_invoice_requests(&self) -> Result<(), ()>;
 }
 
 /// A trait to describe an object which can receive routing messages.

@@ -365,6 +365,8 @@ impl ChannelMessageHandler for ErroringMessageHandler {
 	fn handle_tx_abort(&self, their_node_id: &PublicKey, msg: &msgs::TxAbort) {
 		ErroringMessageHandler::push_error(self, their_node_id, msg.channel_id);
 	}
+
+	fn retry_invoice_requests(&self) -> Result<(), ()> { Ok(()) }
 }
 
 impl Deref for ErroringMessageHandler {
