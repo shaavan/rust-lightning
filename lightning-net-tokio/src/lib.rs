@@ -605,6 +605,7 @@ mod tests {
 		fn processing_queue_high(&self) -> bool { false }
 	}
 	impl ChannelMessageHandler for MsgHandler {
+		fn retry_invoice_requests(&self) -> Result<(), ()> { Ok(()) }
 		fn handle_open_channel(&self, _their_node_id: &PublicKey, _msg: &OpenChannel) {}
 		fn handle_accept_channel(&self, _their_node_id: &PublicKey, _msg: &AcceptChannel) {}
 		fn handle_funding_created(&self, _their_node_id: &PublicKey, _msg: &FundingCreated) {}

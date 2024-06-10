@@ -1434,6 +1434,8 @@ pub struct CommitmentUpdate {
 /// Messages MAY be called in parallel when they originate from different `their_node_ids`, however
 /// they MUST NOT be called in parallel when the two calls have the same `their_node_id`.
 pub trait ChannelMessageHandler : MessageSendEventsProvider {
+
+	fn retry_invoice_requests(&self) -> Result<(), ()>;
 	// Channel init:
 	/// Handle an incoming `open_channel` message from the given peer.
 	fn handle_open_channel(&self, their_node_id: &PublicKey, msg: &OpenChannel);

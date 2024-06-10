@@ -761,6 +761,9 @@ impl Drop for TestChannelMessageHandler {
 }
 
 impl msgs::ChannelMessageHandler for TestChannelMessageHandler {
+	fn retry_invoice_requests(&self) -> Result<(), ()> {
+		Ok(())
+	}
 	fn handle_open_channel(&self, _their_node_id: &PublicKey, msg: &msgs::OpenChannel) {
 		self.received_msg(wire::Message::OpenChannel(msg.clone()));
 	}
