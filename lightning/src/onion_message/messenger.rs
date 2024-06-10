@@ -1127,7 +1127,7 @@ where
 			.map_err(|_| SendError::PathNotFound)
 	}
 
-	fn create_blinded_path(&self) -> Result<BlindedPath, SendError> {
+	fn create_blinded_path(&self) -> Result<Vec<BlindedPath>, SendError> {
 		let recipient = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
@@ -1141,7 +1141,6 @@ where
 
 		self.message_router
 			.create_blinded_paths(recipient, peers, secp_ctx)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| SendError::PathNotFound)
 	}
 
@@ -1237,7 +1236,9 @@ where
 
 		let message_type = response.message.msg_type();
 		let reply_path = if create_reply_path {
-			match self.create_blinded_path() {
+			match self.create_blinded_path().and_then(
+				|paths| paths.into_iter().next().ok_or(SendError::PathNotFound)
+			) {
 				Ok(reply_path) => Some(reply_path),
 				Err(err) => {
 					log_trace!(
