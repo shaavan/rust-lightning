@@ -10503,6 +10503,26 @@ where
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
+
+	fn handle_message_received(&self) {
+		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+		if invoice_requests.is_empty() {
+			return;
+		}
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		for (payment_id, invoice_request) in invoice_requests {
+			let context = OffersContext::OutboundPayment { payment_id };
+			let reply_path = match self.create_blinded_path(context) {
+				Ok(path) => path,
+				Err(_) => return,
+			};
+			if let Ok(messages) = self.create_invoice_request_messages(
+				invoice_request, reply_path.clone()
+			) {
+				pending_offers_messages.extend(messages);
+			}
+		}
+	}
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
