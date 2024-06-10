@@ -10504,6 +10504,40 @@ where
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
+
+	fn handle_message_received(&self) {
+		let invoice_requests = self.pending_outbound_payments.release_invoice_request_awaiting_invoice();
+		if invoice_requests.is_empty() {
+			return;
+		}
+
+		let invoice_requests_reply_paths = invoice_requests
+			.into_iter()
+			.filter_map(|(payment_id, invoice_request)| {
+				let context = OffersContext::OutboundPayment { payment_id };
+				match self.create_blinded_path(context) {
+					Ok(reply_path) => Some((invoice_request, reply_path)),
+					Err(_) => {
+						log_info!(
+							self.logger,
+							"Retry failed for invoice request with payment id: {}. \
+							Reason: router could not find a blinded path to include as the reply path",
+							payment_id
+						);
+						None
+					},
+				}
+			});
+
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		for (invoice_request, reply_path) in invoice_requests_reply_paths {
+			if let Ok(messages) = self.create_invoice_request_messages(
+				invoice_request, reply_path
+			) {
+				pending_offers_messages.extend(messages);
+			}
+		}
+	}
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
