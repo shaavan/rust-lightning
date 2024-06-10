@@ -8270,7 +8270,11 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
-		let path = $self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		// TODO: Introduce a parameter to allow adding more paths to the created Offer.
+		let path = $self.create_blinded_path()
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
 		let builder = OfferBuilder::deriving_signing_pubkey(
 			node_id, expanded_key, entropy, secp_ctx
 		)
@@ -8337,7 +8341,11 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
-		let path = $self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		// TODO: Introduce a parameter to allow adding more paths to the created Refund.
+		let path = $self.create_blinded_path()
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
 		let builder = RefundBuilder::deriving_payer_id(
 			node_id, expanded_key, entropy, secp_ctx, amount_msats, payment_id
 		)?
@@ -8460,7 +8468,7 @@ where
 			Some(payer_note) => builder.payer_note(payer_note),
 		};
 		let invoice_request = builder.build_and_sign()?;
-		let reply_path = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let reply_paths = self.create_blinded_path().map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
@@ -8473,25 +8481,32 @@ where
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 		if !offer.paths().is_empty() {
-			// Send as many invoice requests as there are paths in the offer (with an upper bound).
-			// Using only one path could result in a failure if the path no longer exists. But only
-			// one invoice for a given payment id will be paid, even if more than one is received.
+			// Send as many invoice requests as there are paths in the offer using as many different
+			// reply_paths possible (with an upper bound).
+			// Using only one path could result in a failure if the path no longer exists.
+			// But only one invoice for a given payment ID will be paid, even if more than one is received.
 			const REQUEST_LIMIT: usize = 10;
-			for path in offer.paths().into_iter().take(REQUEST_LIMIT) {
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| offer.paths().iter().map(move |path| (path, reply_path)))
+				.take(REQUEST_LIMIT)
+				.for_each(|(path, reply_path)| {
+					let message = new_pending_onion_message(
+						OffersMessage::InvoiceRequest(invoice_request.clone()),
+						Destination::BlindedPath(path.clone()),
+						Some(reply_path.clone()),
+					);
+					pending_offers_messages.push(message);
+				});
+		} else if let Some(signing_pubkey) = offer.signing_pubkey() {
+			for reply_path in reply_paths {
 				let message = new_pending_onion_message(
 					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::BlindedPath(path.clone()),
-					Some(reply_path.clone()),
+					Destination::Node(signing_pubkey),
+					Some(reply_path),
 				);
 				pending_offers_messages.push(message);
 			}
-		} else if let Some(signing_pubkey) = offer.signing_pubkey() {
-			let message = new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request),
-				Destination::Node(signing_pubkey),
-				Some(reply_path),
-			);
-			pending_offers_messages.push(message);
 		} else {
 			debug_assert!(false);
 			return Err(Bolt12SemanticError::MissingSigningPubkey);
@@ -8560,26 +8575,37 @@ where
 				)?;
 				let builder: InvoiceBuilder<DerivedSigningPubkey> = builder.into();
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
-				let reply_path = self.create_blinded_path()
+				let reply_paths = self.create_blinded_path()
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 				if refund.paths().is_empty() {
-					let message = new_pending_onion_message(
-						OffersMessage::Invoice(invoice.clone()),
-						Destination::Node(refund.payer_id()),
-						Some(reply_path),
-					);
-					pending_offers_messages.push(message);
-				} else {
-					for path in refund.paths() {
+					for reply_path in reply_paths {
 						let message = new_pending_onion_message(
 							OffersMessage::Invoice(invoice.clone()),
-							Destination::BlindedPath(path.clone()),
-							Some(reply_path.clone()),
+							Destination::Node(refund.payer_id()),
+							Some(reply_path),
 						);
 						pending_offers_messages.push(message);
 					}
+				} else {
+					// Send as many BOLT12Invoices as there are paths in the refund using as many different
+					// reply_paths possible (with an upper bound).
+					// Using only one path could result in a failure if the path no longer exists.
+					// But only one invoice for a given payment ID will be paid, even if more than one is received.
+					const REQUEST_LIMIT: usize = 10;
+					reply_paths
+						.iter()
+						.flat_map(|reply_path| refund.paths().iter().map(move |path| (path, reply_path)))
+						.take(REQUEST_LIMIT)
+						.for_each(|(path, reply_path)| {
+							let message = new_pending_onion_message(
+								OffersMessage::Invoice(invoice.clone()),
+								Destination::BlindedPath(path.clone()),
+								Some(reply_path.clone()),
+							);
+							pending_offers_messages.push(message);
+						});
 				}
 
 				Ok(invoice)
@@ -8689,7 +8715,7 @@ where
 	/// Creates a blinded path by delegating to [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors or returns an empty `Vec`.
-	fn create_blinded_path(&self) -> Result<BlindedPath, ()> {
+	fn create_blinded_path(&self) -> Result<Vec<BlindedPath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -8709,7 +8735,6 @@ where
 
 		self.router
 			.create_blinded_paths(recipient, peers, secp_ctx)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
 	}
 
 	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
