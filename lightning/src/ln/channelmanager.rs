@@ -10742,6 +10742,28 @@ where
 			"Dual-funded channels not supported".to_owned(),
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
+
+	fn handle_message_received(&self) {
+		for (context, invoice_request) in self
+			.pending_outbound_payments
+			.release_invoice_request_awaiting_invoice()
+		{
+			match self.create_blinded_paths(context) {
+				Ok(reply_paths) => match self.enqueue_invoice_request(invoice_request, reply_paths) {
+					Ok(_) => {}
+					Err(_) => {
+						log_info!(self.logger, "Retry failed for an invoice request.");
+					}
+				},
+				Err(_) => {
+					log_info!(self.logger,
+						"Retry failed for an invoice request. \
+							Reason: router could not find a blinded path to include as the reply path",
+					);
+				}
+			}
+		}
+	}
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>
