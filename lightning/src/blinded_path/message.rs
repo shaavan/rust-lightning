@@ -13,6 +13,7 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -50,12 +51,40 @@ pub(crate) struct ForwardTlvs {
 	pub(crate) next_blinding_override: Option<PublicKey>,
 }
 
-/// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
-pub(crate) struct ReceiveTlvs {
-	/// If `path_id` is `Some`, it is used to identify the blinded path that this onion message is
-	/// sending to. This is useful for receivers to check that said blinded path is being used in
-	/// the right context.
-	pub(crate) path_id: Option<[u8; 32]>,
+pub(crate) enum ReceiveTlvs {
+	OffersData(RecipientData),
+	CustomData(Option<[u8; 32]>)
+}
+
+impl ReceiveTlvs {
+    // This is a simple constructor method for the `OffersData` variant
+    pub fn new_offers_data(data: RecipientData) -> Self {
+        ReceiveTlvs::OffersData(data)
+    }
+
+    // This is a simple constructor method for the `CustomData` variant
+    pub fn new_custom_data(data: Option<[u8; 32]>) -> Self {
+        ReceiveTlvs::CustomData(data)
+    }
+}
+
+/// Represents additional data appended along with the sent reply path.
+///
+/// This data can be utilized by the final recipient for further processing
+/// upon receiving it back.
+#[derive(Clone, Debug)]
+pub struct RecipientData {
+	/// Payment ID of the outbound BOLT12 payment.
+	pub payment_id: Option<PaymentId>
+}
+
+impl RecipientData {
+	/// Creates a new, empty RecipientData instance.
+	pub fn new() -> Self {
+		RecipientData {
+			payment_id: None,
+		}
+	}
 }
 
 impl Writeable for ForwardTlvs {
@@ -77,11 +106,21 @@ impl Writeable for ForwardTlvs {
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		// TODO: write padding
-		encode_tlv_stream!(writer, {
-			(6, self.path_id, option),
-		});
-		Ok(())
-	}
+        let (path_id, payment_id) = match self {
+            ReceiveTlvs::OffersData(recipient_data) => {
+                (None, Some(recipient_data.payment_id))
+            }
+            ReceiveTlvs::CustomData(data) => (data.as_ref().map(|d| *d), None),
+        };
+
+        // Write TLV stream with the appropriate fields
+        encode_tlv_stream!(writer, {
+            (6, path_id, option),
+            (65537, payment_id, option),
+        });
+
+        Ok(())
+    }
 }
 
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
@@ -99,7 +138,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs::new_offers_data(RecipientData::new()))));
 
 	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
 }
