@@ -323,9 +323,7 @@ impl Readable for ControlTlvs {
 				next_blinding_override,
 			})
 		} else if valid_recv_fmt {
-			ControlTlvs::Receive(ReceiveTlvs {
-				path_id,
-			})
+			ControlTlvs::Receive(ReceiveTlvs { path_id })
 		} else {
 			return Err(DecodeError::InvalidValue)
 		};
