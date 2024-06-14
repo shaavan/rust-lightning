@@ -13,6 +13,8 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
+use crate::ln::msgs::DecodeError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -24,7 +26,7 @@ use crate::ln::onion_utils;
 use crate::onion_message::packet::ControlTlvs;
 use crate::sign::{NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
-use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Writeable, Writer};
+use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
 
 use core::mem;
 use core::ops::Deref;
@@ -50,14 +52,6 @@ pub(crate) struct ForwardTlvs {
 	pub(crate) next_blinding_override: Option<PublicKey>,
 }
 
-/// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
-pub(crate) struct ReceiveTlvs {
-	/// If `path_id` is `Some`, it is used to identify the blinded path that this onion message is
-	/// sending to. This is useful for receivers to check that said blinded path is being used in
-	/// the right context.
-	pub(crate) path_id: Option<[u8; 32]>,
-}
-
 impl Writeable for ForwardTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		let (next_node_id, short_channel_id) = match self.next_hop {
@@ -74,13 +68,103 @@ impl Writeable for ForwardTlvs {
 	}
 }
 
+/// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
+pub(crate) struct ReceiveTlvs {
+	pub tlvs: Option<RecipientData>
+}
+
+impl ReceiveTlvs {
+	pub fn new(tlvs: Option<RecipientData>) -> Self {
+		ReceiveTlvs { tlvs }
+	}
+}
+
+/// Represents additional data appended along with the sent reply path.
+///
+/// This data can be utilized by the final recipient for further processing
+/// upon receiving it back.
+#[derive(Clone, Debug)]
+pub enum RecipientData {
+	/// Represents the data specific to [`OffersMessage`]
+	///
+	/// [`OffersMessage`]: crate::onion_message::offers::OffersMessage
+	OffersContext(OffersData),
+
+	/// Represents the data appended with Custom Onion Message.
+	CustomContext(Vec<u8>),
+}
+
+/// Contains the data specific to [`OffersMessage`]
+///
+/// [`OffersMessage`]: crate::onion_message::offers::OffersMessage
+#[derive(Clone, Debug)]
+pub struct OffersData {
+	/// Payment ID of the outbound BOLT12 payment.
+	pub payment_id: Option<PaymentId>
+}
+
+impl RecipientData {
+	/// Creates a new RecipientData::OffersContext instance.
+	pub fn new_for_offers(payment_id: Option<PaymentId>) -> Self {
+		RecipientData::OffersContext(OffersData {
+			payment_id,
+		})
+	}
+
+	/// Creates a new RecipientData::CustomContext instance.
+	pub fn new_for_custom(data: Vec<u8>) -> Self {
+		RecipientData::CustomContext(data)
+	}
+}
+
+impl Writeable for RecipientData {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match self {
+			RecipientData::OffersContext(offers_data) => {
+				1u8.write(writer)?; // Identifier for OffersContext
+				offers_data.payment_id.write(writer)?; // Write the payment_id
+			}
+			RecipientData::CustomContext(data) => {
+				2u8.write(writer)?; // Identifier for CustomContext
+				data.write(writer)?; // Write the custom data
+			}
+		}
+		Ok(())
+	}
+}
+
+impl Readable for RecipientData {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let type_id = u8::read(r)?;
+		match type_id {
+			1u8 => {
+				let payment_id = Option::<PaymentId>::read(r)?;
+				Ok(RecipientData::new_for_offers(payment_id))
+			}
+			2u8 => {
+				let data = Vec::<u8>::read(r)?;
+				Ok(RecipientData::new_for_custom(data))
+			}
+			_ => Err(DecodeError::InvalidValue),
+		}
+	}
+}
+
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
-			(6, self.path_id, option),
+			(6, self.tlvs, option),
 		});
 		Ok(())
+	}
+}
+
+impl Readable for ReceiveTlvs {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		_init_and_read_tlv_stream!(r, {
+			(6, tlvs, option),
+		});
+		Ok(ReceiveTlvs { tlvs })
 	}
 }
 
@@ -99,7 +183,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs::new(None))));
 
 	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
 }
