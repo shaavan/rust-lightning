@@ -13,7 +13,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::{BlindedPath, NextMessageHop};
-use crate::blinded_path::message::{ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::message::{ForwardTlvs, MessageContext, OffersContext, ReceiveTlvs};
 use crate::blinded_path::utils::Padding;
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
@@ -129,12 +129,32 @@ pub(super) enum Payload<T: OnionMessageContents> {
 #[derive(Clone, Debug)]
 pub enum ParsedOnionMessageContents<T: OnionMessageContents> {
 	/// A message related to BOLT 12 Offers.
-	Offers(OffersMessage),
+	Offers {
+		message: OffersMessage,
+		context: OffersContext,
+	},
 	/// A message related to async payments.
 	#[cfg(async_payments)]
 	AsyncPayments(AsyncPaymentsMessage),
 	/// A custom onion message specified by the user.
-	Custom(T),
+	Custom {
+		message: T,
+		context: Vec<u8>,
+	},
+}
+
+impl<T: OnionMessageContents> ParsedOnionMessageContents<T> {
+	fn set_context(&mut self, context: MessageContext) {
+		match (self, context) {
+			(ParsedOnionMessageContents::Offers { context, .. }, MessageContext::Offers(offers_context)) => {
+				*context = offers_context
+			}
+			(ParsedOnionMessageContents::Custom { context , .. }, MessageContext::Custom(custom_context)) => {
+				*context = custom_context
+			}
+			_ => {}
+		}
+	}
 }
 
 impl<T: OnionMessageContents> OnionMessageContents for ParsedOnionMessageContents<T> {
@@ -143,18 +163,18 @@ impl<T: OnionMessageContents> OnionMessageContents for ParsedOnionMessageContent
 	/// This is not exported to bindings users as methods on non-cloneable enums are not currently exportable
 	fn tlv_type(&self) -> u64 {
 		match self {
-			&ParsedOnionMessageContents::Offers(ref msg) => msg.tlv_type(),
+			&ParsedOnionMessageContents::Offers { ref message, .. } => message.tlv_type(),
 			#[cfg(async_payments)]
 			&ParsedOnionMessageContents::AsyncPayments(ref msg) => msg.tlv_type(),
-			&ParsedOnionMessageContents::Custom(ref msg) => msg.tlv_type(),
+			&ParsedOnionMessageContents::Custom { ref message, .. } => message.tlv_type(),
 		}
 	}
 	fn msg_type(&self) -> &'static str {
 		match self {
-			ParsedOnionMessageContents::Offers(ref msg) => msg.msg_type(),
+			ParsedOnionMessageContents::Offers { ref message, .. } => message.msg_type(),
 			#[cfg(async_payments)]
 			ParsedOnionMessageContents::AsyncPayments(ref msg) => msg.msg_type(),
-			ParsedOnionMessageContents::Custom(ref msg) => msg.msg_type(),
+			ParsedOnionMessageContents::Custom { ref message, .. } => message.msg_type(),
 		}
 	}
 }
@@ -162,10 +182,10 @@ impl<T: OnionMessageContents> OnionMessageContents for ParsedOnionMessageContent
 impl<T: OnionMessageContents> Writeable for ParsedOnionMessageContents<T> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			ParsedOnionMessageContents::Offers(msg) => Ok(msg.write(w)?),
+			ParsedOnionMessageContents::Offers { ref message, .. } => Ok(message.write(w)?),
 			#[cfg(async_payments)]
 			ParsedOnionMessageContents::AsyncPayments(msg) => Ok(msg.write(w)?),
-			ParsedOnionMessageContents::Custom(msg) => Ok(msg.write(w)?),
+			ParsedOnionMessageContents::Custom { ref message, .. } => Ok(message.write(w)?),
 		}
 	}
 }
@@ -227,6 +247,7 @@ impl<T: OnionMessageContents> Writeable for (Payload<T>, [u8; 32]) {
 				control_tlvs: ReceiveControlTlvs::Unblinded(control_tlvs), reply_path, message,
 			} => {
 				let write_adapter = ChaChaPolyWriteAdapter::new(self.1, &control_tlvs);
+				// let placeholder = Vec::<u8>::new();
 				_encode_varint_length_prefixed_tlv!(w, {
 					(2, reply_path, option),
 					(4, write_adapter, required),
@@ -251,6 +272,7 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 		let rho = onion_utils::gen_rho_from_shared_secret(&encrypted_tlvs_ss.secret_bytes());
 		let mut message_type: Option<u64> = None;
 		let mut message = None;
+
 		decode_tlv_stream_with_custom_tlv_decode!(&mut rd, {
 			(2, reply_path, option),
 			(4, read_adapter, (option: LengthReadableArgs, rho)),
@@ -263,7 +285,10 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 			match msg_type {
 				tlv_type if OffersMessage::is_known_type(tlv_type) => {
 					let msg = OffersMessage::read(msg_reader, (tlv_type, logger))?;
-					message = Some(ParsedOnionMessageContents::Offers(msg));
+					message = Some(ParsedOnionMessageContents::Offers {
+						message: msg,
+						context: OffersContext::Unknown {},
+					});
 					Ok(true)
 				},
 				#[cfg(async_payments)]
@@ -274,7 +299,10 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 				},
 				_ => match handler.read_custom_message(msg_type, msg_reader)? {
 					Some(msg) => {
-						message = Some(ParsedOnionMessageContents::Custom(msg));
+						message = Some(ParsedOnionMessageContents::Custom {
+							message: msg,
+							context: Vec::new(),
+						});
 						Ok(true)
 					},
 					None => Ok(false),
@@ -292,10 +320,14 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 				Ok(Payload::Forward(ForwardControlTlvs::Unblinded(tlvs)))
 			},
 			Some(ChaChaPolyReadAdapter { readable: ControlTlvs::Receive(tlvs)}) => {
+				let mut message = message.ok_or(DecodeError::InvalidValue)?;
+				if let ReceiveTlvs { path_id: Some(context) } = &tlvs {
+					message.set_context(context.clone());
+				}
 				Ok(Payload::Receive {
 					control_tlvs: ReceiveControlTlvs::Unblinded(tlvs),
 					reply_path,
-					message: message.ok_or(DecodeError::InvalidValue)?,
+					message: message,
 				})
 			},
 		}
