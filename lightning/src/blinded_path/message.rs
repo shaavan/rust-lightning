@@ -13,6 +13,8 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
+use crate::ln::msgs::DecodeError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -24,7 +26,7 @@ use crate::ln::onion_utils;
 use crate::onion_message::packet::ControlTlvs;
 use crate::sign::{NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
-use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Writeable, Writer};
+use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
 
 use core::mem;
 use core::ops::Deref;
@@ -52,12 +54,27 @@ pub(crate) struct ForwardTlvs {
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
 pub(crate) struct ReceiveTlvs {
-	/// If `path_id` is `Some`, it is used to identify the blinded path that this onion message is
-	/// sending to. This is useful for receivers to check that said blinded path is being used in
-	/// the right context.
-	pub(crate) path_id: Option<[u8; 32]>,
+	pub path_id: Option<RecipientData>
 }
 
+impl Writeable for ReceiveTlvs {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		// TODO: write padding
+		encode_tlv_stream!(writer, {
+			(6, self.path_id, option),
+		});
+		Ok(())
+	}
+}
+
+impl Readable for ReceiveTlvs {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		_init_and_read_tlv_stream!(r, {
+			(6, path_id, option),
+		});
+		Ok(ReceiveTlvs { path_id })
+	}
+}
 impl Writeable for ForwardTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		let (next_node_id, short_channel_id) = match self.next_hop {
@@ -74,15 +91,38 @@ impl Writeable for ForwardTlvs {
 	}
 }
 
-impl Writeable for ReceiveTlvs {
-	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
-		encode_tlv_stream!(writer, {
-			(6, self.path_id, option),
-		});
-		Ok(())
-	}
+/// Represents additional data included by the recipient in a [BlindedPath].
+///
+/// This data is encrypted and will be included when sending through
+/// [BlindedPath]. The recipient can authenticate the message and
+/// utilize it for further processing if needed.
+#[derive(Clone, Debug)]
+pub enum RecipientData {
+	/// Represents the data specific to [`OffersMessage`]
+	///
+	/// [`OffersMessage`]: crate::onion_message::offers::OffersMessage
+	OffersContext(OffersData),
+	/// Represents the data appended with Custom Onion Message.
+	CustomContext(Vec<u8>),
 }
+
+/// Contains the data specific to [`OffersMessage`]
+///
+/// [`OffersMessage`]: crate::onion_message::offers::OffersMessage
+#[derive(Clone, Debug)]
+pub struct OffersData {
+	/// Payment ID of the outbound BOLT12 payment.
+	pub payment_id: Option<PaymentId>
+}
+
+impl_writeable_tlv_based_enum!(RecipientData, ;
+	(0, OffersContext),
+	(1, CustomContext),
+);
+
+impl_writeable_tlv_based!(OffersData, {
+	(0, payment_id, option),
+});
 
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
