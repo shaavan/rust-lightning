@@ -554,9 +554,13 @@ macro_rules! _decode_tlv_stream_range {
 			})*
 			last_seen_type = Some(typ.0);
 
+			println!("Code run till here.");
+
 			// Finally, read the length and value itself:
 			let length: ser::BigSize = $crate::util::ser::Readable::read(&mut stream_ref)?;
 			let mut s = ser::FixedLengthReader::new(&mut stream_ref, length.0);
+
+			println!("Only succeeds in case of one_blinded_hop test, not for one_unblinded_hop");
 			match typ.0 {
 				$(_t if $crate::_decode_tlv_stream_match_check!(_t, $type, $fieldty) => {
 					$crate::_decode_tlv!($stream, s, $field, $fieldty);

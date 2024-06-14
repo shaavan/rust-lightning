@@ -103,6 +103,7 @@ impl Writer for LengthCalculatingWriter {
 	}
 }
 
+
 /// Essentially [`std::io::Take`] but a bit simpler and with a method to walk the underlying stream
 /// forward to ensure we always consume exactly the fixed length specified.
 ///

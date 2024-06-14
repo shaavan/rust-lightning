@@ -413,7 +413,7 @@ fn async_response_over_one_blinded_hop() {
 
 	// 2. Define the message sent from Bob to Alice.
 	let message = TestCustomMessage::Ping;
-	let path_id = Some([2; 32]);
+	let path_id = vec![2; 32];
 
 	// 3. Simulate the creation of a Blinded Reply path provided by Bob.
 	let secp_ctx = Secp256k1::new();
@@ -452,7 +452,7 @@ fn async_response_with_reply_path_succeeds() {
 
 	// Alice receives a message from Bob with an added reply_path for responding back.
 	let message = TestCustomMessage::Ping;
-	let path_id = Some([2; 32]);
+	let path_id = vec![2; 32];
 	let reply_path = BlindedPath::new_for_message(&[], bob.node_id, &*bob.entropy_source, &secp_ctx).unwrap();
 
 	// Alice asynchronously responds to Bob, expecting a response back from him.
@@ -489,7 +489,7 @@ fn async_response_with_reply_path_fails() {
 
 	// Alice receives a message from Bob with an added reply_path for responding back.
 	let message = TestCustomMessage::Ping;
-	let path_id = Some([2; 32]);
+	let path_id = vec![2; 32];
 	let reply_path = BlindedPath::new_for_message(&[], bob.node_id, &*bob.entropy_source, &secp_ctx).unwrap();
 
 	// Alice tries to asynchronously respond to Bob, but fails because the nodes are unannounced.

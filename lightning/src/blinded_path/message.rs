@@ -13,6 +13,8 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::ln::channelmanager::PaymentId;
+use crate::ln::msgs::DecodeError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -24,7 +26,7 @@ use crate::ln::onion_utils;
 use crate::onion_message::packet::ControlTlvs;
 use crate::sign::{NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
-use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Writeable, Writer};
+use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
 
 use core::mem;
 use core::ops::Deref;
@@ -50,12 +52,53 @@ pub(crate) struct ForwardTlvs {
 	pub(crate) next_blinding_override: Option<PublicKey>,
 }
 
-/// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
-pub(crate) struct ReceiveTlvs {
-	/// If `path_id` is `Some`, it is used to identify the blinded path that this onion message is
-	/// sending to. This is useful for receivers to check that said blinded path is being used in
-	/// the right context.
-	pub(crate) path_id: Option<[u8; 32]>,
+pub(crate) enum ReceiveTlvs {
+	OffersData(RecipientData),
+	CustomData(Vec<u8>),
+	UnknownData
+}
+
+impl ReceiveTlvs {
+	// This is a simple constructor method for the `OffersData` variant
+	pub fn new_offers_data(data: RecipientData) -> Self {
+		ReceiveTlvs::OffersData(data)
+	}
+
+	// This is a simple constructor method for the `CustomData` variant
+	pub fn new_custom_data(data: Vec<u8>) -> Self {
+		ReceiveTlvs::CustomData(data)
+	}
+
+	// This is a simple constructor method for the `UnknownData` variant
+	pub fn new_unknown_data() -> Self {
+		ReceiveTlvs::UnknownData
+	}
+
+}
+
+/// Represents additional data appended along with the sent reply path.
+///
+/// This data can be utilized by the final recipient for further processing
+/// upon receiving it back.
+#[derive(Clone, Debug)]
+pub struct RecipientData {
+	/// Payment ID of the outbound BOLT12 payment.
+	pub payment_id: Option<PaymentId>
+}
+
+impl RecipientData {
+	/// Creates a new, empty RecipientData instance.
+	pub fn new(payment_id: Option<PaymentId>) -> Self {
+		RecipientData {
+			payment_id,
+		}
+	}
+}
+
+impl Writeable for RecipientData {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.payment_id.write(writer)
+	}
 }
 
 impl Writeable for ForwardTlvs {
@@ -76,11 +119,38 @@ impl Writeable for ForwardTlvs {
 
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
-		encode_tlv_stream!(writer, {
-			(6, self.path_id, option),
-		});
+		match self {
+			ReceiveTlvs::OffersData(recipient_data) => {
+				1u8.write(writer)?;
+				recipient_data.payment_id.write(writer)?;
+			}
+			ReceiveTlvs::CustomData(data) => {
+				2u8.write(writer)?;
+				data.write(writer)?;
+			}
+			ReceiveTlvs::UnknownData => {
+				3u8.write(writer)?
+			}
+		}
 		Ok(())
+	}
+}
+
+impl Readable for ReceiveTlvs {
+	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
+		let type_id = u8::read(reader)?;
+		match type_id {
+			1u8 => {
+				let payment_id = Readable::read(reader)?;
+				Ok(ReceiveTlvs::OffersData(RecipientData { payment_id }))
+			}
+			2u8 => {
+				let data = Readable::read(reader)?;
+				Ok(ReceiveTlvs::CustomData(data))
+			}
+			3u8 => Ok(ReceiveTlvs::UnknownData),
+			_ => Err(DecodeError::InvalidValue),
+		}
 	}
 }
 
@@ -99,7 +169,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { path_id: None })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs::UnknownData)));
 
 	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
 }
