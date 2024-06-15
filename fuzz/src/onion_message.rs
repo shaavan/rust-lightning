@@ -6,6 +6,7 @@ use bitcoin::secp256k1::ecdsa::RecoverableSignature;
 use bitcoin::secp256k1::schnorr;
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
+use lightning::blinded_path::message::{OffersContext, MessageContext};
 use lightning::blinded_path::{BlindedPath, EmptyNodeIdLookUp};
 use lightning::ln::features::InitFeatures;
 use lightning::ln::msgs::{self, DecodeError, OnionMessageHandler};
@@ -99,7 +100,7 @@ struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
 	fn handle_message(
-		&self, _message: OffersMessage, _responder: Option<Responder>,
+		&self, _message: OffersMessage, _responder: Option<Responder>, _context: OffersContext,
 	) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
@@ -131,7 +132,7 @@ struct TestCustomMessageHandler {}
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
 	fn handle_custom_message(
-		&self, message: Self::CustomMessage, responder: Option<Responder>,
+		&self, message: Self::CustomMessage, responder: Option<Responder>, _context: Vec<u8>,
 	) -> ResponseInstruction<Self::CustomMessage> {
 		match responder {
 			Some(responder) => responder.respond(message),
