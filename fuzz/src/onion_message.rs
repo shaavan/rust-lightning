@@ -89,7 +89,8 @@ impl MessageRouter for TestMessageRouter {
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, _recipient: PublicKey, _peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>,
+		&self, _recipient: PublicKey, _recipient_tlvs: Option<RecipientData>,
+		_peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		unreachable!()
 	}
@@ -99,7 +100,7 @@ struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
 	fn handle_message(
-		&self, _message: OffersMessage, _responder: Option<Responder>,
+		&self, _message: OffersMessage, _responder: Option<Responder>, _offers_data: OffersData
 	) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
@@ -131,7 +132,7 @@ struct TestCustomMessageHandler {}
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
 	fn handle_custom_message(
-		&self, message: Self::CustomMessage, responder: Option<Responder>,
+		&self, message: Self::CustomMessage, responder: Option<Responder>, custom_data: Vec<u8>,
 	) -> ResponseInstruction<Self::CustomMessage> {
 		match responder {
 			Some(responder) => responder.respond(message),
