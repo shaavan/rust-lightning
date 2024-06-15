@@ -16,7 +16,7 @@ use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedPath, IntroductionNode, NextMessageHop, NodeIdLookUp};
-use crate::blinded_path::message::{advance_path_by_one, ForwardNode, ForwardTlvs, ReceiveTlvs, RecipientData};
+use crate::blinded_path::message::{advance_path_by_one, ForwardNode, ForwardTlvs, OffersData, ReceiveTlvs, RecipientData};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
@@ -753,7 +753,7 @@ pub trait CustomOnionMessageHandler {
 	/// Called with the custom message that was received, returning a response to send, if any.
 	///
 	/// The returned [`Self::CustomMessage`], if any, is enqueued to be sent by [`OnionMessenger`].
-	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage>;
+	fn handle_custom_message(&self, message: Self::CustomMessage, responder: Option<Responder>, custom_data: Vec<u8>) -> ResponseInstruction<Self::CustomMessage>;
 
 	/// Read a custom message of type `message_type` from `buffer`, returning `Ok(None)` if the
 	/// message type is unknown.
@@ -1424,7 +1424,7 @@ where
 	fn handle_onion_message(&self, peer_node_id: &PublicKey, msg: &OnionMessage) {
 		let logger = WithContext::from(&self.logger, Some(*peer_node_id), None, None);
 		match self.peel_onion_message(msg) {
-			Ok(PeeledOnion::Receive(message, _recipient_data, reply_path)) => {
+			Ok(PeeledOnion::Receive(message, recipient_data, reply_path)) => {
 				log_trace!(
 					logger,
 					"Received an onion message with {} reply_path: {:?}",
@@ -1435,14 +1435,34 @@ where
 						let responder = reply_path.map(
 							|reply_path| Responder::new(reply_path)
 						);
-						let response_instructions = self.offers_handler.handle_message(msg, responder);
+						
+						let offers_data = match recipient_data {
+							None => OffersData::Empty(()),
+							Some(RecipientData::OffersContext(offers_data)) => offers_data,
+							Some(RecipientData::CustomContext(_)) => {
+								debug_assert!(false, "Shouldn't have triggered this case.");
+								return
+							}
+						};
+
+						let response_instructions = self.offers_handler.handle_message(msg, responder, offers_data);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
 							|reply_path| Responder::new(reply_path)
 						);
-						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
+
+						let custom_data = match recipient_data {
+							None => vec![],
+							Some(RecipientData::CustomContext(data)) => data,
+							Some(RecipientData::OffersContext(_)) => {
+								debug_assert!(false, "Shouldn't have triggered this case.");
+								return
+							}
+						};
+
+						let response_instructions = self.custom_handler.handle_custom_message(msg, responder, custom_data);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 				}

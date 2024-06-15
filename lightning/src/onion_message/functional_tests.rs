@@ -9,6 +9,7 @@
 
 //! Onion message testing and test utilities live here.
 
+use crate::blinded_path::message::OffersData;
 use crate::blinded_path::{BlindedPath, EmptyNodeIdLookUp};
 use crate::blinded_path::message::ForwardNode;
 use crate::events::{Event, EventsProvider};
@@ -74,7 +75,7 @@ impl Drop for MessengerNode {
 struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
-	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, _message: OffersMessage, _responder: Option<Responder>, _offers_data: OffersData) -> ResponseInstruction<OffersMessage> {
 		ResponseInstruction::NoResponse
 	}
 }
@@ -161,7 +162,7 @@ impl Drop for TestCustomMessageHandler {
 
 impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	type CustomMessage = TestCustomMessage;
-	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>) -> ResponseInstruction<Self::CustomMessage> {
+	fn handle_custom_message(&self, msg: Self::CustomMessage, responder: Option<Responder>, _custom_data: Vec<u8>) -> ResponseInstruction<Self::CustomMessage> {
 		let expectation = self.get_next_expectation();
 		assert_eq!(msg, expectation.expect);
 
@@ -423,7 +424,7 @@ fn async_response_over_one_blinded_hop() {
 
 	// 5. Expect Alice to receive the message and create a response instruction for it.
 	alice.custom_message_handler.expect_message(message.clone());
-	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder);
+	let response_instruction = nodes[0].custom_message_handler.handle_custom_message(message, responder, Vec::new());
 
 	// 6. Simulate Alice asynchronously responding back to Bob with a response.
 	assert_eq!(
@@ -456,7 +457,7 @@ fn async_response_with_reply_path_succeeds() {
 	// Alice asynchronously responds to Bob, expecting a response back from him.
 	let responder = Responder::new(reply_path);
 	alice.custom_message_handler.expect_message_and_response(message.clone());
-	let response_instruction = alice.custom_message_handler.handle_custom_message(message, Some(responder));
+	let response_instruction = alice.custom_message_handler.handle_custom_message(message, Some(responder), Vec::new());
 
 	assert_eq!(
 		alice.messenger.handle_onion_message_response(response_instruction),
@@ -494,7 +495,7 @@ fn async_response_with_reply_path_fails() {
 	disconnect_peers(alice, bob);
 	let responder = Responder::new(reply_path);
 	alice.custom_message_handler.expect_message_and_response(message.clone());
-	let response_instruction = alice.custom_message_handler.handle_custom_message(message, Some(responder));
+	let response_instruction = alice.custom_message_handler.handle_custom_message(message, Some(responder), Vec::new());
 
 	assert_eq!(
 		alice.messenger.handle_onion_message_response(response_instruction),

@@ -31,6 +31,7 @@ use bitcoin::secp256k1::{SecretKey,PublicKey};
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
+use crate::blinded_path::message::OffersData;
 use crate::blinded_path::{BlindedPath, NodeIdLookUp};
 use crate::blinded_path::message::ForwardNode;
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
@@ -10199,9 +10200,16 @@ where
 	R::Target: Router,
 	L::Target: Logger,
 {
-	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>) -> ResponseInstruction<OffersMessage> {
+	fn handle_message(&self, message: OffersMessage, responder: Option<Responder>, offers_data: OffersData) -> ResponseInstruction<OffersMessage> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
+
+		let abandon_if_payment = |offers_data| {
+			match offers_data {
+				OffersData::WithPaymentId(payment_id) => self.abandon_payment(payment_id),
+				_ => {},
+			}
+		};
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
@@ -10314,18 +10322,24 @@ where
 					Err(()) => Err(InvoiceError::from_string("Unrecognized invoice".to_owned())),
 				};
 
-				match result {
-					Ok(()) => ResponseInstruction::NoResponse,
-					Err(e) => match responder {
-						Some(responder) => responder.respond(OffersMessage::InvoiceError(e)),
-						None => {
-							log_trace!(self.logger, "No reply path for sending invoice error: {:?}", e);
-							ResponseInstruction::NoResponse
-						},
+				match (responder, result) {
+					(Some(responder), Err(e)) => {
+						abandon_if_payment(offers_data);
+						responder.respond(OffersMessage::InvoiceError(e))
 					},
+					(None, Err(_)) => {
+						abandon_if_payment(offers_data);
+						log_trace!(
+							self.logger,
+							"A response was generated, but there is no reply_path specified for sending the response."
+						);
+						return ResponseInstruction::NoResponse;
+					}
+					_ => return ResponseInstruction::NoResponse,
 				}
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
+				abandon_if_payment(offers_data);
 				log_trace!(self.logger, "Received invoice_error: {}", invoice_error);
 				ResponseInstruction::NoResponse
 			},
