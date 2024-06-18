@@ -329,20 +329,17 @@ impl OnionMessageRecipient {
 pub struct Responder {
 	/// The path along which a response can be sent.
 	reply_path: BlindedPath,
-	path_id: Option<[u8; 32]>
 }
 
 impl_writeable_tlv_based!(Responder, {
 	(0, reply_path, required),
-	(2, path_id, option),
 });
 
 impl Responder {
 	/// Creates a new [`Responder`] instance with the provided reply path.
-	pub(super) fn new(reply_path: BlindedPath, path_id: Option<[u8; 32]>) -> Self {
+	pub(super) fn new(reply_path: BlindedPath) -> Self {
 		Responder {
 			reply_path,
-			path_id,
 		}
 	}
 
@@ -353,7 +350,6 @@ impl Responder {
 		ResponseInstruction::WithoutReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
-			path_id: self.path_id,
 		})
 	}
 
@@ -364,7 +360,6 @@ impl Responder {
 		ResponseInstruction::WithReplyPath(OnionMessageResponse {
 			message: response,
 			reply_path: self.reply_path,
-			path_id: self.path_id,
 		})
 	}
 }
@@ -373,7 +368,6 @@ impl Responder {
 pub struct OnionMessageResponse<T: OnionMessageContents> {
 	message: T,
 	reply_path: BlindedPath,
-	path_id: Option<[u8; 32]>,
 }
 
 /// `ResponseInstruction` represents instructions for responding to received messages.
@@ -1255,9 +1249,8 @@ where
 				Err(err) => {
 					log_trace!(
 						self.logger,
-						"Failed to create reply path when responding with {} to an onion message \
-						with path_id {:02x?}: {:?}",
-						message_type, response.path_id, err
+						"Failed to create reply path when responding with {} to an onion message: {:?}",
+						message_type, err
 					);
 					return Err(err);
 				}
@@ -1267,9 +1260,8 @@ where
 		self.find_path_and_enqueue_onion_message(
 			response.message, Destination::BlindedPath(response.reply_path), reply_path,
 			format_args!(
-				"when responding with {} to an onion message with path_id {:02x?}",
+				"when responding with {} to an onion message",
 				message_type,
-				response.path_id
 			)
 		).map(|result| Some(result))
 	}
@@ -1430,14 +1422,14 @@ where
 				match message {
 					ParsedOnionMessageContents::Offers(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id)
+							|reply_path| Responder::new(reply_path)
 						);
 						let response_instructions = self.offers_handler.handle_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					ParsedOnionMessageContents::Custom(msg) => {
 						let responder = reply_path.map(
-							|reply_path| Responder::new(reply_path, path_id)
+							|reply_path| Responder::new(reply_path)
 						);
 						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
