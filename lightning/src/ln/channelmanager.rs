@@ -8385,8 +8385,10 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 /// Defines the maximum number of [`OffersMessage`] to be sent along different reply paths.
 /// Sending multiple invoices increases the chances of successful delivery in case some
-/// paths are unavailable. However, only one invoice for a given payment ID will be paid,
+/// paths are unavailable. However, only one invoice for a given [`PaymentId`] will be paid,
 /// even if multiple invoices are received.
+/// 
+/// [`PaymentId`]: crate::ln::channelmanager::PaymentId
 const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, L>
