@@ -16,7 +16,7 @@ use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedPath, IntroductionNode, NextMessageHop, NodeIdLookUp};
-use crate::blinded_path::message::{advance_path_by_one, ForwardNode, ForwardTlvs, ReceiveTlvs, MessageContext};
+use crate::blinded_path::message::{advance_path_by_one, ForwardNode, ForwardTlvs, ReceiveTlvs};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
@@ -796,7 +796,7 @@ pub enum PeeledOnion<T: OnionMessageContents> {
 	/// Forwarded onion, with the next node id and a new onion
 	Forward(NextMessageHop, OnionMessage),
 	/// Received onion message, with decrypted contents, recipient data, and reply path
-	Receive(ParsedOnionMessageContents<T>, Option<MessageContext>, Option<BlindedPath>)
+	Receive(ParsedOnionMessageContents<T>, Option<BlindedPath>)
 }
 
 
@@ -946,23 +946,9 @@ where
 		(control_tlvs_ss, custom_handler.deref(), logger.deref())
 	) {
 		Ok((Payload::Receive::<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>> {
-			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { path_id: context }), reply_path,
+			message, reply_path, ..
 		}, None)) => {
-			match (&message, &context) {
-				(_, None) => {
-					Ok(PeeledOnion::Receive(message, None, reply_path))
-				}
-				(ParsedOnionMessageContents::Offers(_), Some(MessageContext::Offers(_))) => {
-					Ok(PeeledOnion::Receive(message, context, reply_path))
-				}
-				(ParsedOnionMessageContents::Custom(_), Some(MessageContext::Custom(_))) => {
-					Ok(PeeledOnion::Receive(message, context, reply_path))
-				}
-				_ => {
-					log_trace!(logger, "Received message was sent on a blinded path with the wrong context.");
-					Err(())
-				}
-			}
+			Ok(PeeledOnion::Receive(message, reply_path))
 		},
 		Ok((Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
 			next_hop, next_blinding_override
@@ -1446,7 +1432,7 @@ where
 	fn handle_onion_message(&self, peer_node_id: &PublicKey, msg: &OnionMessage) {
 		let logger = WithContext::from(&self.logger, Some(*peer_node_id), None, None);
 		match self.peel_onion_message(msg) {
-			Ok(PeeledOnion::Receive(message, _recipient_data, reply_path)) => {
+			Ok(PeeledOnion::Receive(message, reply_path)) => {
 				log_trace!(
 					logger,
 					"Received an onion message with {} reply_path: {:?}",
@@ -1454,8 +1440,8 @@ where
 
 				let responder = reply_path.map(Responder::new);
 				match message {
-					ParsedOnionMessageContents::Offers(msg) => {
-						let response_instructions = self.offers_handler.handle_message(msg, responder);
+					ParsedOnionMessageContents::Offers { message, .. } => {
+						let response_instructions = self.offers_handler.handle_message(message, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 					#[cfg(async_payments)]
@@ -1469,8 +1455,8 @@ where
 					ParsedOnionMessageContents::AsyncPayments(AsyncPaymentsMessage::ReleaseHeldHtlc(msg)) => {
 						self.async_payments_handler.release_held_htlc(msg);
 					},
-					ParsedOnionMessageContents::Custom(msg) => {
-						let response_instructions = self.custom_handler.handle_custom_message(msg, responder);
+					ParsedOnionMessageContents::Custom { message, .. } => {
+						let response_instructions = self.custom_handler.handle_custom_message(message, responder);
 						let _ = self.handle_onion_message_response(response_instructions);
 					},
 				}
