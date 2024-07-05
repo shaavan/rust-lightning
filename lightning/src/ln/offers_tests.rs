@@ -200,12 +200,12 @@ fn extract_invoice_request<'a, 'b, 'c>(
 	}
 }
 
-fn extract_invoice<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, message: &OnionMessage) -> Bolt12Invoice {
+fn extract_invoice<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, message: &OnionMessage) -> (Bolt12Invoice, BlindedPath) {
 	match node.onion_messenger.peel_onion_message(message) {
-		Ok(PeeledOnion::Receive(message, _, _)) => match message {
+		Ok(PeeledOnion::Receive(message, _, reply_path)) => match message {
 			ParsedOnionMessageContents::Offers(offers_message) => match offers_message {
 				OffersMessage::InvoiceRequest(invoice_request) => panic!("Unexpected invoice_request: {:?}", invoice_request),
-				OffersMessage::Invoice(invoice) => invoice,
+				OffersMessage::Invoice(invoice) => (invoice, reply_path.unwrap()),
 				OffersMessage::InvoiceError(error) => panic!("Unexpected invoice_error: {:?}", error),
 			},
 			ParsedOnionMessageContents::Custom(message) => panic!("Unexpected custom message: {:?}", message),
@@ -553,7 +553,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	let onion_message = charlie.onion_messenger.next_onion_message_for_peer(david_id).unwrap();
 	david.onion_messenger.handle_onion_message(&charlie_id, &onion_message);
 
-	let invoice = extract_invoice(david, &onion_message);
+	let (invoice, _) = extract_invoice(david, &onion_message);
 	assert_eq!(invoice.amount_msats(), 10_000_000);
 	assert_ne!(invoice.signing_pubkey(), alice_id);
 	assert!(!invoice.payment_paths().is_empty());
@@ -632,7 +632,7 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	let onion_message = charlie.onion_messenger.next_onion_message_for_peer(david_id).unwrap();
 	david.onion_messenger.handle_onion_message(&charlie_id, &onion_message);
 
-	let invoice = extract_invoice(david, &onion_message);
+	let (invoice, _) = extract_invoice(david, &onion_message);
 	assert_eq!(invoice, expected_invoice);
 
 	assert_eq!(invoice.amount_msats(), 10_000_000);
@@ -699,7 +699,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(&alice_id, &onion_message);
 
-	let invoice = extract_invoice(bob, &onion_message);
+	let (invoice, _) = extract_invoice(bob, &onion_message);
 	assert_eq!(invoice.amount_msats(), 10_000_000);
 	assert_ne!(invoice.signing_pubkey(), alice_id);
 	assert!(!invoice.payment_paths().is_empty());
@@ -752,7 +752,7 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(&alice_id, &onion_message);
 
-	let invoice = extract_invoice(bob, &onion_message);
+	let (invoice, _) = extract_invoice(bob, &onion_message);
 	assert_eq!(invoice, expected_invoice);
 
 	assert_eq!(invoice.amount_msats(), 10_000_000);
@@ -814,7 +814,7 @@ fn pays_for_offer_without_blinded_paths() {
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(&alice_id, &onion_message);
 
-	let invoice = extract_invoice(bob, &onion_message);
+	let (invoice, _) = extract_invoice(bob, &onion_message);
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
@@ -855,7 +855,7 @@ fn pays_for_refund_without_blinded_paths() {
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(&alice_id, &onion_message);
 
-	let invoice = extract_invoice(bob, &onion_message);
+	let (invoice, _) = extract_invoice(bob, &onion_message);
 	assert_eq!(invoice, expected_invoice);
 
 	route_bolt12_payment(bob, &[alice], &invoice);
@@ -1352,7 +1352,7 @@ fn fails_paying_invoice_more_than_once() {
 
 	// David pays the first invoice
 	let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
-	let invoice1 = extract_invoice(david, &onion_message);
+	let (invoice1, _) = extract_invoice(david, &onion_message);
 
 	route_bolt12_payment(david, &[charlie, bob, alice], &invoice1);
 	expect_recent_payment!(david, RecentPaymentDetails::Pending, payment_id);
@@ -1374,7 +1374,7 @@ fn fails_paying_invoice_more_than_once() {
 	let onion_message = charlie.onion_messenger.next_onion_message_for_peer(david_id).unwrap();
 	david.onion_messenger.handle_onion_message(&charlie_id, &onion_message);
 
-	let invoice2 = extract_invoice(david, &onion_message);
+	let (invoice2, _) = extract_invoice(david, &onion_message);
 	assert_eq!(invoice1.payer_metadata(), invoice2.payer_metadata());
 
 	// David sends an error instead of paying the second invoice
