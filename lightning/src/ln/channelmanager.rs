@@ -10364,7 +10364,7 @@ where
 				};
 
 				match response {
-					Ok(invoice) => responder.respond(OffersMessage::Invoice(invoice)),
+					Ok(invoice) => responder.respond_with_reply_path(OffersMessage::Invoice(invoice)),
 					Err(error) => responder.respond(OffersMessage::InvoiceError(error.into())),
 				}
 			},
