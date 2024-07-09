@@ -10853,7 +10853,7 @@ where
 
 				match response {
 					Ok(invoice) => {
-						let context = MessageContext::Offers(OffersContext::Unknown {});
+						let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 						responder.respond_with_reply_path(OffersMessage::Invoice(invoice), context)
 					},
 					Err(error) => responder.respond(OffersMessage::InvoiceError(error.into())),
