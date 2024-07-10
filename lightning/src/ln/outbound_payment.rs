@@ -1354,6 +1354,7 @@ impl OutboundPayments {
 					max_total_routing_fee_msat,
 					invoice_request,
 				});
+				self.awaiting_invoice_flag.store(true, Ordering::Release);
 
 				Ok(())
 			},
@@ -1825,11 +1826,11 @@ impl OutboundPayments {
 		let has_invoice_requests = pending_outbound_payments.values().any(|payment| {
 			matches!(payment, PendingOutboundPayment::AwaitingInvoice { invoice_request: Some(_), .. })
 		});
-		self.awaiting_invoice_flag.store(has_invoice_requests, Ordering::SeqCst);
+		self.awaiting_invoice_flag.store(has_invoice_requests, Ordering::Release);
 	}
 
 	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<InvoiceRequest> {
-		if !self.awaiting_invoice_flag.load(Ordering::SeqCst) {
+		if !self.awaiting_invoice_flag.load(Ordering::Acquire) {
 			return vec![];
 		}
 		let mut pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
@@ -1840,7 +1841,7 @@ impl OutboundPayments {
 			})
 			.collect();
 
-		self.awaiting_invoice_flag.store(false, Ordering::SeqCst);
+		self.awaiting_invoice_flag.store(false, Ordering::Release);
 		invoice_requests
 	}
 }
