@@ -8856,8 +8856,6 @@ where
 			return Err(Bolt12SemanticError::MissingSigningPubkey);
 		}
 
-		self.pending_outbound_payments.awaiting_invoice_flag.store(true, Ordering::SeqCst);
-
 		Ok(())
 	}
 
