@@ -10717,10 +10717,18 @@ where
 			let context = OffersContext::OutboundPayment { payment_id };
 			let reply_path = match self.create_blinded_path(context) {
 				Ok(path) => path,
-				Err(_) => return,
+				Err(_) => {
+					log_info!(
+						self.logger,
+						"Retry failed for Invoice Request with Payment Id: {}. \
+						Reason: Router could not find a blinded path to include as the reply path",
+						payment_id
+					);
+					continue;
+				},
 			};
 			if let Ok(messages) = self.create_invoice_request_messages(
-				invoice_request, reply_path.clone()
+				invoice_request, reply_path
 			) {
 				pending_offers_messages.extend(messages);
 			}
