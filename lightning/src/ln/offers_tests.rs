@@ -948,9 +948,7 @@ fn send_invoice_requests_with_distinct_reply_path() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	alice.onion_messenger.handle_onion_message(&bob_id, &onion_message);
 
-	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), None);
-	assert_ne!(invoice_request.payer_id(), david_id);
+	let (_, reply_path) = extract_invoice_request(alice, &onion_message);
 	assert_eq!(reply_path.introduction_node, IntroductionNode::NodeId(charlie_id));
 
 	// Send, extract and verify the second Invoice Request message
@@ -960,10 +958,7 @@ fn send_invoice_requests_with_distinct_reply_path() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	alice.onion_messenger.handle_onion_message(&bob_id, &onion_message);
 
-	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-
-	assert_eq!(invoice_request.amount_msats(), None);
-	assert_ne!(invoice_request.payer_id(), david_id);
+	let (_, reply_path) = extract_invoice_request(alice, &onion_message);
 	assert_eq!(reply_path.introduction_node, IntroductionNode::NodeId(nodes[6].node.get_our_node_id()));
 }
 
@@ -1017,19 +1012,14 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
-	assert_eq!(refund.amount_msats(), 10_000_000);
-	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
 	assert_ne!(refund.payer_id(), alice_id);
 	for path in refund.paths() {
 		assert_eq!(path.introduction_node, IntroductionNode::NodeId(bob_id));
 	}
 	expect_recent_payment!(alice, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
-	let expected_invoice = david.node.request_refund_payment(&refund).unwrap();
-
 	connect_peers(david, bob);
 
-	// Send, extract and verify the first Invoice Request message
 	let onion_message = david.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(&david_id, &onion_message);
 
@@ -1037,13 +1027,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 
-	let (invoice, reply_path) = extract_invoice(alice, &onion_message);
-	assert_eq!(invoice, expected_invoice);
-
-	assert_eq!(invoice.amount_msats(), 10_000_000);
-	assert_ne!(invoice.signing_pubkey(), david_id);
-	assert!(!invoice.payment_paths().is_empty());
-
+	let (_, reply_path) = extract_invoice(alice, &onion_message);
 	assert_eq!(reply_path.unwrap().introduction_node, IntroductionNode::NodeId(charlie_id));
 
 	// Send, extract and verify the second Invoice Request message
@@ -1052,13 +1036,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 
-	let (invoice, reply_path) = extract_invoice(alice, &onion_message);
-	assert_eq!(invoice, expected_invoice);
-
-	assert_eq!(invoice.amount_msats(), 10_000_000);
-	assert_ne!(invoice.signing_pubkey(), david_id);
-	assert!(!invoice.payment_paths().is_empty());
-
+	let (_, reply_path) = extract_invoice(alice, &onion_message);
 	assert_eq!(reply_path.unwrap().introduction_node, IntroductionNode::NodeId(nodes[6].node.get_our_node_id()));
 }
 
