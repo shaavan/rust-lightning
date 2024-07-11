@@ -2948,7 +2948,7 @@ where
 
 			outbound_scid_aliases: Mutex::new(new_hash_set()),
 			pending_inbound_payments: Mutex::new(new_hash_map()),
-			pending_outbound_payments: OutboundPayments::new(),
+			pending_outbound_payments: OutboundPayments::new(HashMap::new()),
 			forward_htlcs: Mutex::new(new_hash_map()),
 			decode_update_add_htlcs: Mutex::new(new_hash_map()),
 			claimable_payments: Mutex::new(ClaimablePayments { claimable_payments: new_hash_map(), pending_claiming_payments: new_hash_map() }),
@@ -11864,13 +11864,7 @@ where
 			}
 			pending_outbound_payments = Some(outbounds);
 		}
-		let pending_outbounds = OutboundPayments {
-			pending_outbound_payments: Mutex::new(pending_outbound_payments.unwrap()),
-			awaiting_invoice_flag: AtomicBool::new(false),
-			retry_lock: Mutex::new(())
-		};
-
-		pending_outbounds.set_awaiting_invoice_flag();
+		let pending_outbounds = OutboundPayments::new(pending_outbound_payments.unwrap());
 
 		// We have to replay (or skip, if they were completed after we wrote the `ChannelManager`)
 		// each `ChannelMonitorUpdate` in `in_flight_monitor_updates`. After doing so, we have to
