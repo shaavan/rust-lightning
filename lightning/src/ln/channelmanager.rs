@@ -8934,40 +8934,6 @@ where
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
-	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedPath>)
-	-> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
-		let paths = invoice_request.paths();
-		let signing_pubkey = invoice_request.signing_pubkey();
-
-		let messages = if paths.is_empty() {
-			reply_paths
-				.iter()
-				.flat_map(|reply_path| paths.iter().map(move |path| (path, reply_path)))
-				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
-				.map(|(path, reply_path)| {
-					new_pending_onion_message(
-						OffersMessage::InvoiceRequest(invoice_request.clone()),
-						Destination::BlindedPath(path.clone()),
-						Some(reply_path.clone()),
-					)
-				})
-				.collect()
-		} else if let Some(signing_pubkey) = signing_pubkey {
-			reply_paths.into_iter().map(|reply_path| {
-				new_pending_onion_message(
-					OffersMessage::InvoiceRequest(invoice_request.clone()),
-					Destination::Node(signing_pubkey),
-					Some(reply_path),
-				)
-			}).collect()
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingSigningPubkey);
-		};
-
-		Ok(messages)
-	}
-
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
 	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
 	/// [`Bolt12Invoice`] once it is received.
@@ -9067,6 +9033,40 @@ where
 		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_paths)?);
 
 		Ok(())
+	}
+
+	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedPath>)
+	-> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
+		let paths = invoice_request.paths();
+		let signing_pubkey = invoice_request.signing_pubkey();
+
+		let messages = if paths.is_empty() {
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| paths.iter().map(move |path| (path, reply_path)))
+				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
+				.map(|(path, reply_path)| {
+					new_pending_onion_message(
+						OffersMessage::InvoiceRequest(invoice_request.clone()),
+						Destination::BlindedPath(path.clone()),
+						Some(reply_path.clone()),
+					)
+				})
+				.collect()
+		} else if let Some(signing_pubkey) = signing_pubkey {
+			reply_paths.into_iter().map(|reply_path| {
+				new_pending_onion_message(
+					OffersMessage::InvoiceRequest(invoice_request.clone()),
+					Destination::Node(signing_pubkey),
+					Some(reply_path),
+				)
+			}).collect()
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingSigningPubkey);
+		};
+
+		Ok(messages)
 	}
 
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
