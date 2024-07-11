@@ -10505,25 +10505,31 @@ where
 	}
 
 	fn handle_message_received(&self) {
-		let invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+		let mut invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
 		if invoice_requests.is_empty() {
 			return;
 		}
+
+		let invoice_requests_reply_paths = invoice_requests
+			.drain(..)
+			.filter_map(|(payment_id, invoice_request)| {
+				let context = OffersContext::OutboundPayment { payment_id };
+				match self.create_blinded_path(context) {
+					Ok(reply_path) => Some((invoice_request, reply_path)),
+					Err(_) => {
+						log_info!(
+							self.logger,
+							"Retry failed for Invoice Request with Payment Id: {}. \
+							Reason: Router could not find a blinded path to include as the reply path",
+							payment_id
+						);
+						None
+					},
+				}
+			});
+
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		for (payment_id, invoice_request) in invoice_requests {
-			let context = OffersContext::OutboundPayment { payment_id };
-			let reply_path = match self.create_blinded_path(context) {
-				Ok(path) => path,
-				Err(_) => {
-					log_info!(
-						self.logger,
-						"Retry failed for Invoice Request with Payment Id: {}. \
-						Reason: Router could not find a blinded path to include as the reply path",
-						payment_id
-					);
-					continue;
-				},
-			};
+		for (invoice_request, reply_path) in invoice_requests_reply_paths {
 			if let Ok(messages) = self.create_invoice_request_messages(
 				invoice_request, reply_path
 			) {
