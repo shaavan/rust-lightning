@@ -8737,43 +8737,6 @@ where
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
-	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_path: BlindedPath)
-	-> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
-		let paths = invoice_request.paths();
-		let signing_pubkey = invoice_request.signing_pubkey();
-
-		if paths.is_empty() && signing_pubkey.is_none() {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingSigningPubkey);
-		}
-
-		// Send as many invoice requests as there are paths in the offer (with an upper bound).
-		// Using only one path could result in a failure if the path no longer exists. But only
-		// one invoice for a given payment id will be paid, even if more than one is received.
-		const REQUEST_LIMIT: usize = 10;
-
-		let messages = if !paths.is_empty() {
-			paths.into_iter()
-				.take(REQUEST_LIMIT)
-				.map(|path| {
-					new_pending_onion_message(
-						OffersMessage::InvoiceRequest(invoice_request.clone()),
-						Destination::BlindedPath(path.clone()),
-						Some(reply_path.clone()),
-					)
-				})
-				.collect()
-		} else {
-			vec![new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request.clone()),
-				Destination::Node(signing_pubkey.unwrap()),
-				Some(reply_path.clone()),
-			)]
-		};
-
-		Ok(messages)
-	}
-
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
 	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
 	/// [`Bolt12Invoice`] once it is received.
@@ -8871,6 +8834,44 @@ where
 		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_path)?);
 
 		Ok(())
+	}
+
+	fn create_invoice_request_messages(
+		&self, invoice_request: InvoiceRequest, reply_path: BlindedPath
+	) -> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
+		let paths = invoice_request.paths();
+		let signing_pubkey = invoice_request.signing_pubkey();
+
+		if paths.is_empty() && signing_pubkey.is_none() {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingSigningPubkey);
+		}
+
+		// Send as many invoice requests as there are paths in the offer (with an upper bound).
+		// Using only one path could result in a failure if the path no longer exists. But only
+		// one invoice for a given payment id will be paid, even if more than one is received.
+		const REQUEST_LIMIT: usize = 10;
+
+		let messages = if !paths.is_empty() {
+			paths.into_iter()
+				.take(REQUEST_LIMIT)
+				.map(|path| {
+					new_pending_onion_message(
+						OffersMessage::InvoiceRequest(invoice_request.clone()),
+						Destination::BlindedPath(path.clone()),
+						Some(reply_path.clone()),
+					)
+				})
+				.collect()
+		} else {
+			vec![new_pending_onion_message(
+				OffersMessage::InvoiceRequest(invoice_request.clone()),
+				Destination::Node(signing_pubkey.unwrap()),
+				Some(reply_path.clone()),
+			)]
+		};
+
+		Ok(messages)
 	}
 
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
