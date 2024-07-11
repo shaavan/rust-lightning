@@ -687,15 +687,19 @@ pub(super) struct SendAlongPathArgs<'a> {
 
 pub(super) struct OutboundPayments {
 	pub(super) pending_outbound_payments: Mutex<HashMap<PaymentId, PendingOutboundPayment>>,
-	pub(super) awaiting_invoice_flag: AtomicBool,
-	pub(super) retry_lock: Mutex<()>,
+	awaiting_invoice_flag: AtomicBool,
+	retry_lock: Mutex<()>,
 }
 
 impl OutboundPayments {
-	pub(super) fn new() -> Self {
+	pub(super) fn new(pending_outbound_payments: HashMap<PaymentId, PendingOutboundPayment>) -> Self {
+		let has_invoice_requests = pending_outbound_payments.values().any(|payment| {
+			matches!(payment, PendingOutboundPayment::AwaitingInvoice { invoice_request: Some(_), .. })
+		});
+
 		Self {
-			pending_outbound_payments: Mutex::new(new_hash_map()),
-			awaiting_invoice_flag: AtomicBool::new(false),
+			pending_outbound_payments: Mutex::new(pending_outbound_payments),
+			awaiting_invoice_flag: AtomicBool::new(has_invoice_requests),
 			retry_lock: Mutex::new(()),
 		}
 	}
@@ -1835,14 +1839,6 @@ impl OutboundPayments {
 		self.pending_outbound_payments.lock().unwrap().clear()
 	}
 
-	pub fn set_awaiting_invoice_flag(&self) {
-		let pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
-		let has_invoice_requests = pending_outbound_payments.values().any(|payment| {
-			matches!(payment, PendingOutboundPayment::AwaitingInvoice { invoice_request: Some(_), .. })
-		});
-		self.awaiting_invoice_flag.store(has_invoice_requests, Ordering::Release);
-	}
-
 	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<(PaymentId, InvoiceRequest)> {
 		if !self.awaiting_invoice_flag.load(Ordering::Acquire) {
 			return vec![];
@@ -1947,6 +1943,7 @@ mod tests {
 	use crate::routing::router::{InFlightHtlcs, Path, PaymentParameters, Route, RouteHop, RouteParameters};
 	use crate::sync::{Arc, Mutex, RwLock};
 	use crate::util::errors::APIError;
+	use crate::util::hash_tables::new_hash_map;
 	use crate::util::test_utils;
 
 	use alloc::collections::VecDeque;
@@ -1981,7 +1978,7 @@ mod tests {
 	}
 	#[cfg(feature = "std")]
 	fn do_fails_paying_after_expiration(on_retry: bool) {
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let logger = test_utils::TestLogger::new();
 		let network_graph = Arc::new(NetworkGraph::new(Network::Testnet, &logger));
 		let scorer = RwLock::new(test_utils::TestScorer::new());
@@ -2025,7 +2022,7 @@ mod tests {
 		do_find_route_error(true);
 	}
 	fn do_find_route_error(on_retry: bool) {
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let logger = test_utils::TestLogger::new();
 		let network_graph = Arc::new(NetworkGraph::new(Network::Testnet, &logger));
 		let scorer = RwLock::new(test_utils::TestScorer::new());
@@ -2064,7 +2061,7 @@ mod tests {
 
 	#[test]
 	fn initial_send_payment_path_failed_evs() {
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let logger = test_utils::TestLogger::new();
 		let network_graph = Arc::new(NetworkGraph::new(Network::Testnet, &logger));
 		let scorer = RwLock::new(test_utils::TestScorer::new());
@@ -2146,7 +2143,7 @@ mod tests {
 	#[test]
 	fn removes_stale_awaiting_invoice_using_absolute_timeout() {
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let absolute_expiry = 100;
 		let tick_interval = 10;
@@ -2196,7 +2193,7 @@ mod tests {
 	#[test]
 	fn removes_stale_awaiting_invoice_using_timer_ticks() {
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let timer_ticks = 3;
 		let expiration = StaleExpiration::TimerTicks(timer_ticks);
@@ -2245,7 +2242,7 @@ mod tests {
 	#[test]
 	fn removes_abandoned_awaiting_invoice() {
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
@@ -2280,7 +2277,7 @@ mod tests {
 		let keys_manager = test_utils::TestKeysInterface::new(&[0; 32], Network::Testnet);
 
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
@@ -2333,7 +2330,7 @@ mod tests {
 		let keys_manager = test_utils::TestKeysInterface::new(&[0; 32], Network::Testnet);
 
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
@@ -2394,7 +2391,7 @@ mod tests {
 		let keys_manager = test_utils::TestKeysInterface::new(&[0; 32], Network::Testnet);
 
 		let pending_events = Mutex::new(VecDeque::new());
-		let outbound_payments = OutboundPayments::new();
+		let outbound_payments = OutboundPayments::new(new_hash_map());
 		let payment_id = PaymentId([0; 32]);
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
