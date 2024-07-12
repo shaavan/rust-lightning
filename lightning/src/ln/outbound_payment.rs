@@ -687,7 +687,7 @@ pub(super) struct SendAlongPathArgs<'a> {
 
 pub(super) struct OutboundPayments {
 	pub(super) pending_outbound_payments: Mutex<HashMap<PaymentId, PendingOutboundPayment>>,
-	awaiting_invoice_flag: AtomicBool,
+	awaiting_invoice: AtomicBool,
 	retry_lock: Mutex<()>,
 }
 
@@ -699,7 +699,7 @@ impl OutboundPayments {
 
 		Self {
 			pending_outbound_payments: Mutex::new(pending_outbound_payments),
-			awaiting_invoice_flag: AtomicBool::new(has_invoice_requests),
+			awaiting_invoice: AtomicBool::new(has_invoice_requests),
 			retry_lock: Mutex::new(()),
 		}
 	}
@@ -1372,7 +1372,7 @@ impl OutboundPayments {
 					max_total_routing_fee_msat,
 					invoice_request,
 				});
-				self.awaiting_invoice_flag.store(true, Ordering::Release);
+				self.awaiting_invoice.store(true, Ordering::Release);
 
 				Ok(())
 			},
@@ -1840,7 +1840,7 @@ impl OutboundPayments {
 	}
 
 	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<(PaymentId, InvoiceRequest)> {
-		if !self.awaiting_invoice_flag.load(Ordering::Acquire) {
+		if !self.awaiting_invoice.load(Ordering::Acquire) {
 			return vec![];
 		}
 		
@@ -1854,7 +1854,7 @@ impl OutboundPayments {
 			})
 			.collect();
 	
-		self.awaiting_invoice_flag.store(false, Ordering::Release);
+		self.awaiting_invoice.store(false, Ordering::Release);
 		invoice_requests
 	}
 }
