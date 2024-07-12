@@ -1839,13 +1839,13 @@ impl OutboundPayments {
 		self.pending_outbound_payments.lock().unwrap().clear()
 	}
 
-	pub fn get_invoice_request_awaiting_invoice(&self) -> Vec<(PaymentId, InvoiceRequest)> {
+	pub fn release_invoice_request_awaiting_invoice(&self) -> Vec<(PaymentId, InvoiceRequest)> {
 		if !self.awaiting_invoice.load(Ordering::Acquire) {
 			return vec![];
 		}
 		
 		let mut pending_outbound_payments = self.pending_outbound_payments.lock().unwrap();
-		let invoice_requests: Vec<(PaymentId, InvoiceRequest)> = pending_outbound_payments.iter_mut()
+		let invoice_requests = pending_outbound_payments.iter_mut()
 			.filter_map(|(payment_id, payment)| match payment {
 				PendingOutboundPayment::AwaitingInvoice { invoice_request, .. } => {
 					invoice_request.take().map(|req| (*payment_id, req))
