@@ -10708,22 +10708,22 @@ where
 	}
 
 	fn handle_message_received(&self) {
-		let mut invoice_requests = self.pending_outbound_payments.get_invoice_request_awaiting_invoice();
+		let invoice_requests = self.pending_outbound_payments.release_invoice_request_awaiting_invoice();
 		if invoice_requests.is_empty() {
 			return;
 		}
 
 		let invoice_requests_reply_paths = invoice_requests
-			.drain(..)
+			.into_iter()
 			.filter_map(|(payment_id, invoice_request)| {
-				let context = OffersContext::OutboundPayment { payment_id };
+				let context = OffersContext::OutboundPayment { payment_id: payment_id };
 				match self.create_blinded_path(context) {
 					Ok(reply_path) => Some((invoice_request, reply_path)),
 					Err(_) => {
 						log_info!(
 							self.logger,
-							"Retry failed for Invoice Request with Payment Id: {}. \
-							Reason: Router could not find a blinded path to include as the reply path",
+							"Retry failed for invoice request with payment id: {}. \
+							Reason: router could not find a blinded path to include as the reply path",
 							payment_id
 						);
 						None
