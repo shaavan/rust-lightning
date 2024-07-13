@@ -14,7 +14,7 @@
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedHop, BlindedPath, IntroductionNode, NodeIdLookUp};
-use crate::blinded_path::utils;
+use crate::blinded_path::utils::{self, Padding};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
@@ -86,6 +86,7 @@ pub(crate) enum BlindedPaymentTlvs {
 }
 
 // Used to include forward and receive TLVs in the same iterator for encoding.
+#[derive(Clone)]
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
 	Receive(&'a ReceiveTlvs),
@@ -226,12 +227,24 @@ impl Writeable for ReceiveTlvs {
 
 impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
 		}
 		Ok(())
+	}
+}
+
+impl<'a> Writeable for (usize, BlindedPaymentTlvsRef<'a>) {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let length = self.0 - self.1.serialized_length();
+		let padding = Some(Padding::new(length));
+
+		encode_tlv_stream!(writer, {
+			(1, padding, option)
+		});
+
+		self.1.write(writer)
 	}
 }
 
@@ -278,7 +291,15 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.chain(core::iter::once(&payee_node_id));
 	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
 		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
-	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
+
+	let max_length = tlvs.clone()
+		.max_by_key(|c| c.serialized_length())
+		.map(|c| c.serialized_length())
+		.unwrap_or(0);
+
+	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
+
+	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }
 
 // Advance the blinded onion payment path by one hop, so make the second hop into the new
