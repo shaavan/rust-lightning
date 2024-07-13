@@ -20,7 +20,7 @@ use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 use crate::onion_message::messenger::Destination;
 use crate::crypto::streams::ChaChaPolyWriteAdapter;
-use crate::util::ser::{Readable, Writeable};
+use crate::util::ser::{Readable, Writeable, Writer};
 
 use crate::io;
 
@@ -135,17 +135,49 @@ fn encrypt_payload<P: Writeable>(payload: P, encrypted_tlvs_rho: [u8; 32]) -> Ve
 	write_adapter.encode()
 }
 
-/// Blinded path encrypted payloads may be padded to ensure they are equal length.
-///
-/// Reads padding to the end, ignoring what's read.
-pub(crate) struct Padding {}
+/// Represents optional padding for encrypted payloads.
+/// Padding is used to ensure payloads have a consistent length.
+pub(crate) struct Padding {
+	padding: Option<Vec<u8>>
+}
+
+impl Padding {
+	/// Creates a new [`Padding`] instance with a specified size.
+	/// Use this method when defining the padding size before writing
+	/// an encrypted payload.
+	pub fn new(length: usize) -> Self {
+		Self {
+			padding: Some(vec![0; length]),
+		}
+	}
+
+	/// Creates a [`Padding`] instance with no size.
+	/// This method is used when returning the [`Padding`] after reading.
+	/// It essentially discards any existing padding data.
+	pub fn none() -> Self {
+		Self {
+			padding: None,
+		}
+	}
+}
+
 impl Readable for Padding {
+	/// Reads and discards the padding data.
 	#[inline]
 	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
 		loop {
 			let mut buf = [0; 8192];
 			if reader.read(&mut buf[..])? == 0 { break; }
 		}
-		Ok(Self {})
+		Ok(Self::none())
+	}
+}
+
+impl Writeable for Padding {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match &self.padding {
+			Some(padding) => padding.write(writer),
+			None => return Ok(()),
+		}
 	}
 }
