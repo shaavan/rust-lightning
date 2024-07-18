@@ -339,6 +339,13 @@ fn pass_along_path(path: &Vec<MessengerNode>) {
 	}
 }
 
+/// Checks if all the packets in the blinded path are properly padded, ensuring they are of equal size.
+fn is_properly_padded(path: &BlindedPath) -> bool {
+	let first_hop = path.blinded_hops.first().expect("BlindedPath must have at least one hop");
+	let first_payload_size = first_hop.encrypted_payload.len();
+	path.blinded_hops.iter().all(|hop| hop.encrypted_payload.len() == first_payload_size)
+}
+
 #[test]
 fn one_unblinded_hop() {
 	let nodes = create_nodes(2);
@@ -537,6 +544,29 @@ fn too_big_packet_error() {
 	};
 	let err = nodes[0].messenger.send_onion_message_using_path(path, test_msg, None).unwrap_err();
 	assert_eq!(err, SendError::TooBigPacket);
+}
+
+#[test]
+fn blinded_path_padding() {
+	// Make sure that for a blinded path, all encrypted payloads are padded to equal lengths.
+	let nodes = create_nodes(4);
+	let test_msg = TestCustomMessage::Pong;
+
+	let secp_ctx = Secp256k1::new();
+	let intermediate_nodes = [
+		ForwardNode { node_id: nodes[1].node_id, short_channel_id: None },
+		ForwardNode { node_id: nodes[2].node_id, short_channel_id: None },
+	];
+	let context = MessageContext::Custom(Vec::new());
+	let blinded_path = BlindedPath::new_for_message(&intermediate_nodes, nodes[3].node_id, context, &*nodes[3].entropy_source, &secp_ctx).unwrap();
+
+	assert!(is_properly_padded(&blinded_path));
+
+	let destination = Destination::BlindedPath(blinded_path);
+
+	nodes[0].messenger.send_onion_message(test_msg, destination, None).unwrap();
+	nodes[3].custom_message_handler.expect_message(TestCustomMessage::Pong);
+	pass_along_path(&nodes);
 }
 
 #[test]
