@@ -37,7 +37,7 @@ use core::ops::Deref;
 /// A blinded path to be used for sending or receiving a message, hiding the identity of the
 /// recipient.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
-pub struct BlindedMessagePath(pub(super) BlindedPath);
+pub struct BlindedMessagePath(pub(crate) BlindedPath);
 
 impl Writeable for BlindedMessagePath {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
@@ -136,6 +136,12 @@ impl BlindedMessagePath {
 	/// The [`BlindedHop`]s within the blinded path.
 	pub fn blinded_hops(&self) -> &[BlindedHop] {
 		&self.0.blinded_hops
+	}
+
+	#[cfg(test)]
+	/// The [`BlindedPath`] within the [`BlindedMessagePath`]
+	pub(crate) fn inner_blinded_path(&self) -> &BlindedPath {
+		&self.0
 	}
 
 	/// Advance the blinded onion message path by one hop, making the second hop into the new
