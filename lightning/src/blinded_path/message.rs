@@ -44,6 +44,7 @@ pub struct ForwardNode {
 
 /// TLVs to encode in an intermediate onion message packet's hop data. When provided in a blinded
 /// route, they are encoded into [`BlindedHop::encrypted_payload`].
+#[derive(Clone)]
 pub(crate) struct ForwardTlvs {
 	/// The next hop in the onion message's path.
 	pub(crate) next_hop: NextMessageHop,
@@ -53,6 +54,7 @@ pub(crate) struct ForwardTlvs {
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
+#[derive(Clone)]
 pub(crate) struct ReceiveTlvs {
 	/// If `context` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
@@ -66,7 +68,6 @@ impl Writeable for ForwardTlvs {
 			NextMessageHop::NodeId(pubkey) => (Some(pubkey), None),
 			NextMessageHop::ShortChannelId(scid) => (None, Some(scid)),
 		};
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
@@ -78,7 +79,6 @@ impl Writeable for ForwardTlvs {
 
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(65537, self.context, option),
 		});
@@ -187,7 +187,14 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
 
-	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
+	let max_length = tlvs.clone()
+		.max_by_key(|c| c.serialized_length())
+		.map(|c| c.serialized_length())
+		.unwrap_or(0);
+
+	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
+
+	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }
 
 // Advance the blinded onion message path by one hop, so make the second hop into the new

@@ -151,6 +151,7 @@ impl Padding {
 }
 
 impl Readable for Padding {
+	/// Reads and discards the padding data.
 	#[inline]
 	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
 		loop {
