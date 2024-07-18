@@ -306,6 +306,7 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 /// or received. Thus we read a `ControlTlvs` rather than reading a [`ForwardTlvs`] or
 /// [`ReceiveTlvs`] directly. Also useful on the encoding side to keep forward and receive TLVs in
 /// the same iterator.
+#[derive(Clone)]
 pub(crate) enum ControlTlvs {
 	/// This onion message is intended to be forwarded.
 	Forward(ForwardTlvs),
@@ -357,5 +358,18 @@ impl Writeable for ControlTlvs {
 			Self::Forward(tlvs) => tlvs.write(w),
 			Self::Receive(tlvs) => tlvs.write(w),
 		}
+	}
+}
+
+impl Writeable for (usize, ControlTlvs) {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let length = self.0 - self.1.serialized_length();
+		let padding = Some(Padding::new(length));
+
+		encode_tlv_stream!(writer, {
+			(1, padding, option)
+		});
+
+		self.1.write(writer)
 	}
 }
