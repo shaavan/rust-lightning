@@ -359,3 +359,16 @@ impl Writeable for ControlTlvs {
 		}
 	}
 }
+
+impl Writeable for (usize, ControlTlvs) {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let length = self.0 - self.1.serialized_length();
+		let padding = Some(Padding::new(length));
+
+		encode_tlv_stream!(writer, {
+			(1, padding, option)
+		});
+
+		self.1.write(writer)
+	}
+}
