@@ -125,3 +125,10 @@ impl EntropySource for FixedEntropy {
 		[42; 32]
 	}
 }
+
+/// Checks if all the packets in the blinded path are properly padded, ensuring they are of equal size.
+pub fn is_properly_padded(path: &BlindedPath) -> bool {
+	let first_hop = path.blinded_hops.first().expect("BlindedPath must have at least one hop");
+	let first_payload_size = first_hop.encrypted_payload.len();
+	path.blinded_hops.iter().all(|hop| hop.encrypted_payload.len() == first_payload_size)
+}

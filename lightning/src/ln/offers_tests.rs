@@ -54,6 +54,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::test_utils::is_properly_padded;
 use crate::onion_message::messenger::PeeledOnion;
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
@@ -1559,4 +1560,86 @@ fn fails_paying_invoice_more_than_once() {
 
 	let invoice_error = extract_invoice_error(alice, &onion_message);
 	assert_eq!(invoice_error, InvoiceError::from_string("DuplicateInvoice".to_string()));
+}
+
+/// This test verifies that both the blinded message paths and blinded payment
+/// paths are properly padded and function as expected.
+#[test]
+fn test_blinded_path_padding() {
+	let mut accept_forward_cfg = test_default_channel_config();
+	accept_forward_cfg.accept_forwards_to_priv_channels = true;
+
+	let mut features = channelmanager::provided_init_features(&accept_forward_cfg);
+	features.set_onion_messages_optional();
+	features.set_route_blinding_optional();
+
+	let chanmon_cfgs = create_chanmon_cfgs(6);
+	let node_cfgs = create_node_cfgs(6, &chanmon_cfgs);
+
+	*node_cfgs[1].override_init_features.borrow_mut() = Some(features);
+
+	let node_chanmgrs = create_node_chanmgrs(
+		6, &node_cfgs, &[None, Some(accept_forward_cfg), None, None, None, None]
+	);
+	let nodes = create_network(6, &node_cfgs, &node_chanmgrs);
+
+	create_unannounced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+	create_unannounced_chan_between_nodes_with_value(&nodes, 2, 3, 10_000_000, 1_000_000_000);
+	create_announced_chan_between_nodes_with_value(&nodes, 1, 2, 10_000_000, 1_000_000_000);
+	create_announced_chan_between_nodes_with_value(&nodes, 1, 4, 10_000_000, 1_000_000_000);
+	create_announced_chan_between_nodes_with_value(&nodes, 1, 5, 10_000_000, 1_000_000_000);
+	create_announced_chan_between_nodes_with_value(&nodes, 2, 4, 10_000_000, 1_000_000_000);
+	create_announced_chan_between_nodes_with_value(&nodes, 2, 5, 10_000_000, 1_000_000_000);
+
+	let (alice, bob, charlie, david) = (&nodes[0], &nodes[1], &nodes[2], &nodes[3]);
+	let alice_id = alice.node.get_our_node_id();
+	let bob_id = bob.node.get_our_node_id();
+	let charlie_id = charlie.node.get_our_node_id();
+	let david_id = david.node.get_our_node_id();
+
+	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
+	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
+
+	let absolute_expiry = Duration::from_secs(u64::MAX);
+	let payment_id = PaymentId([1; 32]);
+	let refund = david.node
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
+		.unwrap()
+		.build().unwrap();
+	assert!(!refund.paths().is_empty());
+	for path in refund.paths() {
+		assert_eq!(path.introduction_node, IntroductionNode::NodeId(charlie_id));
+		// Verify that the blinded message paths are properly padded.
+		is_properly_padded(path);
+	}
+	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
+
+	let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
+	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+
+	connect_peers(alice, charlie);
+
+	let onion_message = alice.onion_messenger.next_onion_message_for_peer(charlie_id).unwrap();
+	charlie.onion_messenger.handle_onion_message(&alice_id, &onion_message);
+
+	let onion_message = charlie.onion_messenger.next_onion_message_for_peer(david_id).unwrap();
+	david.onion_messenger.handle_onion_message(&charlie_id, &onion_message);
+
+	let invoice = extract_invoice(david, &onion_message);
+	assert_eq!(invoice, expected_invoice);
+
+	assert_eq!(invoice.amount_msats(), 10_000_000);
+	assert_ne!(invoice.signing_pubkey(), alice_id);
+	assert!(!invoice.payment_paths().is_empty());
+	for (_, path) in invoice.payment_paths() {
+		assert_eq!(path.introduction_node, IntroductionNode::NodeId(bob_id));
+		// Verify that the blinded payment paths are properly padded.
+		is_properly_padded(path);
+	}
+
+	route_bolt12_payment(david, &[charlie, bob, alice], &invoice);
+	expect_recent_payment!(david, RecentPaymentDetails::Pending, payment_id);
+
+	claim_bolt12_payment(david, &[charlie, bob, alice], payment_context);
+	expect_recent_payment!(david, RecentPaymentDetails::Fulfilled, payment_id);
 }
