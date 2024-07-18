@@ -65,7 +65,6 @@ impl Writeable for ForwardTlvs {
 			NextMessageHop::NodeId(pubkey) => (Some(pubkey), None),
 			NextMessageHop::ShortChannelId(scid) => (None, Some(scid)),
 		};
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
@@ -77,7 +76,6 @@ impl Writeable for ForwardTlvs {
 
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(65537, self.context, option),
 		});
@@ -138,7 +136,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| &node.node_id)
 		.chain(core::iter::once(&recipient_node_id));
-	let tlvs = pks.clone()
+	let tlvs: Vec<ControlTlvs> = pks.clone()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.zip(intermediate_nodes.iter().map(|node| node.short_channel_id))
 		.map(|(pubkey, scid)| match scid {
@@ -146,9 +144,17 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })))
+		.collect();
 
-	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
+	let max_length = tlvs.iter()
+		.max_by_key(|c| c.serialized_length())
+		.map(|c| c.serialized_length())
+		.unwrap_or(0);
+
+	let length_tlvs = tlvs.into_iter().map(move |tlv| (max_length, tlv));
+
+	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }
 
 // Advance the blinded onion message path by one hop, so make the second hop into the new
