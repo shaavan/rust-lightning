@@ -86,6 +86,7 @@ pub(crate) enum BlindedPaymentTlvs {
 }
 
 // Used to include forward and receive TLVs in the same iterator for encoding.
+#[derive(Clone)]
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
 	Receive(&'a ReceiveTlvs),
@@ -288,16 +289,15 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| &node.node_id)
 		.chain(core::iter::once(&payee_node_id));
-	let tlvs: Vec<BlindedPaymentTlvsRef> = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)))
-		.collect();
+	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
+		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
-	let max_length = tlvs.iter()
+	let max_length = tlvs.clone()
 		.max_by_key(|c| c.serialized_length())
 		.map(|c| c.serialized_length())
 		.unwrap_or(0);
 
-	let length_tlvs = tlvs.into_iter().map(move |tlv| (max_length, tlv));
+	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
 
 	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }
