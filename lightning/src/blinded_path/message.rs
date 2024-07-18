@@ -43,6 +43,7 @@ pub struct ForwardNode {
 
 /// TLVs to encode in an intermediate onion message packet's hop data. When provided in a blinded
 /// route, they are encoded into [`BlindedHop::encrypted_payload`].
+#[derive(Clone)]
 pub(crate) struct ForwardTlvs {
 	/// The next hop in the onion message's path.
 	pub(crate) next_hop: NextMessageHop,
@@ -52,6 +53,7 @@ pub(crate) struct ForwardTlvs {
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
+#[derive(Clone)]
 pub(crate) struct ReceiveTlvs {
 	/// If `context` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
@@ -136,7 +138,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| &node.node_id)
 		.chain(core::iter::once(&recipient_node_id));
-	let tlvs: Vec<ControlTlvs> = pks.clone()
+	let tlvs = pks.clone()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.zip(intermediate_nodes.iter().map(|node| node.short_channel_id))
 		.map(|(pubkey, scid)| match scid {
@@ -144,15 +146,14 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(*pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })))
-		.collect();
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
 
-	let max_length = tlvs.iter()
+	let max_length = tlvs.clone()
 		.max_by_key(|c| c.serialized_length())
 		.map(|c| c.serialized_length())
 		.unwrap_or(0);
 
-	let length_tlvs = tlvs.into_iter().map(move |tlv| (max_length, tlv));
+	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
 
 	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }

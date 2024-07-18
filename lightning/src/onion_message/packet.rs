@@ -306,6 +306,7 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 /// or received. Thus we read a `ControlTlvs` rather than reading a [`ForwardTlvs`] or
 /// [`ReceiveTlvs`] directly. Also useful on the encoding side to keep forward and receive TLVs in
 /// the same iterator.
+#[derive(Clone)]
 pub(crate) enum ControlTlvs {
 	/// This onion message is intended to be forwarded.
 	Forward(ForwardTlvs),
