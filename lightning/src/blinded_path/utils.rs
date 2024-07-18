@@ -17,10 +17,11 @@ use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use super::{BlindedHop, BlindedPath};
 use super::message::BlindedMessagePath;
+use crate::io;
 use crate::ln::onion_utils;
 use crate::onion_message::messenger::Destination;
 use crate::crypto::streams::ChaChaPolyWriteAdapter;
-use crate::util::ser::Writeable;
+use crate::util::ser::{Writeable, Writer};
 
 use core::borrow::Borrow;
 
@@ -171,4 +172,31 @@ fn encrypt_payload<P: Writeable>(payload: P, encrypted_tlvs_rho: [u8; 32]) -> Ve
 /// equal length. Padding is written at Type 1 for compatibility with the lightning specification.
 ///
 /// For more details, see the [BOLTs Specification - Encrypted Recipient Data](https://github.com/lightning/bolts/blob/8707471dbc23245fb4d84c5f5babac1197f1583e/04-onion-routing.md#inside-encrypted_recipient_data-encrypted_data_tlv).
-pub(crate) struct BlindedPathPadding {}
+pub(crate) struct BlindedPathPadding {
+	length: usize,
+}
+
+impl BlindedPathPadding {
+	/// Creates a new [`Padding`] instance with a specified size.
+	/// Use this method when defining the padding size before writing
+	/// an encrypted payload.
+	pub fn new(length: usize) -> Self {
+		Self { length }
+	}
+}
+
+impl Writeable for BlindedPathPadding {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		const BUFFER_SIZE: usize = 1024;
+		let buffer = [0u8; BUFFER_SIZE];
+
+		let mut remaining = self.length;
+		loop {
+			let to_write = core::cmp::min(remaining, BUFFER_SIZE);
+			writer.write_all(&buffer[..to_write])?;
+			remaining -= to_write;
+			if remaining == 0 { break; }
+		}
+		Ok(())
+	}
+}
