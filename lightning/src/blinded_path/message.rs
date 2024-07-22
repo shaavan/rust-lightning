@@ -149,8 +149,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
 
 	let max_length = tlvs.clone()
-		.max_by_key(|c| c.serialized_length())
-		.map(|c| c.serialized_length())
+		.map(|tlv| tlv.serialized_length())
+		.max()
 		.unwrap_or(0);
 
 	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
