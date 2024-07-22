@@ -92,6 +92,16 @@ enum BlindedPaymentTlvsRef<'a> {
 	Receive(&'a ReceiveTlvs),
 }
 
+/// A wrapper struct that stores the largest packet length in the given [`BlindedPath`].
+/// This helps us calculate the appropriate padding size for the [`BlindedPaymentTlvs`]
+/// at the time of writing them.
+pub(crate) struct PaymentLengthTlvs<'a> {
+	/// Length of the packet with the largest size in the [`BlindedPath`].
+	max_length: usize,
+	/// The current packet's TLVs.
+	tlvs: BlindedPaymentTlvsRef<'a>,
+}
+
 /// Parameters for relaying over a given [`BlindedHop`].
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
@@ -235,16 +245,16 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	}
 }
 
-impl<'a> Writeable for (usize, BlindedPaymentTlvsRef<'a>) {
+impl<'a> Writeable for PaymentLengthTlvs<'a> {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		let length = self.0 - self.1.serialized_length();
+		let length = self.max_length - self.tlvs.serialized_length();
 		let padding = Some(Padding::new(length));
 
 		encode_tlv_stream!(writer, {
 			(1, padding, option)
 		});
 
-		self.1.write(writer)
+		self.tlvs.write(writer)
 	}
 }
 
@@ -297,7 +307,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.max()
 		.unwrap_or(0);
 
-	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
+	let length_tlvs = tlvs.map(|tlvs| PaymentLengthTlvs {max_length, tlvs});
 
 	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }
