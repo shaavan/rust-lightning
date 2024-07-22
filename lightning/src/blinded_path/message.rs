@@ -23,7 +23,7 @@ use crate::io::Cursor;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::onion_utils;
 use crate::offers::nonce::Nonce;
-use crate::onion_message::packet::ControlTlvs;
+use crate::onion_message::packet::{ControlTlvs, LengthTlvs};
 use crate::sign::{NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Writeable, Writer};
@@ -192,7 +192,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.max()
 		.unwrap_or(0);
 
-	let length_tlvs = tlvs.map(|tlv| (max_length, tlv));
+	let length_tlvs = tlvs.map(|tlvs| LengthTlvs { max_length, tlvs });
 
 	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }

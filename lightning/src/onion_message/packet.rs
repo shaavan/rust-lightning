@@ -314,6 +314,16 @@ pub(crate) enum ControlTlvs {
 	Receive(ReceiveTlvs),
 }
 
+/// A wrapper struct that stores the largest packet length in the given [`BlindedPath`].
+/// This helps us calculate the appropriate padding size for the [`ControlTlvs`] at the time
+/// of writing them.
+pub(crate) struct LengthTlvs {
+	/// Length of the packet with the largest size in the [`BlindedPath`].
+	pub(crate) max_length: usize,
+	/// The current packet's TLVs.
+	pub(crate) tlvs: ControlTlvs,
+}
+
 impl Readable for ControlTlvs {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
 		_init_and_read_tlv_stream!(r, {
@@ -361,15 +371,15 @@ impl Writeable for ControlTlvs {
 	}
 }
 
-impl Writeable for (usize, ControlTlvs) {
+impl Writeable for LengthTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		let length = self.0 - self.1.serialized_length();
+		let length = self.max_length - self.tlvs.serialized_length();
 		let padding = Some(Padding::new(length));
 
 		encode_tlv_stream!(writer, {
 			(1, padding, option)
 		});
 
-		self.1.write(writer)
+		self.tlvs.write(writer)
 	}
 }
