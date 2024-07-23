@@ -173,7 +173,8 @@ fn encrypt_payload<P: Writeable>(payload: P, encrypted_tlvs_rho: [u8; 32]) -> Ve
 
 /// Represents optional padding for encrypted payloads.
 /// Padding is used to ensure payloads have a consistent length.
-pub(crate) struct Padding {
+#[derive(Clone, Debug)]
+pub struct Padding {
 	length: usize,
 }
 
