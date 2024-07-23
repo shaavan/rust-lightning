@@ -273,6 +273,7 @@ pub(crate) enum BlindedPaymentTlvs {
 }
 
 // Used to include forward and receive TLVs in the same iterator for encoding.
+#[derive(Clone)]
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
 	Receive(&'a ReceiveTlvs),
@@ -412,7 +413,6 @@ impl Writeable for ReceiveTlvs {
 
 impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
