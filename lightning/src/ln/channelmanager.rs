@@ -8934,25 +8934,17 @@ where
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
-	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_path: BlindedPath)
+	fn create_invoice_request_messages(&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedPath>)
 	-> Result<Vec<PendingOnionMessage<OffersMessage>>, Bolt12SemanticError> {
 		let paths = invoice_request.paths();
 		let signing_pubkey = invoice_request.signing_pubkey();
 
-		if paths.is_empty() && signing_pubkey.is_none() {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingSigningPubkey);
-		}
-
-		// Send as many invoice requests as there are paths in the offer (with an upper bound).
-		// Using only one path could result in a failure if the path no longer exists. But only
-		// one invoice for a given payment id will be paid, even if more than one is received.
-		const REQUEST_LIMIT: usize = 10;
-
-		let messages = if !paths.is_empty() {
-			paths.into_iter()
-				.take(REQUEST_LIMIT)
-				.map(|path| {
+		let messages = if paths.is_empty() {
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| paths.iter().map(move |path| (path, reply_path)))
+				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
+				.map(|(path, reply_path)| {
 					new_pending_onion_message(
 						OffersMessage::InvoiceRequest(invoice_request.clone()),
 						Destination::BlindedPath(path.clone()),
@@ -8960,12 +8952,17 @@ where
 					)
 				})
 				.collect()
+		} else if let Some(signing_pubkey) = signing_pubkey {
+			reply_paths.into_iter().map(|reply_path| {
+				new_pending_onion_message(
+					OffersMessage::InvoiceRequest(invoice_request.clone()),
+					Destination::Node(signing_pubkey),
+					Some(reply_path),
+				)
+			}).collect()
 		} else {
-			vec![new_pending_onion_message(
-				OffersMessage::InvoiceRequest(invoice_request.clone()),
-				Destination::Node(signing_pubkey.unwrap()),
-				Some(reply_path.clone()),
-			)]
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingSigningPubkey);
 		};
 
 		Ok(messages)
@@ -9067,7 +9064,7 @@ where
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_path)?);
+		pending_offers_messages.extend(self.create_invoice_request_messages(invoice_request, reply_paths)?);
 
 		Ok(())
 	}
