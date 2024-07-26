@@ -179,19 +179,20 @@ impl Writeable for Padding {
 }
 
 
-/// A wrapper struct that stores the largest packet size for the given [`BlindedPath`].
+/// A wrapper struct that stores the largest packet size for a [`BlindedPath`].
 /// This helps us calculate the appropriate padding size for the tlvs when writing them.
-pub struct WithPadding<T: Writeable> {
+pub(super) struct WithPadding<T: Writeable> {
 	/// Length of the packet with the largest size in the [`BlindedPath`].
-	pub(crate) max_length: usize,
+	pub(super) max_length: usize,
 	/// The current packet's TLVs.
-	pub(crate) tlvs: T,
+	pub(super) tlvs: T,
 }
 
 impl<T: Writeable> Writeable for WithPadding<T> {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		let length = self.max_length.saturating_sub(self.tlvs.serialized_length());
-		let padding = Some(Padding::new(length));
+		let length = self.max_length.checked_sub(self.tlvs.serialized_length());
+		debug_assert!(length.is_some(), "Size of this packet should not be larger than the size of largest packet.");
+		let padding = Some(Padding::new(length.unwrap()));
 
 		encode_tlv_stream!(writer, {
 			(1, padding, option)
