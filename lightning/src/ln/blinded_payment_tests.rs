@@ -1360,7 +1360,7 @@ fn blinded_payment_path_padding() {
 		&chanmon_cfgs[4].keys_manager
 	);
 
-	is_properly_padded(&blinded_path.1);
+	assert!(is_properly_padded(&blinded_path.1));
 
 	let route_params = RouteParameters::from_payment_params_and_value(PaymentParameters::blinded(vec![blinded_path]), amt_msat);
 
