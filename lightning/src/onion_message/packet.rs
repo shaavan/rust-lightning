@@ -314,6 +314,21 @@ pub(crate) enum ControlTlvs {
 	Receive(ReceiveTlvs),
 }
 
+impl ControlTlvs {
+	pub(crate) fn pad_tlvs(mut self, max_length: usize) -> Self {
+		let length = max_length.checked_sub(self.serialized_length());
+		debug_assert!(length.is_some(), "Size of this packet should not be larger than the size of largest packet.");
+		let padding = Some(Padding::new(length.unwrap()));
+
+		match &mut self {
+			ControlTlvs::Forward(tlvs) => tlvs.padding = padding,
+			ControlTlvs::Receive(tlvs) => tlvs.padding = padding,
+		}
+
+		self
+	}
+}
+
 impl Readable for ControlTlvs {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
 		_init_and_read_tlv_stream!(r, {
@@ -337,11 +352,13 @@ impl Readable for ControlTlvs {
 
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
+				padding: None,
 				next_hop: next_hop.unwrap(),
 				next_blinding_override,
 			})
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs {
+				padding: None,
 				context,
 			})
 		} else {
