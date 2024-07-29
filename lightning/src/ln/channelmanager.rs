@@ -69,7 +69,7 @@ use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{new_pending_onion_message, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction};
+use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathParams, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
@@ -9340,6 +9340,16 @@ where
 		self.router
 			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
+	}
+
+	fn create_blinded_paths_using_parameter(
+		&self, context: OffersContext, params: BlindedPathParams
+	) -> Result<Vec<BlindedPath>, ()> {
+		if params.is_compact {
+			self.create_compact_blinded_paths(context)
+		} else {
+			self.create_blinded_paths(context)
+		}
 	}
 
 	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
