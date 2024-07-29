@@ -413,6 +413,22 @@ pub struct PendingOnionMessage<T: OnionMessageContents> {
 	pub reply_path: Option<BlindedPath>,
 }
 
+/// A placeholder value used for paths within the codebase.
+/// 
+/// `PATHS_PLACEHOLDER` is temporarily used as a default value in situations 
+/// where a path index is required but has not yet been assigned or initialized.
+pub const PATHS_PLACEHOLDER: usize = 0;
+
+/// Represents the types of [`BlindedPath`] that can be created.
+///
+/// This enum allows to specify the properties of a Blinded Path before creating it.
+pub enum BlindedPathType {
+	/// Blinded Path using scid to shorten the blinded path size
+	Compact,
+	/// Standard Blinded Path using the node_id.
+	Full,
+}
+
 #[cfg(c_bindings)]
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
 ///
