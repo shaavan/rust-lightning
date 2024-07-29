@@ -413,6 +413,16 @@ pub struct PendingOnionMessage<T: OnionMessageContents> {
 	pub reply_path: Option<BlindedPath>,
 }
 
+pub const PATHS_PLACEHOLDER: usize = 0;
+pub const HOPS_PLACEHOLDER: usize = 0;
+
+pub enum BlindedPathType {
+	/// Blinded Path using scid to shorten the blinded path size
+	Compact,
+	/// Standard Blinded Path using the node_id.
+	Full,
+}
+
 #[cfg(c_bindings)]
 /// An [`OnionMessage`] for [`OnionMessenger`] to send.
 ///
