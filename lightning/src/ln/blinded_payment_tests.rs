@@ -47,6 +47,7 @@ fn blinded_payment_path(
 		intermediate_nodes.push(ForwardNode {
 			node_id: *node_id,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: chan_upd.short_channel_id,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: chan_upd.cltv_expiry_delta,
@@ -66,6 +67,7 @@ fn blinded_payment_path(
 		});
 	}
 	let payee_tlvs = ReceiveTlvs {
+		padding: None,
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -113,6 +115,7 @@ fn do_one_hop_blinded_path(success: bool) {
 	let amt_msat = 5000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
 	let payee_tlvs = ReceiveTlvs {
+		padding: None,
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -157,6 +160,7 @@ fn mpp_to_one_hop_blinded_path() {
 	let amt_msat = 15_000_000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[3], Some(amt_msat), None);
 	let payee_tlvs = ReceiveTlvs {
+		padding: None,
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -1303,6 +1307,7 @@ fn custom_tlvs_to_blinded_path() {
 	let amt_msat = 5000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
 	let payee_tlvs = ReceiveTlvs {
+		padding: None,
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),

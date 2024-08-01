@@ -157,7 +157,7 @@ impl BlindedMessagePath {
 		let mut reader = FixedLengthReader::new(&mut s, encrypted_control_tlvs.len() as u64);
 		match ChaChaPolyReadAdapter::read(&mut reader, rho) {
 			Ok(ChaChaPolyReadAdapter {
-				readable: ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override })
+				readable: ControlTlvs::Forward(ForwardTlvs { padding: _, next_hop, next_blinding_override })
 			}) => {
 				let next_node_id = match next_hop {
 					NextMessageHop::NodeId(pubkey) => pubkey,
