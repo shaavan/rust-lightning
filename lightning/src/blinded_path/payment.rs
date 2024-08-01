@@ -85,13 +85,6 @@ pub(crate) enum BlindedPaymentTlvs {
 	Receive(ReceiveTlvs),
 }
 
-// Used to include forward and receive TLVs in the same iterator for encoding.
-#[derive(Clone)]
-enum BlindedPaymentTlvsRef<'a> {
-	Forward(&'a ForwardTlvs),
-	Receive(&'a ReceiveTlvs),
-}
-
 /// Parameters for relaying over a given [`BlindedHop`].
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
@@ -225,7 +218,7 @@ impl Writeable for ReceiveTlvs {
 	}
 }
 
-impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
+impl Writeable for BlindedPaymentTlvs {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
@@ -276,8 +269,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| node.node_id)
 		.chain(core::iter::once(payee_node_id));
-	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
+	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvs::Forward(node.tlvs.clone()))
+		.chain(core::iter::once(BlindedPaymentTlvs::Receive(payee_tlvs)));
 
 	let path = pks.zip(tlvs);
 
