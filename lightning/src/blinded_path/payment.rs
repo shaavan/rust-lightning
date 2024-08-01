@@ -14,7 +14,7 @@
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedHop, BlindedPath, IntroductionNode, NodeIdLookUp};
-use crate::blinded_path::utils::{self, WithPadding};
+use crate::blinded_path::utils;
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
@@ -279,14 +279,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
 		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
-	let max_length = tlvs.clone()
-		.map(|tlv| tlv.serialized_length())
-		.max()
-		.unwrap_or(0);
-
-	let length_tlvs = tlvs.map(|tlvs| WithPadding { max_length, tlvs });
-
-	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
+	utils::construct_blinded_hops(secp_ctx, pks, tlvs, session_priv)
 }
 
 // Advance the blinded onion payment path by one hop, so make the second hop into the new
