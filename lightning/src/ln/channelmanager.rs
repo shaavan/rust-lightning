@@ -69,7 +69,7 @@ use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathType, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction};
+use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathType, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction, PATHS_PLACEHOLDER};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
@@ -1702,12 +1702,14 @@ where
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::BlindedPathType;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
 /// # let absolute_expiry = None;
+/// # let blinded_path_type = Some(BlindedPathType::Full);
 /// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
+///     .create_offer_builder(absolute_expiry, blinded_path_type)?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -8800,7 +8802,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
+		&$self, absolute_expiry: Option<Duration>, blinded_path_type: Option<BlindedPathType>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -8809,12 +8811,17 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.chain_hash);
+
+		if let Some(blinded_path_type) = blinded_path_type {
+			let path = $self.create_blinded_paths_using_parameter(PATHS_PLACEHOLDER, context, blinded_path_type)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
+
+			builder = builder.path(path);
+		};
 
 		let builder = match absolute_expiry {
 			None => builder,
