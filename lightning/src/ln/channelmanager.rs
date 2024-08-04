@@ -1702,12 +1702,16 @@ where
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::BlindedPathParams;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
+/// # let params = BlindedPathParams {
+///		paths: 1,
+///		is_compact: false,
+/// # };
 /// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
+///     .create_offer_builder(Some(params))?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -8805,7 +8809,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
+		&$self, params: Option<BlindedPathParams>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -8814,16 +8818,16 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.chain_hash);
+
+		if let Some(params) = params {
+			let path = $self.create_blinded_paths_using_parameter(context, params)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
 
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
+			builder = builder.path(path);
 		};
 
 		Ok(builder.into())
