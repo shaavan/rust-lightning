@@ -1809,6 +1809,7 @@ where
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::BlindedPathType;
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
@@ -1816,9 +1817,10 @@ where
 /// # ) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
+/// let blinded_path_type = Some(BlindedPathType::Full);
 /// let refund = channel_manager
 ///     .create_refund_builder(
-///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
+///         amount_msats, absolute_expiry, payment_id, blinded_path_type, retry, max_total_routing_fee_msat
 ///     )?
 /// # ;
 /// # // Needed for compiling for c_bindings
@@ -8880,7 +8882,8 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
 	pub fn create_refund_builder(
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
-		retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>
+		blinded_path_type: Option<BlindedPathType>, retry_strategy: Retry,
+		max_total_routing_fee_msat: Option<u64>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -8889,16 +8892,20 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		let builder = RefundBuilder::deriving_payer_id(
+		let mut builder = RefundBuilder::deriving_payer_id(
 			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
 		)?
 			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry)
-			.path(path);
+			.absolute_expiry(absolute_expiry);
+
+		if let Some(blinded_path_type) = blinded_path_type {
+			let path = $self.create_blinded_paths_using_parameter(PATHS_PLACEHOLDER, context, blinded_path_type)
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+			builder = builder.path(path);
+		}
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
 
