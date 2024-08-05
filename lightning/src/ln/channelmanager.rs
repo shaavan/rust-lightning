@@ -69,7 +69,7 @@ use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathParams, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction};
+use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathParams, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction, PATHS_PLACEHOLDER};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
@@ -9036,7 +9036,7 @@ where
 		let invoice_request = builder.build_and_sign()?;
 
 		let context = OffersContext::OutboundPayment { payment_id, nonce };
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.create_blinded_paths(PATHS_PLACEHOLDER, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9143,7 +9143,7 @@ where
 				let context = OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(),
 				};
-				let reply_paths = self.create_blinded_paths(context)
+				let reply_paths = self.create_blinded_paths(PATHS_PLACEHOLDER, context)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -9293,7 +9293,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
+	fn create_blinded_paths(&self, paths: usize, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9306,7 +9306,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_blinded_paths(paths, recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -9314,7 +9314,7 @@ where
 	/// [`MessageRouter::create_compact_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
+	fn create_compact_blinded_paths(&self, paths: usize, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9334,7 +9334,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_compact_blinded_paths(paths, recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -9342,9 +9342,9 @@ where
 		&self, context: OffersContext, params: BlindedPathParams
 	) -> Result<Vec<BlindedPath>, ()> {
 		if params.is_compact {
-			self.create_compact_blinded_paths(context)
+			self.create_compact_blinded_paths(params.paths, context)
 		} else {
-			self.create_blinded_paths(context)
+			self.create_blinded_paths(params.paths, context)
 		}
 	}
 

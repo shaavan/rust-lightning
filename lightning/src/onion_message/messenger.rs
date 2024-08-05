@@ -174,7 +174,7 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, CMH> where
 /// #         })
 /// #     }
 /// #     fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-/// #         &self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>
+/// #         &self, _paths: usize, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>
 /// #     ) -> Result<Vec<BlindedPath>, ()> {
 /// #         unreachable!()
 /// #     }
@@ -417,7 +417,7 @@ pub struct PendingOnionMessage<T: OnionMessageContents> {
 ///
 /// PATHS_PLACEHOLDER` is temporarily used as a default value in situations
 /// where a path index is required but has not yet been assigned or initialized.
-pub const PATHS_PLACEHOLDER: usize = 0;
+pub const PATHS_PLACEHOLDER: usize = 3;
 
 /// Represents the types of [`BlindedPath`] that can be created.
 ///
@@ -456,7 +456,7 @@ pub trait MessageRouter {
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()>;
 
 	/// Creates compact [`BlindedPath`]s to the `recipient` node. The nodes in `peers` are assumed
@@ -475,14 +475,14 @@ pub trait MessageRouter {
 	fn create_compact_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext,
 		peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		let peers = peers
 			.into_iter()
 			.map(|ForwardNode { node_id, short_channel_id: _ }| node_id)
 			.collect();
-		self.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.create_blinded_paths(paths, recipient, context, peers, secp_ctx)
 	}
 }
 
@@ -517,12 +517,9 @@ where
 		I: ExactSizeIterator<Item = ForwardNode>,
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext, peers: I,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext, peers: I,
 		secp_ctx: &Secp256k1<T>, compact_paths: bool
 	) -> Result<Vec<BlindedPath>, ()> {
-		// Limit the number of blinded paths that are computed.
-		const MAX_PATHS: usize = 3;
-
 		// Ensure peers have at least three channels so that it is more difficult to infer the
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
@@ -559,7 +556,7 @@ where
 			.map(|(peer, _, _)| {
 				BlindedPath::new_for_message(&[peer], recipient, context.clone(), &*self.entropy_source, secp_ctx)
 			})
-			.take(MAX_PATHS)
+			.take(paths)
 			.collect::<Result<Vec<_>, _>>();
 
 		let mut paths = match paths {
@@ -625,22 +622,22 @@ where
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext,
 		peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		let peers = peers
 			.into_iter()
 			.map(|node_id| ForwardNode { node_id, short_channel_id: None });
-		self.create_blinded_paths_from_iter(recipient, context, peers, secp_ctx, false)
+		self.create_blinded_paths_from_iter(paths, recipient, context, peers, secp_ctx, false)
 	}
 
 	fn create_compact_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext,
 		peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
-		self.create_blinded_paths_from_iter(recipient, context, peers.into_iter(), secp_ctx, true)
+		self.create_blinded_paths_from_iter(paths, recipient, context, peers.into_iter(), secp_ctx, true)
 	}
 }
 
@@ -1205,7 +1202,7 @@ where
 			.map_err(|_| SendError::PathNotFound)
 	}
 
-	fn create_blinded_path(&self, context: MessageContext) -> Result<BlindedPath, SendError> {
+	fn create_blinded_path(&self, paths: usize, context: MessageContext) -> Result<BlindedPath, SendError> {
 		let recipient = self.node_signer
 			.get_node_id(Recipient::Node)
 			.map_err(|_| SendError::GetNodeIdFailed)?;
@@ -1218,7 +1215,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
+			.create_blinded_paths(paths, recipient, context, peers, secp_ctx)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| SendError::PathNotFound)
 	}
@@ -1315,7 +1312,7 @@ where
 
 		let message_type = response.message.msg_type();
 		let reply_path = if let Some(context) = context {
-			match self.create_blinded_path(context) {
+			match self.create_blinded_path(PATHS_PLACEHOLDER, context) {
 				Ok(reply_path) => Some(reply_path),
 				Err(err) => {
 					log_trace!(

@@ -193,17 +193,17 @@ impl< G: Deref<Target = NetworkGraph<L>> + Clone, L: Deref, ES: Deref, S: Deref,
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
-		self.message_router.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.message_router.create_blinded_paths(paths, recipient, context, peers, secp_ctx)
 	}
 
 	fn create_compact_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<message::ForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, paths: usize, recipient: PublicKey, context: MessageContext, peers: Vec<message::ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
-		self.message_router.create_compact_blinded_paths(recipient, context, peers, secp_ctx)
+		self.message_router.create_compact_blinded_paths(paths, recipient, context, peers, secp_ctx)
 	}
 }
 
