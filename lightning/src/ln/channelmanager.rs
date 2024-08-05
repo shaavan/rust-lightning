@@ -9031,7 +9031,7 @@ where
 		let invoice_request = builder.build_and_sign()?;
 
 		let context = OffersContext::OutboundPayment { payment_id, nonce };
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.create_blinded_paths(PATHS_PLACEHOLDER, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9134,7 +9134,7 @@ where
 				)?;
 				let builder: InvoiceBuilder<DerivedSigningPubkey> = builder.into();
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
-				let reply_paths = self.create_blinded_paths(OffersContext::Unknown {})
+				let reply_paths = self.create_blinded_paths(PATHS_PLACEHOLDER, OffersContext::Unknown {})
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -9284,7 +9284,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
+	fn create_blinded_paths(&self, paths: usize, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9297,7 +9297,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_blinded_paths(paths, recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -9305,7 +9305,7 @@ where
 	/// [`MessageRouter::create_compact_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
+	fn create_compact_blinded_paths(&self, paths: usize, context: OffersContext) -> Result<Vec<BlindedPath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9325,19 +9325,19 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_compact_blinded_paths(paths, recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
 	fn create_blinded_paths_using_parameter(
-		&self, _paths: usize, context: OffersContext, property: BlindedPathType
+		&self, paths: usize, context: OffersContext, property: BlindedPathType
 	) -> Result<Vec<BlindedPath>, ()> {
 		match property {
 			BlindedPathType::Compact => {
-				self.create_compact_blinded_paths(context)
+				self.create_compact_blinded_paths(paths, context)
 			}
 			BlindedPathType::Full => {
-				self.create_blinded_paths(context)
+				self.create_blinded_paths(paths, context)
 			}
 		}
 	}
