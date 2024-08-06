@@ -1706,10 +1706,9 @@ where
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
 /// # let blinded_path_type = Some(BlindedPathType::Full);
 /// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry, blinded_path_type)?
+///     .create_offer_builder(blinded_path_type)?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -8804,7 +8803,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>, blinded_path_type: Option<BlindedPathType>
+		&$self, blinded_path_type: Option<BlindedPathType>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -8823,11 +8822,6 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 			builder = builder.path(path);
-		};
-
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
 		};
 
 		Ok(builder.into())
