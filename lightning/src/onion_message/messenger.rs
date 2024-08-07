@@ -424,9 +424,13 @@ pub const PATHS_PLACEHOLDER: usize = 3;
 /// This enum allows to specify the properties of a Blinded Path before creating it.
 pub enum BlindedPathType {
 	/// Blinded Path using scid to shorten the blinded path size
-	Compact,
+	Compact {
+		paths: usize,
+	},
 	/// Standard Blinded Path using the node_id.
-	Full,
+	Full {
+		paths: usize,
+	},
 }
 
 #[cfg(c_bindings)]

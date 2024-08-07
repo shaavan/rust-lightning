@@ -1702,11 +1702,11 @@ where
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
 /// # use lightning::offers::parse::Bolt12SemanticError;
-/// # use lightning::onion_message::messenger::BlindedPathType;
+/// # use lightning::onion_message::messenger::{BlindedPathType, PATHS_PLACEHOLDER};
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// # let blinded_path_type = Some(BlindedPathType::Full);
+/// # let blinded_path_type = Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER });
 /// let offer = channel_manager
 ///     .create_offer_builder(blinded_path_type)?
 /// # ;
@@ -1808,7 +1808,7 @@ where
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::parse::Bolt12SemanticError;
-/// # use lightning::onion_message::messenger::BlindedPathType;
+/// # use lightning::onion_message::messenger::{BlindedPathType, PATHS_PLACEHOLDER};
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
@@ -1816,7 +1816,7 @@ where
 /// # ) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
-/// let blinded_path_type = Some(BlindedPathType::Full);
+/// let blinded_path_type = Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER });
 /// let refund = channel_manager
 ///     .create_refund_builder(
 ///         amount_msats, absolute_expiry, payment_id, blinded_path_type, retry, max_total_routing_fee_msat
@@ -8817,7 +8817,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 			.chain_hash($self.chain_hash);
 
 		if let Some(blinded_path_type) = blinded_path_type {
-			let path = $self.create_blinded_paths_using_parameter(PATHS_PLACEHOLDER, context, blinded_path_type)
+			let path = $self.create_blinded_paths_using_parameter(context, blinded_path_type)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -8894,7 +8894,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 			.absolute_expiry(absolute_expiry);
 
 		if let Some(blinded_path_type) = blinded_path_type {
-			let path = $self.create_blinded_paths_using_parameter(PATHS_PLACEHOLDER, context, blinded_path_type)
+			let path = $self.create_blinded_paths_using_parameter(context, blinded_path_type)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -9324,13 +9324,13 @@ where
 	}
 
 	fn create_blinded_paths_using_parameter(
-		&self, paths: usize, context: OffersContext, property: BlindedPathType
+		&self, context: OffersContext, property: BlindedPathType
 	) -> Result<Vec<BlindedPath>, ()> {
 		match property {
-			BlindedPathType::Compact => {
+			BlindedPathType::Compact { paths } => {
 				self.create_compact_blinded_paths(paths, context)
 			}
-			BlindedPathType::Full => {
+			BlindedPathType::Full { paths } => {
 				self.create_blinded_paths(paths, context)
 			}
 		}

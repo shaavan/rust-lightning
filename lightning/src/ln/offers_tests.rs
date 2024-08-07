@@ -54,7 +54,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::parse::Bolt12SemanticError;
-use crate::onion_message::messenger::{BlindedPathType, Destination, PeeledOnion};
+use crate::onion_message::messenger::{BlindedPathType, Destination, PeeledOnion, PATHS_PLACEHOLDER};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
 use crate::routing::gossip::{NodeAlias, NodeId};
@@ -287,7 +287,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 	announce_node_address(charlie, &[alice, bob, david, &nodes[4], &nodes[5]], tor.clone());
 
 	let offer = bob.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(bob_id));
@@ -303,7 +303,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 	announce_node_address(&nodes[5], &[alice, bob, charlie, david, &nodes[4]], tor.clone());
 
 	let offer = bob.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(bob_id));
@@ -354,7 +354,7 @@ fn prefers_more_connected_nodes_in_blinded_paths() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = bob.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(bob_id));
@@ -381,7 +381,7 @@ fn creates_short_lived_offer() {
 
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Compact)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Compact { paths: PATHS_PLACEHOLDER })).unwrap()
 		.absolute_expiry(absolute_expiry)
 		.build().unwrap();
 	assert_eq!(offer.absolute_expiry(), Some(absolute_expiry));
@@ -409,7 +409,7 @@ fn creates_long_lived_offer() {
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY
 		+ Duration::from_secs(1);
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.absolute_expiry(absolute_expiry)
 		.build().unwrap();
@@ -420,7 +420,7 @@ fn creates_long_lived_offer() {
 	}
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.build().unwrap();
 	assert_eq!(offer.absolute_expiry(), None);
 	assert!(!offer.paths().is_empty());
@@ -446,7 +446,7 @@ fn creates_short_lived_refund() {
 	let absolute_expiry = bob.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Compact), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Compact { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
@@ -475,7 +475,7 @@ fn creates_long_lived_refund() {
 		+ Duration::from_secs(1);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
@@ -524,7 +524,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -624,7 +624,7 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.amount_msats(), 10_000_000);
@@ -682,7 +682,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	let bob_id = bob.node.get_our_node_id();
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(alice_id));
@@ -749,7 +749,7 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.amount_msats(), 10_000_000);
@@ -802,7 +802,7 @@ fn pays_for_offer_without_blinded_paths() {
 	let bob_id = bob.node.get_our_node_id();
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.clear_paths()
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -856,7 +856,7 @@ fn pays_for_refund_without_blinded_paths() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.clear_paths()
 		.build().unwrap();
@@ -925,7 +925,7 @@ fn send_invoice_requests_with_distinct_reply_path() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -1011,7 +1011,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = alice.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_ne!(refund.payer_id(), alice_id);
@@ -1063,7 +1063,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	let bob_id = bob.node.get_our_node_id();
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 
@@ -1147,7 +1147,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	let bob_id = bob.node.get_our_node_id();
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 	assert_ne!(offer.signing_pubkey(), Some(alice_id));
@@ -1213,7 +1213,7 @@ fn creates_refund_with_blinded_path_using_unannounced_introduction_node() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_ne!(refund.payer_id(), bob_id);
@@ -1275,7 +1275,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -1287,7 +1287,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	}
 
 	let invalid_path = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.build().unwrap()
 		.paths().first().unwrap()
@@ -1393,7 +1393,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full))
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }))
 		.unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -1505,7 +1505,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_ne!(refund.payer_id(), david_id);
@@ -1542,7 +1542,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	let invalid_path = refund.paths().first().unwrap().clone();
 	let payment_id = PaymentId([2; 32]);
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_ne!(refund.payer_id(), david_id);
@@ -1598,7 +1598,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 	disconnect_peers(alice, &[bob, charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, charlie, &nodes[4], &nodes[5]]);
 
-	match alice.node.create_offer_builder(Some(BlindedPathType::Full)) {
+	match alice.node.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::MissingPaths),
 	}
@@ -1609,7 +1609,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.absolute_expiry(absolute_expiry)
 		.amount_msats(10_000_000)
 		.build().unwrap();
@@ -1673,7 +1673,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	let absolute_expiry = david.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
 	match david.node.create_refund_builder(
-		10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None
+		10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None
 	) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::MissingPaths),
@@ -1684,7 +1684,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	reconnect_nodes(args);
 
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 
@@ -1714,7 +1714,7 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 	let bob = &nodes[1];
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.clear_chains()
 		.chain(Network::Signet)
 		.build().unwrap();
@@ -1742,7 +1742,7 @@ fn fails_sending_invoice_with_unsupported_chain_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.chain(Network::Signet)
 		.build().unwrap();
@@ -1773,7 +1773,7 @@ fn fails_creating_invoice_request_without_blinded_reply_path() {
 	disconnect_peers(david, &[bob, charlie, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 
@@ -1807,7 +1807,7 @@ fn fails_creating_invoice_request_with_duplicate_payment_id() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 
@@ -1840,13 +1840,13 @@ fn fails_creating_refund_with_duplicate_payment_id() {
 	let payment_id = PaymentId([1; 32]);
 	assert!(
 		nodes[0].node.create_refund_builder(
-			10_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None
+			10_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None
 		).is_ok()
 	);
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	match nodes[0].node.create_refund_builder(
-		10_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None
+		10_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None
 	) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::DuplicatePaymentId),
@@ -1893,7 +1893,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_offer() {
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
 	let offer = alice.node
-		.create_offer_builder(Some(BlindedPathType::Full)).unwrap()
+		.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap()
 		.amount_msats(10_000_000)
 		.build().unwrap();
 
@@ -1965,7 +1965,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 
@@ -2014,7 +2014,7 @@ fn fails_paying_invoice_more_than_once() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = david.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full), Retry::Attempts(0), None)
+		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER }), Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);

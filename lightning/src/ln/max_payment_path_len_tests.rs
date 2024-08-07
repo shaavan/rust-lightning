@@ -25,7 +25,7 @@ use crate::ln::onion_utils;
 use crate::ln::onion_utils::MIN_FINAL_VALUE_ESTIMATE_WITH_OVERPAY;
 use crate::ln::outbound_payment::{RecipientOnionFields, Retry, RetryableSendFailure};
 use crate::offers::invoice::BlindedPayInfo;
-use crate::onion_message::messenger::BlindedPathType;
+use crate::onion_message::messenger::{BlindedPathType, PATHS_PLACEHOLDER};
 use crate::prelude::*;
 use crate::routing::router::{DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA, PaymentParameters, RouteParameters};
 use crate::util::errors::APIError;
@@ -380,7 +380,7 @@ fn bolt12_invoice_too_large_blinded_paths() {
 		}
 	)]);
 
-	let offer = nodes[1].node.create_offer_builder(Some(BlindedPathType::Full)).unwrap().build().unwrap();
+	let offer = nodes[1].node.create_offer_builder(Some(BlindedPathType::Full { paths: PATHS_PLACEHOLDER })).unwrap().build().unwrap();
 	let payment_id = PaymentId([1; 32]);
 	nodes[0].node.pay_for_offer(&offer, None, Some(5000), None, payment_id, Retry::Attempts(0), None).unwrap();
 	let invreq_om = nodes[0].onion_messenger.next_onion_message_for_peer(nodes[1].node.get_our_node_id()).unwrap();
