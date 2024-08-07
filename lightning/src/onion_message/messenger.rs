@@ -187,6 +187,7 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, CMH> where
 /// # let secp_ctx = Secp256k1::new();
 /// # let hop_node_id1 = PublicKey::from_secret_key(&secp_ctx, &node_secret);
 /// # let (hop_node_id3, hop_node_id4) = (hop_node_id1, hop_node_id1);
+/// # let (hop_node_id5, hop_node_id6) = (hop_node_id3, hop_node_id4);
 /// # let destination_node_id = hop_node_id1;
 /// # let node_id_lookup = EmptyNodeIdLookUp {};
 /// # let message_router = Arc::new(FakeMessageRouter {});
@@ -227,8 +228,13 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, CMH> where
 /// 	ForwardNode { node_id: hop_node_id3, short_channel_id: None },
 /// 	ForwardNode { node_id: hop_node_id4, short_channel_id: None },
 /// ];
+/// 
+/// let dummy_hops = [
+/// 	ForwardNode { node_id: hop_node_id5, short_channel_id: None },
+/// 	ForwardNode { node_id: hop_node_id6, short_channel_id: None },
+/// ];
 /// let context = MessageContext::Custom(Vec::new());
-/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, context, &keys_manager, &secp_ctx).unwrap();
+/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, &dummy_hops, context, &keys_manager, &secp_ctx).unwrap();
 ///
 /// // Send a custom onion message to a blinded path.
 /// let destination = Destination::BlindedPath(blinded_path);
@@ -542,7 +548,11 @@ where
 
 		let paths = peer_info.into_iter()
 			.map(|(peer, _, _)| {
-				BlindedPath::new_for_message(&[peer], recipient, context.clone(), &*self.entropy_source, secp_ctx)
+				let _dummy_hops = ForwardNode {
+					node_id: recipient.clone(),
+					short_channel_id: None,
+				};
+				BlindedPath::new_for_message(&[peer], recipient, &[], context.clone(), &*self.entropy_source, secp_ctx)
 			})
 			.take(MAX_PATHS)
 			.collect::<Result<Vec<_>, _>>();
