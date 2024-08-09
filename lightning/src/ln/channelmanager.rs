@@ -9261,6 +9261,15 @@ where
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
 	}
 
+	fn create_blinded_paths_from_forward_nodes<
+		SV: secp256k1::Signing + secp256k1::Verification
+	>(
+		&self, nodes: ForwardNode, context: MessageContext,
+		secp_ctx: &Secp256k1<SV>, compact_paths: bool
+	) -> Result<Vec<BlindedPath>, ()>{
+
+	}
+
 	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
 	/// the path's intended lifetime.
 	///
