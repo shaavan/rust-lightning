@@ -59,7 +59,9 @@ use lightning::ln::script::ShutdownScript;
 use lightning::ln::types::{ChannelId, PaymentHash, PaymentPreimage, PaymentSecret};
 use lightning::offers::invoice::{BlindedPayInfo, UnsignedBolt12Invoice};
 use lightning::offers::invoice_request::UnsignedInvoiceRequest;
-use lightning::onion_message::messenger::{Destination, MessageRouter, OnionMessagePath};
+use lightning::onion_message::messenger::{
+	BlindedPathParams, Destination, MessageRouter, OnionMessagePath,
+};
 use lightning::routing::router::{InFlightHtlcs, Path, Route, RouteHop, RouteParameters, Router};
 use lightning::sign::{
 	EntropySource, InMemorySigner, KeyMaterial, NodeSigner, Recipient, SignerProvider,
@@ -140,8 +142,8 @@ impl MessageRouter for FuzzRouter {
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, _params: BlindedPathParams, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>,
-		_secp_ctx: &Secp256k1<T>,
+		&self, _params: BlindedPathParams, _recipient: PublicKey, _context: MessageContext,
+		_peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		unreachable!()
 	}

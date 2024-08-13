@@ -19,7 +19,7 @@ use lightning::onion_message::messenger::{
 	CustomOnionMessageHandler, Destination, MessageRouter, OnionMessagePath, OnionMessenger,
 	PendingOnionMessage, Responder, ResponseInstruction,
 };
-use lightning::onion_message::offers::{OffersMessage, OffersMessageHandler};
+use lightning::onion_message::offers::{BlindedPathParams, OffersMessage, OffersMessageHandler};
 use lightning::onion_message::packet::OnionMessageContents;
 use lightning::sign::{EntropySource, KeyMaterial, NodeSigner, Recipient, SignerProvider};
 use lightning::util::logger::Logger;
@@ -96,8 +96,8 @@ impl MessageRouter for TestMessageRouter {
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, _params: BlindedPathParams _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>,
-		_secp_ctx: &Secp256k1<T>,
+		&self, _params: BlindedPathParams, _recipient: PublicKey, _context: MessageContext,
+		_peers: Vec<ForwardNode>, _secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		unreachable!()
 	}
