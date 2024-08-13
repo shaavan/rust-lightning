@@ -188,6 +188,7 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, CMH> where
 /// # let secp_ctx = Secp256k1::new();
 /// # let hop_node_id1 = PublicKey::from_secret_key(&secp_ctx, &node_secret);
 /// # let (hop_node_id3, hop_node_id4) = (hop_node_id1, hop_node_id1);
+/// # let (hop_node_id5, hop_node_id6) = (hop_node_id1, hop_node_id1);
 /// # let destination_node_id = hop_node_id1;
 /// # let node_id_lookup = EmptyNodeIdLookUp {};
 /// # let message_router = Arc::new(FakeMessageRouter {});
@@ -228,8 +229,11 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, CMH> where
 /// 	ForwardNode { node_id: hop_node_id3, short_channel_id: None },
 /// 	ForwardNode { node_id: hop_node_id4, short_channel_id: None },
 /// ];
+///
+/// let dummy_hops_num = 0;
+///
 /// let context = MessageContext::Custom(Vec::new());
-/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, context, &keys_manager, &secp_ctx).unwrap();
+/// let blinded_path = BlindedPath::new_for_message(&hops, your_node_id, dummy_hops_num, context, &keys_manager, &secp_ctx).unwrap();
 ///
 /// // Send a custom onion message to a blinded path.
 /// let destination = Destination::BlindedPath(blinded_path);
@@ -539,9 +543,11 @@ where
 			a_tor_only.cmp(b_tor_only).then(a_channels.cmp(b_channels).reverse())
 		});
 
+
+
 		let paths = peer_info.into_iter()
 			.map(|(peer, _, _)| {
-				BlindedPath::new_for_message(&[peer], recipient, context.clone(), &**entropy_source, secp_ctx)
+				BlindedPath::new_for_message(&[peer], recipient, params.hops.saturating_sub(2), context.clone(), &**entropy_source, secp_ctx)
 			})
 			.take(params.paths)
 			.collect::<Result<Vec<_>, _>>();
@@ -550,7 +556,7 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedPath::one_hop_for_message(recipient, context, &**entropy_source, secp_ctx)
+					BlindedPath::new_for_message(&[], recipient, params.hops.saturating_sub(1), context.clone(), &**entropy_source, secp_ctx)
 						.map(|path| vec![path])
 				} else {
 					Err(())
