@@ -54,7 +54,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::parse::Bolt12SemanticError;
-use crate::onion_message::messenger::{BlindedPathParams, Destination, PeeledOnion, PATHS_PLACEHOLDER};
+use crate::onion_message::messenger::{BlindedPathParams, Destination, PeeledOnion, HOPS_PLACEHOLDER, PATHS_PLACEHOLDER};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
 use crate::routing::gossip::{NodeAlias, NodeId};
@@ -288,6 +288,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = bob.node
@@ -308,6 +309,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = bob.node
@@ -363,6 +365,7 @@ fn prefers_more_connected_nodes_in_blinded_paths() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = bob.node
@@ -393,6 +396,7 @@ fn creates_short_lived_offer() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: true,
 	};
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
@@ -424,6 +428,7 @@ fn creates_long_lived_offer() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY
@@ -441,6 +446,7 @@ fn creates_long_lived_offer() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -469,6 +475,7 @@ fn creates_short_lived_refund() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: true,
 	};
 	let absolute_expiry = bob.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
@@ -505,6 +512,7 @@ fn creates_long_lived_refund() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = bob.node
@@ -558,6 +566,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -660,6 +669,7 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let absolute_expiry = Duration::from_secs(u64::MAX);
@@ -724,6 +734,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -796,6 +807,7 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = bob.node
@@ -853,6 +865,7 @@ fn pays_for_offer_without_blinded_paths() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -912,6 +925,7 @@ fn pays_for_refund_without_blinded_paths() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = bob.node
@@ -985,6 +999,7 @@ fn send_invoice_requests_with_distinct_reply_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1073,6 +1088,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let absolute_expiry = Duration::from_secs(u64::MAX);
@@ -1131,6 +1147,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1219,6 +1236,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1287,6 +1305,7 @@ fn creates_refund_with_blinded_path_using_unannounced_introduction_node() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let absolute_expiry = Duration::from_secs(u64::MAX);
@@ -1355,6 +1374,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1371,6 +1391,7 @@ fn fails_authentication_when_handling_invoice_request() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let invalid_path = alice.node
@@ -1481,6 +1502,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1598,6 +1620,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = david.node
@@ -1639,6 +1662,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	let payment_id = PaymentId([2; 32]);
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = david.node
@@ -1700,6 +1724,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	match alice.node.create_offer_builder(Some(params)) {
@@ -1713,6 +1738,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
@@ -1782,6 +1808,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	let payment_id = PaymentId([1; 32]);
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	match david.node.create_refund_builder(Some(params), 
@@ -1797,6 +1824,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = david.node
@@ -1831,6 +1859,7 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1864,6 +1893,7 @@ fn fails_sending_invoice_with_unsupported_chain_for_refund() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = bob.node
@@ -1899,6 +1929,7 @@ fn fails_creating_invoice_request_without_blinded_reply_path() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1937,6 +1968,7 @@ fn fails_creating_invoice_request_with_duplicate_payment_id() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -1973,6 +2005,7 @@ fn fails_creating_refund_with_duplicate_payment_id() {
 	let payment_id = PaymentId([1; 32]);
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	assert!(
@@ -1984,6 +2017,7 @@ fn fails_creating_refund_with_duplicate_payment_id() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	match nodes[0].node.create_refund_builder(
@@ -2035,6 +2069,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_offer() {
 	
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let offer = alice.node
@@ -2112,6 +2147,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_refund() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = david.node
@@ -2166,6 +2202,7 @@ fn fails_paying_invoice_more_than_once() {
 		
 	let params = BlindedPathParams {
 		paths: PATHS_PLACEHOLDER,
+		hops: HOPS_PLACEHOLDER,
 		is_compact: false,
 	};
 	let refund = david.node

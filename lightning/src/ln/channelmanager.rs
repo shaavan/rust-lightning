@@ -69,7 +69,7 @@ use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathParams, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction, PATHS_PLACEHOLDER};
+use crate::onion_message::messenger::{new_pending_onion_message, BlindedPathParams, Destination, MessageRouter, PendingOnionMessage, Responder, ResponseInstruction, HOPS_PLACEHOLDER, PATHS_PLACEHOLDER};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
@@ -1708,6 +1708,7 @@ where
 /// # let channel_manager = channel_manager.get_cm();
 /// # let params = BlindedPathParams {
 /// # 	paths: 0,
+/// # 	hops: 0,
 /// # 	is_compact: false,
 /// # };
 /// let offer = channel_manager
@@ -1820,6 +1821,7 @@ where
 /// # let channel_manager = channel_manager.get_cm();
 /// # let params = BlindedPathParams {
 /// # 	paths: 0,
+/// # 	hops: 0,
 /// # 	is_compact: false,
 /// # };
 /// # let payment_id = PaymentId([42; 32]);
@@ -9035,6 +9037,7 @@ where
 
 		let params = BlindedPathParams {
 			paths: PATHS_PLACEHOLDER,
+			hops: HOPS_PLACEHOLDER,
 			is_compact: false,
 		};
 		let context = OffersContext::OutboundPayment { payment_id, nonce };
@@ -9144,6 +9147,7 @@ where
 				
 				let params = BlindedPathParams {
 					paths: PATHS_PLACEHOLDER,
+					hops: HOPS_PLACEHOLDER,
 					is_compact: false,
 				};
 				let context = OffersContext::InboundPayment {
