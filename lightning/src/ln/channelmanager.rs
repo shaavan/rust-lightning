@@ -33,7 +33,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{MessageContext, OffersContext};
+use crate::blinded_path::message::{MessageContext, MessageForwardNode, OffersContext};
 use crate::blinded_path::NodeIdLookUp;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
@@ -2499,9 +2499,7 @@ const MAX_NO_CHANNEL_PEERS: usize = 250;
 /// short-lived, while anything with a greater expiration is considered long-lived.
 ///
 /// Using [`ChannelManager::create_offer_builder`] or [`ChannelManager::create_refund_builder`],
-/// will included a [`BlindedMessagePath`] created using:
-/// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
-/// - [`MessageRouter::create_blinded_paths`] when long-lived.
+/// will included a [`BlindedMessagePath`] created using [`MessageRouter::create_blinded_paths`].
 ///
 /// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
 /// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
@@ -9384,7 +9382,23 @@ where
 			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
 			.filter(|(_, peer)| peer.is_connected)
 			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| *node_id)
+			.map(|(node_id, peer)| {
+				if params.is_compact {
+					MessageForwardNode {
+						node_id: *node_id,
+						short_channel_id: peer.channel_by_id
+							.iter()
+							.filter(|(_, channel)| channel.context().is_usable())
+							.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+							.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+					}
+				} else {
+					MessageForwardNode {
+						node_id: *node_id,
+						short_channel_id: None,
+					}
+				}
+			})
 			.collect::<Vec<_>>();
 
 		self.router
