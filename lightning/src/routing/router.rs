@@ -21,7 +21,7 @@ use crate::ln::features::{BlindedHopFeatures, Bolt11InvoiceFeatures, Bolt12Invoi
 use crate::ln::msgs::{DecodeError, ErrorAction, LightningError, MAX_VALUE_MSAT};
 use crate::ln::onion_utils;
 use crate::offers::invoice::{BlindedPayInfo, Bolt12Invoice};
-use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, OnionMessagePath};
+use crate::onion_message::messenger::{BlindedPathParams, DefaultMessageRouter, Destination, MessageRouter, OnionMessagePath};
 use crate::routing::gossip::{DirectedChannelInfo, EffectiveCapacity, ReadOnlyNetworkGraph, NetworkGraph, NodeId, RoutingFees};
 use crate::routing::scoring::{ChannelUsage, LockableScore, ScoreLookUp};
 use crate::sign::EntropySource;
@@ -193,9 +193,9 @@ impl< G: Deref<Target = NetworkGraph<L>> + Clone, L: Deref, ES: Deref, S: Deref,
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
+		&self, params: BlindedPathParams, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
-		self.message_router.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.message_router.create_blinded_paths(params, recipient, context, peers, secp_ctx)
 	}
 
 	fn create_compact_blinded_paths<
