@@ -214,10 +214,11 @@ impl_writeable_tlv_based_enum!(OffersContext,
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[ForwardNode], recipient_node_id: PublicKey,
-	context: MessageContext, session_priv: &SecretKey
+	dummy_hops_num: usize, context: MessageContext, session_priv: &SecretKey
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| node.node_id)
-		.chain(core::iter::once(recipient_node_id));
+		.chain(core::iter::once(recipient_node_id))
+		.chain(core::iter::repeat(recipient_node_id).take(dummy_hops_num));
 	let tlvs = pks.clone()
 		.skip(1) // The first node's TLVs contains the next node's pubkey
 		.zip(intermediate_nodes.iter().map(|node| node.short_channel_id))
@@ -226,7 +227,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { padding: None, next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { padding: None, context: Some(context) })));
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { padding: None, context: Some(context) })))
+		.chain(core::iter::repeat(ControlTlvs::Dummy(DummyTlvs { padding: None })).take(dummy_hops_num));
 
 	let max_length = tlvs.clone()
 		.map(|tlv| tlv.serialized_length())
