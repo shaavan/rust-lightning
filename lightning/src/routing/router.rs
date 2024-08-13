@@ -12,7 +12,7 @@
 use bitcoin::secp256k1::{PublicKey, Secp256k1, self};
 
 use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode};
-use crate::blinded_path::message::{self, MessageContext};
+use crate::blinded_path::message::{ForwardNode, MessageContext};
 use crate::blinded_path::payment::{ForwardTlvs, PaymentConstraints, PaymentRelay, ReceiveTlvs, self};
 use crate::ln::{PaymentHash, PaymentPreimage};
 use crate::ln::channel_state::ChannelDetails;
@@ -191,17 +191,9 @@ impl< G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref, S: Deref, SP: Siz
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, params: BlindedPathParams, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
+		&self, params: BlindedPathParams, recipient: PublicKey, context: MessageContext, peers: Vec<ForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedPath>, ()> {
 		DefaultMessageRouter::create_blinded_paths(params, &self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
-	}
-
-	fn create_compact_blinded_paths<
-		T: secp256k1::Signing + secp256k1::Verification
-	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<message::ForwardNode>, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedPath>, ()> {
-		DefaultMessageRouter::create_compact_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
 	}
 }
 
