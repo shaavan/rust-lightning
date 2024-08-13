@@ -35,7 +35,7 @@ use bitcoin::{secp256k1, Sequence};
 use crate::events::FundingInfo;
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::NodeIdLookUp;
-use crate::blinded_path::message::{BlindedMessagePath, MessageForwardNode};
+use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
 use crate::chain;
 use crate::chain::{Confirm, ChannelMonitorUpdateStatus, Watch, BestBlock};
@@ -1728,12 +1728,13 @@ where
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::BlindedPathParams;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
+/// # let params = BlindedPathParams::new(false);
 /// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
+///     .create_offer_builder(Some(params))?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -1831,16 +1832,18 @@ where
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::BlindedPathParams;
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
 /// #     max_total_routing_fee_msat: Option<u64>
 /// # ) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// let payment_id = PaymentId([42; 32]);
+/// # let params = BlindedPathParams::new(false);
+/// # let payment_id = PaymentId([42; 32]);
 /// let refund = channel_manager
 ///     .create_refund_builder(
-///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
+///         Some(params), amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
 ///     )?
 /// # ;
 /// # // Needed for compiling for c_bindings
@@ -8870,7 +8873,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
+		&$self, params: Option<BlindedPathParams>,
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -8879,17 +8882,16 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
 
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
-		};
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.chain_hash);
+		if let Some(params) = params {
+			let path = $self.create_blinded_paths(params, context)
+				.and_then(|paths| paths.into_iter().next().ok_or(()))
+				.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+			builder = builder.path(path);
+		}
 
 		Ok(builder.into())
 	}
@@ -8942,7 +8944,8 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// [`Bolt12Invoice::payment_paths`]: crate::offers::invoice::Bolt12Invoice::payment_paths
 	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
 	pub fn create_refund_builder(
-		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
+		&$self, params: Option<BlindedPathParams>, amount_msats: u64,
+		absolute_expiry: Duration, payment_id: PaymentId,
 		retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
@@ -8952,16 +8955,20 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		let builder = RefundBuilder::deriving_payer_id(
+		let mut builder = RefundBuilder::deriving_payer_id(
 			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
 		)?
 			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry)
-			.path(path);
+			.absolute_expiry(absolute_expiry);
+
+		if let Some(params) = params {
+			let path = $self.create_blinded_paths(params, context)
+				.and_then(|paths| paths.into_iter().next().ok_or(()))
+				.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+			builder = builder.path(path);
+		};
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
 
@@ -9334,26 +9341,7 @@ where
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
 	}
 
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			let params = BlindedPathParams::new(false);
-			self.create_blinded_paths(params, context)
-		}
-	}
-
+	#[cfg(test)]
 	pub(super) fn duration_since_epoch(&self) -> Duration {
 		#[cfg(not(feature = "std"))]
 		let now = Duration::from_secs(
@@ -9385,34 +9373,6 @@ where
 
 		self.router
 			.create_blinded_paths(params, recipient, MessageContext::Offers(context), peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, peer)| MessageForwardNode {
-				node_id: *node_id,
-				short_channel_id: peer.channel_by_id
-					.iter()
-					.filter(|(_, channel)| channel.context().is_usable())
-					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
-					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
-			})
-			.collect::<Vec<_>>();
-
-		self.router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 

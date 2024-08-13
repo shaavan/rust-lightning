@@ -444,7 +444,7 @@ pub struct BlindedPathParams {
 
 impl BlindedPathParams {
 	/// Number of paths to be calculated, used by default throughout the codebase.
-	const DEFAULT_PATHS: usize = 3;
+	const DEFAULT_PATHS: usize = 1;
 
 	/// Create [`BlindedPathParams`] with default number of paths.
 	pub fn new(is_compact: bool) -> Self {
