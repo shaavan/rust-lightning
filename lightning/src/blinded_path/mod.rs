@@ -126,7 +126,7 @@ impl BlindedPath {
 	pub fn one_hop_for_message<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		recipient_node_id: PublicKey, context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>
 	) -> Result<Self, ()> where ES::Target: EntropySource {
-		Self::new_for_message(&[], recipient_node_id, context, entropy_source, secp_ctx)
+		Self::new_for_message(&[], recipient_node_id, &[], context, entropy_source, secp_ctx)
 	}
 
 	/// Create a blinded path for an onion message, to be forwarded along `node_pks`. The last node
@@ -136,7 +136,8 @@ impl BlindedPath {
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new_for_message<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[message::ForwardNode], recipient_node_id: PublicKey,
-		context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>
+		dummy_hops: &[message::ForwardNode], context: MessageContext, entropy_source: ES,
+		secp_ctx: &Secp256k1<T>
 	) -> Result<Self, ()> where ES::Target: EntropySource {
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(recipient_node_id, |n| n.node_id)
@@ -148,7 +149,7 @@ impl BlindedPath {
 			introduction_node,
 			blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
 			blinded_hops: message::blinded_hops(
-				secp_ctx, intermediate_nodes, recipient_node_id,
+				secp_ctx, intermediate_nodes, recipient_node_id, dummy_hops,
 				context, &blinding_secret,
 			).map_err(|_| ())?,
 		})
