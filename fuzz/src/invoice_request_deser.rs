@@ -10,6 +10,7 @@
 use crate::utils::test_logger;
 use bitcoin::secp256k1::{self, Keypair, Parity, PublicKey, Secp256k1, SecretKey};
 use core::convert::TryFrom;
+use lightning::blinded_path::message::ForwardNode;
 use lightning::blinded_path::payment::{
 	BlindedPaymentPath, Bolt12OfferContext, ForwardNode, ForwardTlvs, PaymentConstraints,
 	PaymentContext, PaymentRelay, ReceiveTlvs,
