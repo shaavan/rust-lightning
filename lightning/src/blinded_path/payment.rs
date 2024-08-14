@@ -97,15 +97,21 @@ enum BlindedPaymentTlvsRef<'a> {
 	Receive(&'a ReceiveTlvs),
 }
 
-impl BlindedPaymentTlvs {
+// Cannot derive Clone because it contains Mutable references.
+enum BlindedPaymentTlvsMut<'a> {
+	Forward(&'a mut ForwardTlvs),
+	Receive(&'a mut ReceiveTlvs),
+}
+
+impl<'a> BlindedPaymentTlvsMut<'a> {
 	pub(crate) fn pad_tlvs(mut self, max_length: usize) -> Self {
 		let length = max_length.checked_sub(self.serialized_length());
 		debug_assert!(length.is_some(), "Size of this packet should not be larger than the size of largest packet.");
 		let padding = Some(Padding::new(length.unwrap()));
 
 		match &mut self {
-			BlindedPaymentTlvs::Forward(tlvs) => tlvs.padding = padding,
-			BlindedPaymentTlvs::Receive(tlvs) => tlvs.padding = padding,
+			BlindedPaymentTlvsMut::Forward(tlvs) => tlvs.padding = padding,
+			BlindedPaymentTlvsMut::Receive(tlvs) => tlvs.padding = padding,
 		}
 
 		self
@@ -257,6 +263,16 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	}
 }
 
+impl<'a> Writeable for BlindedPaymentTlvsMut<'a> {
+	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
+		match self {
+			Self::Forward(tlvs) => tlvs.write(w)?,
+			Self::Receive(tlvs) => tlvs.write(w)?,
+		}
+		Ok(())
+	}
+}
+
 impl Readable for BlindedPaymentTlvs {
 	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
 		_init_and_read_tlv_stream!(r, {
@@ -295,20 +311,24 @@ impl Readable for BlindedPaymentTlvs {
 
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
-	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[ForwardNode],
-	payee_node_id: PublicKey, payee_tlvs: ReceiveTlvs, session_priv: &SecretKey
+	secp_ctx: &Secp256k1<T>, intermediate_nodes: &mut [ForwardNode],
+	payee_node_id: PublicKey, mut payee_tlvs: ReceiveTlvs, session_priv: &SecretKey
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
-	let pks = intermediate_nodes.iter().map(|node| &node.node_id)
-		.chain(core::iter::once(&payee_node_id));
-	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
-
-	let max_length = tlvs.clone()
+	let max_length = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
+		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)))
 		.map(|tlv| tlv.serialized_length())
 		.max()
 		.unwrap_or(0);
 
-	let length_tlvs = tlvs.map(|tlv| tlv.pad_tlvs(max_length));
+	let tlvs_mut = intermediate_nodes.iter_mut().map(|node| BlindedPaymentTlvsMut::Forward(&mut node.tlvs))
+		.chain(core::iter::once(BlindedPaymentTlvsMut::Receive(&mut payee_tlvs)));
+
+	let length_tlvs = tlvs_mut.map(|tlv| tlv.pad_tlvs(max_length));
+
+	// Immutable / Mutable burrow issue cannot be resolved at this point because
+	// both length_tlvs, and pks are needed in the next step.
+	let pks = intermediate_nodes.iter().map(|node| &node.node_id)
+		.chain(core::iter::once(&payee_node_id));
 
 	utils::construct_blinded_hops(secp_ctx, pks, length_tlvs, session_priv)
 }

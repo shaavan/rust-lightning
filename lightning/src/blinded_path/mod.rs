@@ -163,7 +163,7 @@ impl BlindedPath {
 		// be in relation to a specific channel.
 		let htlc_maximum_msat = u64::max_value();
 		Self::new_for_payment(
-			&[], payee_node_id, payee_tlvs, htlc_maximum_msat, min_final_cltv_expiry_delta,
+			&mut [], payee_node_id, payee_tlvs, htlc_maximum_msat, min_final_cltv_expiry_delta,
 			entropy_source, secp_ctx
 		)
 	}
@@ -178,7 +178,7 @@ impl BlindedPath {
 	/// [`ForwardTlvs`]: crate::blinded_path::payment::ForwardTlvs
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new_for_payment<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
-		intermediate_nodes: &[payment::ForwardNode], payee_node_id: PublicKey,
+		intermediate_nodes: &mut [payment::ForwardNode], payee_node_id: PublicKey,
 		payee_tlvs: payment::ReceiveTlvs, htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16,
 		entropy_source: ES, secp_ctx: &Secp256k1<T>
 	) -> Result<(BlindedPayInfo, Self), ()> where ES::Target: EntropySource {
