@@ -90,13 +90,13 @@ pub(crate) fn construct_keys_callback<'a, T, I, F>(
 ) -> Result<(), secp256k1::Error>
 where
 	T: secp256k1::Signing + secp256k1::Verification,
-	I: Iterator<Item=&'a PublicKey>,
+	I: Iterator<Item=PublicKey>,
 	F: FnMut(PublicKey, SharedSecret, PublicKey, [u8; 32], Option<PublicKey>, Option<Vec<u8>>),
 {
 	build_keys_helper!(session_priv, secp_ctx, callback);
 
 	for pk in unblinded_path {
-		build_keys_in_loop!(*pk, false, None);
+		build_keys_in_loop!(pk, false, None);
 	}
 	if let Some(dest) = destination {
 		match dest {
@@ -119,7 +119,7 @@ pub(super) fn construct_blinded_hops<'a, T, I1, I2>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error>
 where
 	T: secp256k1::Signing + secp256k1::Verification,
-	I1: Iterator<Item=&'a PublicKey>,
+	I1: Iterator<Item=PublicKey>,
 	I2: Iterator,
 	I2::Item: Writeable
 {
