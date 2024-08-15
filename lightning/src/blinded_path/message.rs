@@ -68,6 +68,13 @@ pub(crate) struct ReceiveTlvs {
 	pub context: Option<MessageContext>
 }
 
+/// These TLVs are for the dummy node.
+#[derive(Clone)]
+pub(crate) struct DummyTlvs {
+	/// The padding data used to make all packets of a Blinded Path of same size
+	pub(crate) padding: Option<Padding>,
+}
+
 impl Writeable for ForwardTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		let (next_node_id, short_channel_id) = match self.next_hop {
@@ -89,6 +96,16 @@ impl Writeable for ReceiveTlvs {
 		encode_tlv_stream!(writer, {
 			(1, self.padding, option),
 			(65537, self.context, option),
+		});
+		Ok(())
+	}
+}
+
+impl Writeable for DummyTlvs {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		encode_tlv_stream!(writer, {
+			(1, self.padding, option),
+
 		});
 		Ok(())
 	}

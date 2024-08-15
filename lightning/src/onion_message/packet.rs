@@ -13,7 +13,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::{BlindedPath, NextMessageHop};
-use crate::blinded_path::message::{ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::message::{DummyTlvs, ForwardTlvs, ReceiveTlvs};
 use crate::blinded_path::utils::Padding;
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
@@ -120,7 +120,9 @@ pub(super) enum Payload<T: OnionMessageContents> {
 		control_tlvs: ReceiveControlTlvs,
 		reply_path: Option<BlindedPath>,
 		message: T,
-	}
+	},
+	/// This payload is for the dummy node.
+	Dummy {}
 }
 
 /// The contents of an [`OnionMessage`] as read from the wire.
@@ -233,6 +235,7 @@ impl<T: OnionMessageContents> Writeable for (Payload<T>, [u8; 32]) {
 					(message.tlv_type(), message, required)
 				})
 			},
+			Payload::Dummy {} => {}
 		}
 		Ok(())
 	}
@@ -298,6 +301,9 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 					message: message.ok_or(DecodeError::InvalidValue)?,
 				})
 			},
+			Some(ChaChaPolyReadAdapter { readable: ControlTlvs::Dummy(_tlvs)}) => {
+				Ok(Payload::Dummy {})
+			},
 		}
 	}
 }
@@ -312,6 +318,8 @@ pub(crate) enum ControlTlvs {
 	Forward(ForwardTlvs),
 	/// This onion message is intended to be received.
 	Receive(ReceiveTlvs),
+	/// This onion message is intended to be dummy.
+	Dummy(DummyTlvs),
 }
 
 impl ControlTlvs {
@@ -323,6 +331,7 @@ impl ControlTlvs {
 		match &mut self {
 			ControlTlvs::Forward(tlvs) => tlvs.padding = padding,
 			ControlTlvs::Receive(tlvs) => tlvs.padding = padding,
+			ControlTlvs::Dummy(tlvs) => tlvs.padding = padding,
 		}
 
 		self
@@ -349,6 +358,7 @@ impl Readable for ControlTlvs {
 
 		let valid_fwd_fmt = next_hop.is_some();
 		let valid_recv_fmt = next_hop.is_none() && next_blinding_override.is_none();
+		let valid_dummy_fmt = valid_recv_fmt && context.is_none();
 
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
@@ -360,6 +370,10 @@ impl Readable for ControlTlvs {
 			ControlTlvs::Receive(ReceiveTlvs {
 				padding: None,
 				context,
+			})
+		} else if valid_dummy_fmt {
+			ControlTlvs::Dummy(DummyTlvs {
+				padding: None,
 			})
 		} else {
 			return Err(DecodeError::InvalidValue)
@@ -374,6 +388,7 @@ impl Writeable for ControlTlvs {
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w),
 			Self::Receive(tlvs) => tlvs.write(w),
+			Self::Dummy(tlvs) => tlvs.write(w),
 		}
 	}
 }
