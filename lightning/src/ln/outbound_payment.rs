@@ -57,7 +57,7 @@ pub(crate) enum PendingOutboundPayment {
 		expiration: StaleExpiration,
 		retry_strategy: Retry,
 		max_total_routing_fee_msat: Option<u64>,
-		request_with_context: Option<InvoiceRequest>,
+		request_with_context: Option<(InvoiceRequest, OffersContext)>,
 	},
 	InvoiceReceived {
 		payment_hash: PaymentHash,
@@ -1421,7 +1421,7 @@ impl OutboundPayments {
 
 	pub(super) fn add_new_awaiting_invoice(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>, request_with_context: Option<InvoiceRequest>,
+		max_total_routing_fee_msat: Option<u64>, request_with_context: Option<(InvoiceRequest, OffersContext)>,
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
 		match pending_outbounds.entry(payment_id) {
@@ -1905,7 +1905,7 @@ impl OutboundPayments {
 		self.pending_outbound_payments.lock().unwrap().clear()
 	}
 
-	pub fn release_invoice_request_awaiting_invoice(&self) -> Vec<InvoiceRequest> {
+	pub fn release_invoice_request_awaiting_invoice(&self) -> Vec<(InvoiceRequest, OffersContext)> {
 		if !self.awaiting_invoice.load(Ordering::Acquire) {
 			return vec![];
 		}
