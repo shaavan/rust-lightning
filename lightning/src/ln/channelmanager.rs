@@ -8929,7 +8929,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None, nonce
+				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -9049,7 +9049,7 @@ where
 
 		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) };
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.create_blinded_paths(context.clone())
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9058,7 +9058,7 @@ where
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
 				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
-				Some(invoice_request.clone()), nonce,
+				Some(invoice_request.clone())
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
