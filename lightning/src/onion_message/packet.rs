@@ -320,11 +320,34 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 /// or received. Thus we read a `ControlTlvs` rather than reading a [`ForwardTlvs`] or
 /// [`ReceiveTlvs`] directly. Also useful on the encoding side to keep forward and receive TLVs in
 /// the same iterator.
+#[derive(Clone)]
 pub(crate) enum ControlTlvs {
 	/// This onion message is intended to be forwarded.
 	Forward(ForwardTlvs),
 	/// This onion message is intended to be received.
 	Receive(ReceiveTlvs),
+}
+
+impl ControlTlvs {
+	pub(crate) fn pad_to_length(mut self, length: usize) -> Self {
+		let padding = match length.checked_sub(self.serialized_length()) {
+			Some(length) => Some(Padding::new(length)),
+			None => {
+				debug_assert!(
+					false,
+					"Size of this packet should not be larger than the size of largest packet."
+				);
+				None
+			}
+		};
+
+		match &mut self {
+			ControlTlvs::Forward(tlvs) => tlvs.padding = padding,
+			ControlTlvs::Receive(tlvs) => tlvs.padding = padding,
+		}
+
+		self
+	}
 }
 
 impl Readable for ControlTlvs {
@@ -350,11 +373,13 @@ impl Readable for ControlTlvs {
 
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
+				padding: None,
 				next_hop: next_hop.unwrap(),
 				next_blinding_override,
 			})
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs {
+				padding: None,
 				context,
 			})
 		} else {
