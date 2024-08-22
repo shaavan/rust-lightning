@@ -937,7 +937,7 @@ impl msgs::ChannelMessageHandler for TestChannelMessageHandler {
 		self.received_msg(wire::Message::TxAbort(msg.clone()));
 	}
 
-	fn handle_message_received(&self) {}
+	fn message_received(&self) {}
 }
 
 impl events::MessageSendEventsProvider for TestChannelMessageHandler {

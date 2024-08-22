@@ -10747,7 +10747,7 @@ where
 			 msg.channel_id.clone())), *counterparty_node_id);
 	}
 
-	fn handle_message_received(&self) {
+	fn message_received(&self) {
 		for (payment_id, retryable_invoice_request) in self
 			.pending_outbound_payments
 			.release_invoice_requests_awaiting_invoice()

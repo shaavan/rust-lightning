@@ -1606,9 +1606,10 @@ pub trait ChannelMessageHandler : MessageSendEventsProvider {
 	/// connecting to peers.
 	fn get_chain_hashes(&self) -> Option<Vec<ChainHash>>;
 
-	/// Handles behavior which is triggered when any message from any peer for any handler
-	/// is received.
-	fn handle_message_received(&self);
+	/// Indicates that a message was received from any peer for any handler.
+	/// Called before the message is passed to the appropriate handler.
+	/// Useful for indicating that a network connection is active.
+	fn message_received(&self);
 }
 
 /// A trait to describe an object which can receive routing messages.
