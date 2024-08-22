@@ -12,7 +12,7 @@
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::blinded_path::{BlindedHop, BlindedPath, IntroductionNode, NodeIdLookUp};
-use crate::blinded_path::utils;
+use crate::blinded_path::utils::{self, Padding};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
@@ -90,7 +90,7 @@ impl BlindedPaymentPath {
 		// be in relation to a specific channel.
 		let htlc_maximum_msat = u64::max_value();
 		Self::new(
-			&[], payee_node_id, payee_tlvs, htlc_maximum_msat, min_final_cltv_expiry_delta,
+			&mut [], payee_node_id, payee_tlvs, htlc_maximum_msat, min_final_cltv_expiry_delta,
 			entropy_source, secp_ctx
 		)
 	}
@@ -103,7 +103,7 @@ impl BlindedPaymentPath {
 	/// * any unknown features are required in the provided [`ForwardTlvs`]
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
-		intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
+		intermediate_nodes: &mut [PaymentForwardNode], payee_node_id: PublicKey,
 		payee_tlvs: ReceiveTlvs, htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16,
 		entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()> where ES::Target: EntropySource {
@@ -234,6 +234,8 @@ pub struct PaymentForwardNode {
 /// Data to construct a [`BlindedHop`] for forwarding a payment.
 #[derive(Clone, Debug)]
 pub struct ForwardTlvs {
+	/// The padding data used to make all packets of a blinded path the same size
+	pub padding: Option<Padding>,
 	/// The short channel id this payment should be forwarded out over.
 	pub short_channel_id: u64,
 	/// Payment parameters for relaying over [`Self::short_channel_id`].
@@ -254,6 +256,8 @@ pub struct ForwardTlvs {
 /// may not be valid if received by another lightning implementation.
 #[derive(Clone, Debug)]
 pub struct ReceiveTlvs {
+	/// The padding data used to make all packets of a blinded path the same size
+	pub padding: Option<Padding>,
 	/// Used to authenticate the sender of a payment to the receiver and tie MPP HTLCs together.
 	pub payment_secret: PaymentSecret,
 	/// Constraints for the receiver of this payment.
@@ -265,6 +269,7 @@ pub struct ReceiveTlvs {
 /// Data to construct a [`BlindedHop`] for sending a payment over.
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
+#[derive(Clone)]
 pub(crate) enum BlindedPaymentTlvs {
 	/// This blinded payment data is for a forwarding node.
 	Forward(ForwardTlvs),
@@ -282,6 +287,21 @@ enum BlindedPaymentTlvsRef<'a> {
 enum BlindedPaymentTlvsMut<'a> {
 	Forward(&'a mut ForwardTlvs),
 	Receive(&'a mut ReceiveTlvs),
+}
+
+impl<'a> BlindedPaymentTlvsMut<'a> {
+	pub(crate) fn pad_to_length(mut self, length: usize) -> Self {
+		let pad_length = length.checked_sub(self.serialized_length());
+		debug_assert!(pad_length.is_some(), "Size of this packet should not be larger than the size of largest packet.");
+		let padding = Some(Padding::new(pad_length.unwrap()));
+
+		match self {
+			BlindedPaymentTlvsMut::Forward(ref mut tlvs) => tlvs.padding = padding,
+			BlindedPaymentTlvsMut::Receive(ref mut tlvs) => tlvs.padding = padding,
+		}
+
+		self
+	}
 }
 
 /// Parameters for relaying over a given [`BlindedHop`].
@@ -396,6 +416,7 @@ impl Writeable for ForwardTlvs {
 			if self.features == BlindedHopFeatures::empty() { None }
 			else { Some(WithoutLength(&self.features)) };
 		encode_tlv_stream!(w, {
+			(1, self.padding, option),
 			(2, self.short_channel_id, required),
 			(10, self.payment_relay, required),
 			(12, self.payment_constraints, required),
@@ -408,6 +429,7 @@ impl Writeable for ForwardTlvs {
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		encode_tlv_stream!(w, {
+			(1, self.padding, option),
 			(12, self.payment_constraints, required),
 			(65536, self.payment_secret, required),
 			(65537, self.payment_context, required)
@@ -418,7 +440,6 @@ impl Writeable for ReceiveTlvs {
 
 impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
@@ -429,7 +450,6 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 
 impl<'a> Writeable for BlindedPaymentTlvsMut<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
@@ -457,6 +477,7 @@ impl Readable for BlindedPaymentTlvs {
 				return Err(DecodeError::InvalidValue)
 			}
 			Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
+				padding: None,
 				short_channel_id,
 				payment_relay: payment_relay.ok_or(DecodeError::InvalidValue)?,
 				payment_constraints: payment_constraints.0.unwrap(),
@@ -466,6 +487,7 @@ impl Readable for BlindedPaymentTlvs {
 		} else {
 			if payment_relay.is_some() || features.is_some() { return Err(DecodeError::InvalidValue) }
 			Ok(BlindedPaymentTlvs::Receive(ReceiveTlvs {
+				padding: None,
 				payment_secret: payment_secret.ok_or(DecodeError::InvalidValue)?,
 				payment_constraints: payment_constraints.0.unwrap(),
 				payment_context: payment_context.0.unwrap(),
@@ -476,15 +498,20 @@ impl Readable for BlindedPaymentTlvs {
 
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
-	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[PaymentForwardNode],
-	payee_node_id: PublicKey, payee_tlvs: ReceiveTlvs, session_priv: &SecretKey,
+	secp_ctx: &Secp256k1<T>, intermediate_nodes: &mut [PaymentForwardNode],
+	payee_node_id: PublicKey, mut payee_tlvs: ReceiveTlvs, session_priv: &SecretKey,
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
-	let pks = intermediate_nodes.iter().map(|node| node.node_id)
-		.chain(core::iter::once(payee_node_id));
-	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
+	let max_length = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
+		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)))
+		.map(|tlv| tlv.serialized_length())
+		.max()
+		.unwrap_or(0);
 
-	let path = pks.zip(tlvs);
+	let path = intermediate_nodes
+		.iter_mut()
+		.map(|node| (node.node_id, BlindedPaymentTlvsMut::Forward(&mut node.tlvs)))
+		.chain(core::iter::once((payee_node_id, BlindedPaymentTlvsMut::Receive(&mut payee_tlvs))))
+		.map(|(pubkey, tlvs)| (pubkey, tlvs.pad_to_length(max_length)));
 
 	utils::construct_blinded_hops(secp_ctx, path, session_priv)
 }
@@ -661,6 +688,7 @@ mod tests {
 		let intermediate_nodes = vec![PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 144,
@@ -678,6 +706,7 @@ mod tests {
 		}, PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 144,
@@ -694,6 +723,7 @@ mod tests {
 			htlc_maximum_msat: u64::max_value(),
 		}];
 		let recv_tlvs = ReceiveTlvs {
+			padding: None,
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: 0,
@@ -713,6 +743,7 @@ mod tests {
 	#[test]
 	fn compute_payinfo_1_hop() {
 		let recv_tlvs = ReceiveTlvs {
+			padding: None,
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: 0,
@@ -736,6 +767,7 @@ mod tests {
 		let intermediate_nodes = vec![PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -753,6 +785,7 @@ mod tests {
 		}, PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -769,6 +802,7 @@ mod tests {
 			htlc_maximum_msat: u64::max_value()
 		}];
 		let recv_tlvs = ReceiveTlvs {
+			padding: None,
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: 0,
@@ -789,6 +823,7 @@ mod tests {
 		let intermediate_nodes = vec![PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -806,6 +841,7 @@ mod tests {
 		}, PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -822,6 +858,7 @@ mod tests {
 			htlc_maximum_msat: u64::max_value()
 		}];
 		let recv_tlvs = ReceiveTlvs {
+			padding: None,
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: 0,
@@ -846,6 +883,7 @@ mod tests {
 		let intermediate_nodes = vec![PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -863,6 +901,7 @@ mod tests {
 		}, PaymentForwardNode {
 			node_id: dummy_pk,
 			tlvs: ForwardTlvs {
+				padding: None,
 				short_channel_id: 0,
 				payment_relay: PaymentRelay {
 					cltv_expiry_delta: 0,
@@ -879,6 +918,7 @@ mod tests {
 			htlc_maximum_msat: 10_000
 		}];
 		let recv_tlvs = ReceiveTlvs {
+			padding: None,
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: 0,
