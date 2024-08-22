@@ -148,6 +148,7 @@ impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref, S: Deref, SP: Size
 				};
 				Some(PaymentForwardNode {
 					tlvs: ForwardTlvs {
+						padding: None,
 						short_channel_id,
 						payment_relay,
 						payment_constraints,
@@ -160,7 +161,7 @@ impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref, S: Deref, SP: Size
 			})
 			.map(|forward_node| {
 				BlindedPaymentPath::new(
-					&[forward_node], recipient, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA,
+					&mut [forward_node], recipient, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA,
 					&*self.entropy_source, secp_ctx
 				)
 			})
@@ -172,7 +173,7 @@ impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref, S: Deref, SP: Size
 			_ => {
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
 					BlindedPaymentPath::new(
-						&[], recipient, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source,
+						&mut [], recipient, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source,
 						secp_ctx
 					).map(|path| vec![path])
 				} else {
