@@ -8840,7 +8840,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+		let path = $self.create_blinded_paths_using_absolute_expiry(context, Vec::new(), absolute_expiry)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
@@ -8913,7 +8913,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
+		let path = $self.create_blinded_paths_using_absolute_expiry(context, Vec::new(), Some(absolute_expiry))
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -9049,7 +9049,7 @@ where
 
 		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) };
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.create_blinded_paths(context, Vec::new())
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9156,7 +9156,7 @@ where
 				let context = OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(),
 				};
-				let reply_paths = self.create_blinded_paths(context)
+				let reply_paths = self.create_blinded_paths(context, Vec::new())
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -9295,15 +9295,15 @@ where
 	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
 	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
 	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
+		&self, context: OffersContext, custom_tlvs: Vec<(u64, Vec<u8>)>, absolute_expiry: Option<Duration>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		let now = self.duration_since_epoch();
 		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
 
 		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
+			self.create_compact_blinded_paths(context, custom_tlvs)
 		} else {
-			self.create_blinded_paths(context)
+			self.create_blinded_paths(context, custom_tlvs)
 		}
 	}
 
@@ -9324,7 +9324,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
+	fn create_blinded_paths(&self, context: OffersContext, custom_tlvs: Vec<(u64, Vec<u8>)>) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9337,7 +9337,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_blinded_paths(recipient, MessageContext::Offers(context), custom_tlvs, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -9345,7 +9345,7 @@ where
 	/// [`MessageRouter::create_compact_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
+	fn create_compact_blinded_paths(&self, context: OffersContext, custom_tlvs: Vec<(u64, Vec<u8>)>) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9365,7 +9365,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), custom_tlvs, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 

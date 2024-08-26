@@ -314,13 +314,29 @@ pub(crate) enum ControlTlvs {
 
 impl Readable for ControlTlvs {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
-		_init_and_read_tlv_stream!(r, {
+		let mut _padding = None;
+		let mut short_channel_id = None;
+		let mut next_node_id = None;
+		let mut next_blinding_override = None;
+		let mut context = None;
+		let mut custom_tlvs = Vec::new();
+
+		let tlv_len = BigSize::read(r)?;
+		let mut rd = FixedLengthReader::new(r, tlv_len.0);
+		decode_tlv_stream_with_custom_tlv_decode!(&mut rd, {
 			(1, _padding, option),
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
 			(8, next_blinding_override, option),
 			(65537, context, option),
+		}, |msg_type: u64, msg_reader: &mut FixedLengthReader<_>| -> Result<bool, DecodeError> {
+			if msg_type < 1 << 16 { return Ok(false) }
+			let mut value = Vec::new();
+			msg_reader.read_to_limit(&mut value, u64::MAX)?;
+			custom_tlvs.push((msg_type, value));
+			Ok(true)
 		});
+
 		let _padding: Option<Padding> = _padding;
 
 		let next_hop = match (short_channel_id, next_node_id) {
@@ -341,6 +357,7 @@ impl Readable for ControlTlvs {
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs {
 				context,
+				custom_tlvs,
 			})
 		} else {
 			return Err(DecodeError::InvalidValue)
