@@ -973,17 +973,17 @@ where
 		(control_tlvs_ss, custom_handler.deref(), logger.deref())
 	) {
 		Ok((Payload::Receive::<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>> {
-			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { context, custom_tlvs}), reply_path,
+			message, control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { context }), reply_path,
 		}, None)) => {
 			match (&message, &context) {
 				(_, None) => {
 					Ok(PeeledOnion::Receive(message, None, Vec::new(), reply_path))
 				}
 				(ParsedOnionMessageContents::Offers(_), Some(MessageContext::Offers(_))) => {
-					Ok(PeeledOnion::Receive(message, context, custom_tlvs, reply_path))
+					Ok(PeeledOnion::Receive(message, context, Vec::new(), reply_path))
 				}
 				(ParsedOnionMessageContents::Custom(_), Some(MessageContext::Custom(_))) => {
-					Ok(PeeledOnion::Receive(message, context, custom_tlvs, reply_path))
+					Ok(PeeledOnion::Receive(message, context, Vec::new(), reply_path))
 				}
 				_ => {
 					log_trace!(logger, "Received message was sent on a blinded path with the wrong context.");
@@ -1890,7 +1890,7 @@ fn packet_payloads_and_keys<T: OnionMessageContents, S: secp256k1::Signing + sec
 		}, prev_control_tlvs_ss.unwrap()));
 	} else {
 		payloads.push((Payload::Receive {
-			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { context: None, custom_tlvs: Vec::new() }),
+			control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { context: None }),
 			reply_path: reply_path.take(),
 			message,
 		}, prev_control_tlvs_ss.unwrap()));

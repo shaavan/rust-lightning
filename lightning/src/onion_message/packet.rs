@@ -319,7 +319,7 @@ impl Readable for ControlTlvs {
 		let mut next_node_id = None;
 		let mut next_blinding_override = None;
 		let mut context = None;
-		let mut custom_tlvs = Vec::new();
+		let mut custom_tlvs: Vec<(u64, Vec<u8>)> = Vec::new();
 
 		let tlv_len = BigSize::read(r)?;
 		let mut rd = FixedLengthReader::new(r, tlv_len.0);
@@ -329,13 +329,13 @@ impl Readable for ControlTlvs {
 			(4, next_node_id, option),
 			(8, next_blinding_override, option),
 			(65537, context, option),
-		}, |msg_type: u64, msg_reader: &mut FixedLengthReader<_>| -> Result<bool, DecodeError> {
-			if msg_type < 1 << 16 { return Ok(false) }
-			let mut value = Vec::new();
-			msg_reader.read_to_limit(&mut value, u64::MAX)?;
-			custom_tlvs.push((msg_type, value));
-			Ok(true)
-		});
+		}); // , |msg_type: u64, msg_reader: &mut FixedLengthReader<_>| -> Result<bool, DecodeError> {
+		// 	if msg_type < 1 << 16 { return Ok(false) }
+		// 	let mut value = Vec::new();
+		// 	msg_reader.read_to_limit(&mut value, u64::MAX)?;
+		// 	custom_tlvs.push((msg_type, value));
+		// 	Ok(true)
+		// });
 
 		let _padding: Option<Padding> = _padding;
 
@@ -357,7 +357,7 @@ impl Readable for ControlTlvs {
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs {
 				context,
-				custom_tlvs,
+				// custom_tlvs,
 			})
 		} else {
 			return Err(DecodeError::InvalidValue)
