@@ -291,9 +291,16 @@ enum BlindedPaymentTlvsMut<'a> {
 
 impl<'a> BlindedPaymentTlvsMut<'a> {
 	pub(crate) fn pad_to_length(mut self, length: usize) -> Self {
-		let pad_length = length.checked_sub(self.serialized_length());
-		debug_assert!(pad_length.is_some(), "Size of this packet should not be larger than the size of largest packet.");
-		let padding = Some(Padding::new(pad_length.unwrap()));
+		let padding = match length.checked_sub(self.serialized_length()) {
+			Some(length) => Some(Padding::new(length)),
+			None => {
+				debug_assert!(
+					false,
+					"Size of this packet should not be larger than the size of largest packet."
+				);
+				None
+			}
+		};
 
 		match self {
 			BlindedPaymentTlvsMut::Forward(ref mut tlvs) => tlvs.padding = padding,
