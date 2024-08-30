@@ -193,6 +193,8 @@ pub enum Bolt12SemanticError {
 	UnexpectedPaymentHash,
 	/// A signature was expected but was missing.
 	MissingSignature,
+	/// Verification failed
+	VerificationFailed,
 }
 
 impl From<bech32::Error> for Bolt12ParseError {
