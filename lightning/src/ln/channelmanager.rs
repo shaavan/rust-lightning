@@ -4382,6 +4382,10 @@ where
 		}
 	}
 
+	pub fn reject_invoice_request(&self, reason: Bolt12SemanticError) -> InvoiceError {
+		InvoiceError::from(reason)
+	}
+
 	/// Signals that no further attempts for the given payment should occur. Useful if you have a
 	/// pending outbound payment with retries remaining, but wish to stop retrying the payment before
 	/// retries are exhausted.
