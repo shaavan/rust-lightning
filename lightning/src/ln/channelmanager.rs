@@ -4384,17 +4384,13 @@ where
 		match response {
 			Ok(invoice) => {
 				let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash: invoice.payment_hash() });
-				let instructions = MessageSendInstructions::ForReply {
-					instructions: responder.respond_with_reply_path(context)
-				};
+				let instructions = responder.respond_with_reply_path(context).into_instructions();
 				let message = OffersMessage::Invoice(invoice);
 
 				pending_offers_message.push((message, instructions))
 			}
 			Err(error) => {
-				let instructions = MessageSendInstructions::ForReply {
-					instructions: responder.respond()
-				};
+				let instructions = responder.respond().into_instructions();
 				let message = OffersMessage::InvoiceError(error);
 
 				pending_offers_message.push((message, instructions))
@@ -4406,9 +4402,7 @@ where
 		let mut pending_offers_message = self.pending_offers_messages.lock().unwrap();
 		let error = InvoiceError::from(reason);
 
-		let instructions = MessageSendInstructions::ForReply {
-			instructions: responder.respond()
-		};
+		let instructions = responder.respond().into_instructions();
 		let message = OffersMessage::InvoiceError(error);
 
 		pending_offers_message.push((message, instructions))
