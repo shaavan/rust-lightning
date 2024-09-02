@@ -4374,8 +4374,44 @@ where
 		result
 	}
 
-	pub fn reject_invoice_request(&self, reason: Bolt12SemanticError) -> InvoiceError {
-		InvoiceError::from(reason)
+	pub fn send_invoice_request_response(
+		&self, invoice_request: InvoiceRequest, context: Option<&MessageContext>,
+		custom_amount_msat: Option<u64>, responder: Responder
+	) {
+		let response = self.get_response_for_invoice_request(invoice_request, context, custom_amount_msat);
+		let mut pending_offers_message = self.pending_offers_messages.lock().unwrap();
+
+		match response {
+			Ok(invoice) => {
+				let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash: invoice.payment_hash() });
+				let instructions = MessageSendInstructions::ForReply {
+					instructions: responder.respond_with_reply_path(context)
+				};
+				let message = OffersMessage::Invoice(invoice);
+
+				pending_offers_message.push((message, instructions))
+			}
+			Err(error) => {
+				let instructions = MessageSendInstructions::ForReply {
+					instructions: responder.respond()
+				};
+				let message = OffersMessage::InvoiceError(error);
+
+				pending_offers_message.push((message, instructions))
+			}
+		}
+	}
+
+	pub fn reject_invoice_request(&self, reason: Bolt12SemanticError, responder: Responder) {
+		let mut pending_offers_message = self.pending_offers_messages.lock().unwrap();
+		let error = InvoiceError::from(reason);
+
+		let instructions = MessageSendInstructions::ForReply {
+			instructions: responder.respond()
+		};
+		let message = OffersMessage::InvoiceError(error);
+
+		pending_offers_message.push((message, instructions))
 	}
 
 	/// Signals that no further attempts for the given payment should occur. Useful if you have a
