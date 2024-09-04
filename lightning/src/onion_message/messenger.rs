@@ -432,6 +432,22 @@ pub enum MessageSendInstructions {
 	},
 }
 
+/// A placeholder value used for paths within the codebase.
+///
+/// PATHS_PLACEHOLDER` is temporarily used as a default value in situations
+/// where a path index is required but has not yet been assigned or initialized.
+pub const PATHS_PLACEHOLDER: usize = 0;
+
+/// Represents the types of [`BlindedMessagePath`] that can be created.
+///
+/// This struct allows to specify the properties of a Blinded Path before creating it.
+pub struct BlindedPathParams {
+	/// Number of [`BlindedMessagePath`]s to be created.
+	pub paths: usize,
+	/// Whether the created [`BlindedMessagePath`]s are full-length or compact.
+	pub is_compact: bool,
+}
+
 /// A trait defining behavior for routing an [`OnionMessage`].
 pub trait MessageRouter {
 	/// Returns a route for sending an [`OnionMessage`] to the given [`Destination`].
