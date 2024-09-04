@@ -20,6 +20,7 @@ use crate::chain::chainmonitor;
 use crate::chain::channelmonitor;
 use crate::chain::channelmonitor::MonitorEvent;
 use crate::chain::transaction::OutPoint;
+use crate::onion_message::messenger::BlindedPathParams;
 use crate::routing::router::{CandidateRouteHop, FirstHopCandidate, PublicHopCandidate, PrivateHopCandidate};
 use crate::sign;
 use crate::events;
@@ -275,10 +276,10 @@ impl<'a> MessageRouter for TestRouter<'a> {
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		&self, recipient: PublicKey, context: MessageContext,
+		&self, params: BlindedPathParams, recipient: PublicKey, context: MessageContext,
 		peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		self.router.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.router.create_blinded_paths(params, recipient, context, peers, secp_ctx)
 	}
 
 	fn create_compact_blinded_paths<
@@ -318,10 +319,10 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, recipient: PublicKey, context: MessageContext,
+		&self, params: BlindedPathParams, recipient: PublicKey, context: MessageContext,
 		peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		self.inner.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.inner.create_blinded_paths(params, recipient, context, peers, secp_ctx)
 	}
 
 	fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(

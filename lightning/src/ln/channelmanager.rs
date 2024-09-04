@@ -72,7 +72,9 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::signer;
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{Destination, MessageRouter, Responder, ResponseInstruction, MessageSendInstructions};
+use crate::onion_message::messenger::{
+	BlindedPathParams, Destination, MessageRouter, Responder, ResponseInstruction, MessageSendInstructions
+};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
@@ -9002,6 +9004,10 @@ where
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
+	/// Specifies the maximum number of distinct reply paths to calculate when sending an invoice request
+	/// in response to an offer or when issuing an invoice for a refund request.
+	const REPLY_PATHS_NUMBER: usize = 3;
+
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
 	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
 	/// [`Bolt12Invoice`] once it is received.
@@ -9086,7 +9092,8 @@ where
 
 		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) };
-		let reply_paths = self.create_blinded_paths(context)
+		let params = BlindedPathParams::new_with_paths(Self::REPLY_PATHS_NUMBER, false);
+		let reply_paths = self.create_blinded_paths(params, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9193,7 +9200,9 @@ where
 				let context = OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(),
 				};
-				let reply_paths = self.create_blinded_paths(context)
+
+				let params = BlindedPathParams::new_with_paths(Self::REPLY_PATHS_NUMBER, false);
+				let reply_paths = self.create_blinded_paths(params, context)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -9340,7 +9349,8 @@ where
 		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
 			self.create_compact_blinded_paths(context)
 		} else {
-			self.create_blinded_paths(context)
+			let params = BlindedPathParams::new(false);
+			self.create_blinded_paths(params, context)
 		}
 	}
 
@@ -9361,7 +9371,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
+	fn create_blinded_paths(&self, params: BlindedPathParams, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9374,7 +9384,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_blinded_paths(params, recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
