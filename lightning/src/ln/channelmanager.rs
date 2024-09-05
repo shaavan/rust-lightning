@@ -8883,15 +8883,21 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
 
-		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash);
-		if let Some(params) = params {
-			let path = $self.create_blinded_paths(params, context)
-				.and_then(|paths| paths.into_iter().next().ok_or(()))
-				.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let builder = match params {
+			Some(params) => {
+				let path = $self
+					.create_blinded_paths(params, context)
+					.and_then(|paths| paths.into_iter().next().ok_or(()))
+					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-			builder = builder.path(path);
-		}
+				OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+					.chain_hash($self.chain_hash)
+					.path(path)
+			}
+
+			None => OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+				.chain_hash($self.chain_hash),
+		};
 
 		Ok(builder.into())
 	}
@@ -8956,18 +8962,28 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
 
-		let mut builder = RefundBuilder::deriving_payer_id(
-			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
-		)?
+		let builder = match params {
+			Some(params) => {
+				let path = $self
+					.create_blinded_paths(params, context)
+					.and_then(|paths| paths.into_iter().next().ok_or(()))
+					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+				RefundBuilder::deriving_payer_id(
+					node_id, expanded_key, nonce, secp_ctx,
+					amount_msats, payment_id,
+				)?
+				.chain_hash($self.chain_hash)
+				.absolute_expiry(absolute_expiry)
+				.path(path)
+			}
+
+			None => RefundBuilder::deriving_payer_id(
+				node_id, expanded_key, nonce, secp_ctx,
+				amount_msats, payment_id,
+			)?
 			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry);
-
-		if let Some(params) = params {
-			let path = $self.create_blinded_paths(params, context)
-				.and_then(|paths| paths.into_iter().next().ok_or(()))
-				.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-			builder = builder.path(path);
+			.absolute_expiry(absolute_expiry),
 		};
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
