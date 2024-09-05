@@ -59,7 +59,7 @@ use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
-use crate::onion_message::messenger::{BlindedPathParams, Destination, PeeledOnion, MessageSendInstructions, PATHS_PLACEHOLDER};
+use crate::onion_message::messenger::{BlindedPathParams, Destination, PeeledOnion, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
 use crate::routing::gossip::{NodeAlias, NodeId};
@@ -300,10 +300,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 	let tor = SocketAddress::OnionV2([255, 254, 253, 252, 251, 250, 249, 248, 247, 246, 38, 7]);
 	announce_node_address(charlie, &[alice, bob, david, &nodes[4], &nodes[5]], tor.clone());
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = bob.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -320,10 +317,7 @@ fn prefers_non_tor_nodes_in_blinded_paths() {
 	announce_node_address(&nodes[4], &[alice, bob, charlie, david, &nodes[5]], tor.clone());
 	announce_node_address(&nodes[5], &[alice, bob, charlie, david, &nodes[4]], tor.clone());
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = bob.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -375,10 +369,7 @@ fn prefers_more_connected_nodes_in_blinded_paths() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = bob.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -405,10 +396,7 @@ fn creates_short_lived_offer() {
 	let alice_id = alice.node.get_our_node_id();
 	let bob = &nodes[1];
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: true,
-	};
+	let params = BlindedPathParams::new(true);
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
@@ -436,10 +424,7 @@ fn creates_long_lived_offer() {
 	let alice = &nodes[0];
 	let alice_id = alice.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY
 		+ Duration::from_secs(1);
 	let offer = alice.node
@@ -453,10 +438,7 @@ fn creates_long_lived_offer() {
 		assert_eq!(path.introduction_node(), &IntroductionNode::NodeId(alice_id));
 	}
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.build().unwrap();
@@ -481,10 +463,7 @@ fn creates_short_lived_refund() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: true,
-	};
+	let params = BlindedPathParams::new(true);
 	let absolute_expiry = bob.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
@@ -517,10 +496,7 @@ fn creates_long_lived_refund() {
 		+ Duration::from_secs(1);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = bob.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -570,10 +546,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params))
 		.unwrap()
@@ -672,10 +645,7 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = david.node
@@ -736,10 +706,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -808,10 +775,7 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = bob.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -865,10 +829,7 @@ fn pays_for_offer_without_blinded_paths() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.clear_paths()
@@ -924,10 +885,7 @@ fn pays_for_refund_without_blinded_paths() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = bob.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -997,10 +955,7 @@ fn send_invoice_requests_with_distinct_reply_path() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5], &nodes[6]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params))
 		.unwrap()
@@ -1085,10 +1040,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5], &nodes[6]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = alice.node
@@ -1143,10 +1095,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -1231,10 +1180,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -1299,10 +1245,7 @@ fn creates_refund_with_blinded_path_using_unannounced_introduction_node() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
@@ -1367,10 +1310,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params))
 		.unwrap()
@@ -1383,10 +1323,7 @@ fn fails_authentication_when_handling_invoice_request() {
 		assert_eq!(path.introduction_node(), &IntroductionNode::NodeId(bob_id));
 	}
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let invalid_path = alice.node
 		.create_offer_builder(Some(params))
 		.unwrap()
@@ -1487,10 +1424,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params))
 		.unwrap()
@@ -1601,10 +1535,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = david.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -1639,10 +1570,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	// Send the invoice to David using an invalid blinded path.
 	let invalid_path = refund.paths().first().unwrap().clone();
 	let payment_id = PaymentId([2; 32]);
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = david.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -1697,10 +1625,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 	disconnect_peers(alice, &[bob, charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, charlie, &nodes[4], &nodes[5]]);
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	match alice.node.create_offer_builder(Some(params)) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::MissingPaths),
@@ -1710,10 +1635,7 @@ fn fails_creating_or_paying_for_offer_without_connected_peers() {
 	args.send_channel_ready = (true, true);
 	reconnect_nodes(args);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let absolute_expiry = alice.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
@@ -1779,10 +1701,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 
 	let absolute_expiry = david.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	match david.node.create_refund_builder(Some(params), 
 		10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None
 	) {
@@ -1794,10 +1713,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	args.send_channel_ready = (true, true);
 	reconnect_nodes(args);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = david.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -1828,10 +1744,7 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 	let alice = &nodes[0];
 	let bob = &nodes[1];
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.clear_chains()
@@ -1861,10 +1774,7 @@ fn fails_sending_invoice_with_unsupported_chain_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = bob.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -1896,10 +1806,7 @@ fn fails_creating_invoice_request_without_blinded_reply_path() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, charlie, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -1934,10 +1841,7 @@ fn fails_creating_invoice_request_with_duplicate_payment_id() {
 
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -1970,10 +1874,7 @@ fn fails_creating_refund_with_duplicate_payment_id() {
 
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	assert!(
 		nodes[0].node.create_refund_builder(
 			Some(params), 10_000, absolute_expiry, payment_id, Retry::Attempts(0), None
@@ -1981,10 +1882,7 @@ fn fails_creating_refund_with_duplicate_payment_id() {
 	);
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::AwaitingInvoice, payment_id);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	match nodes[0].node.create_refund_builder(
 		Some(params), 10_000, absolute_expiry, payment_id, Retry::Attempts(0), None
 	) {
@@ -2032,10 +1930,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_offer() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 	
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
@@ -2110,10 +2005,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_refund() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = david.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -2164,10 +2056,7 @@ fn fails_paying_invoice_more_than_once() {
 	let absolute_expiry = Duration::from_secs(u64::MAX);
 	let payment_id = PaymentId([1; 32]);
 		
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let refund = david.node
 		.create_refund_builder(Some(params), 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
@@ -2255,10 +2144,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 	disconnect_peers(alice, &[charlie, david, &nodes[4], &nodes[5]]);
 	disconnect_peers(david, &[bob, &nodes[4], &nodes[5]]);
 
-	let params = BlindedPathParams {
-		paths: PATHS_PLACEHOLDER,
-		is_compact: false,
-	};
+	let params = BlindedPathParams::new(false);
 	let offer = alice.node
 		.create_offer_builder(Some(params)).unwrap()
 		.amount_msats(10_000_000)
