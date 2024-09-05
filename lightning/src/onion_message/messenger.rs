@@ -432,12 +432,6 @@ pub enum MessageSendInstructions {
 	},
 }
 
-/// A placeholder value used for paths within the codebase.
-///
-/// PATHS_PLACEHOLDER` is temporarily used as a default value in situations
-/// where a path index is required but has not yet been assigned or initialized.
-pub const PATHS_PLACEHOLDER: usize = 0;
-
 /// Represents the types of [`BlindedMessagePath`] that can be created.
 ///
 /// This struct allows to specify the properties of a Blinded Path before creating it.
@@ -446,6 +440,27 @@ pub struct BlindedPathParams {
 	pub paths: usize,
 	/// Whether the created [`BlindedMessagePath`]s are full-length or compact.
 	pub is_compact: bool,
+}
+
+impl BlindedPathParams {
+    /// Number of paths to be calculated, used by default throughout the codebase.
+    const DEFAULT_PATHS: usize = 3;
+
+	/// Create [`BlindedPathParams`] with default number of paths.
+    pub fn new(is_compact: bool) -> Self {
+        Self {
+            paths: Self::DEFAULT_PATHS,
+            is_compact,
+        }
+    }
+
+	/// Create [`BlindedPathParams`] with custom number of paths.
+    pub fn new_with_paths(paths: usize, is_compact: bool) -> Self {
+        Self {
+            paths,
+            is_compact,
+        }
+    }
 }
 
 /// A trait defining behavior for routing an [`OnionMessage`].
