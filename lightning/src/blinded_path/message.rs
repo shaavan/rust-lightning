@@ -347,6 +347,20 @@ pub enum OffersContext {
 		///
 		/// [`Bolt12Invoice::payment_hash`]: crate::offers::invoice::Bolt12Invoice::payment_hash
 		payment_hash: PaymentHash,
+
+		/// A nonce used for authenticating that a [`Bolt12Invoice`] is for a valid [`Refund`] or
+		/// [`InvoiceRequest`] and for deriving their signing keys.
+		///
+		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+		/// [`Refund`]: crate::offers::refund::Refund
+		/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+		nonce: Nonce,
+
+		/// Authentication code for the [`PaymentId`], which should be checked when the context is
+		/// used with an [`InvoiceError`].
+		///
+		/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
+		hmac: Hmac<Sha256>,
 	},
 }
 
@@ -366,6 +380,8 @@ impl_writeable_tlv_based_enum!(OffersContext,
 	},
 	(2, InboundPayment) => {
 		(0, payment_hash, required),
+		(1, nonce, required),
+		(2, hmac, required)
 	},
 );
 
