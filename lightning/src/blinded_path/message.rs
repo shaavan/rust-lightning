@@ -348,16 +348,15 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice::payment_hash`]: crate::offers::invoice::Bolt12Invoice::payment_hash
 		payment_hash: PaymentHash,
 
-		/// A nonce used for authenticating that a [`Bolt12Invoice`] is for a valid [`Refund`] or
-		/// [`InvoiceRequest`] and for deriving their signing keys.
+		/// A nonce used for authenticating that a received [`InvoiceError`] is for a valid
+		/// sent [`Bolt12Invoice`].
 		///
+		/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-		/// [`Refund`]: crate::offers::refund::Refund
-		/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 		nonce: Nonce,
 
-		/// Authentication code for the [`PaymentId`], which should be checked when the context is
-		/// used with an [`InvoiceError`].
+		/// Authentication code for the [`PaymentHash`], which should be checked when the context is
+		/// used to log the received [`InvoiceError`].
 		///
 		/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 		hmac: Hmac<Sha256>,
