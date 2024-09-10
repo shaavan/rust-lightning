@@ -4282,7 +4282,7 @@ where
 			)
 	}
 
-	pub fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, amount_msats: u64) -> Result<OffersMessage, Bolt12ResponseError> {
+	pub fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, custom_amount_msats: Option<u64>) -> Result<OffersMessage, Bolt12ResponseError> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -4305,10 +4305,17 @@ where
 			},
 		};
 
-		self.get_response_for_verified_invoice_request(&invoice_request, amount_msats)
+		self.get_response_for_verified_invoice_request(&invoice_request, custom_amount_msats)
 	}
 
-	fn get_response_for_verified_invoice_request(&self, invoice_request: &VerifiedInvoiceRequest, amount_msats: u64) -> Result<OffersMessage, Bolt12ResponseError> {
+	fn get_response_for_verified_invoice_request(&self, invoice_request: &VerifiedInvoiceRequest, custom_amount_msats: Option<u64>) -> Result<OffersMessage, Bolt12ResponseError> {
+		let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner, custom_amount_msats
+		) {
+			Ok(amount_msats) => amount_msats,
+			Err(error) => return Err(Bolt12ResponseError::SemanticError(error)),
+		};
+
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let (payment_hash, payment_secret) = match self.create_inbound_payment(
@@ -4337,7 +4344,7 @@ where
 		let result = if invoice_request.keys.is_some() {
 			#[cfg(feature = "std")]
 			let builder = invoice_request.respond_using_derived_keys(
-				payment_paths, payment_hash
+				payment_paths, payment_hash, custom_amount_msats
 			);
 			#[cfg(not(feature = "std"))]
 			let builder = invoice_request.respond_using_derived_keys_no_std(
@@ -10922,14 +10929,7 @@ where
 					},
 				};
 
-				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner
-				) {
-					Ok(amount_msats) => amount_msats,
-					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
-				};
-
-				let response = self.get_response_for_verified_invoice_request(&invoice_request, amount_msats);
+				let response = self.get_response_for_verified_invoice_request(&invoice_request, None);
 
 				match response {
 					Ok(response) => Some((response, responder.respond())),
