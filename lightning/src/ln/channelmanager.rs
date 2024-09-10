@@ -70,7 +70,7 @@ use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::offers::signer::{self, hmac_for_payment_hash};
+use crate::offers::signer;
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
 use crate::onion_message::messenger::{Destination, MessageRouter, Responder, ResponseInstruction, MessageSendInstructions};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
@@ -9227,7 +9227,7 @@ where
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
 
 				let nonce = Nonce::from_entropy_source(entropy);
-				let hmac = hmac_for_payment_hash(invoice.payment_hash(), nonce, expanded_key);
+				let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
 				let context = OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(), nonce, hmac
 				};
@@ -10990,7 +10990,7 @@ where
 			OffersMessage::InvoiceError(invoice_error) => {
 				let payment_hash = match context {
 					Some(OffersContext::InboundPayment { payment_hash, nonce, hmac }) => {
-						match signer::verify_payment_hash(payment_hash, hmac, nonce, expanded_key) {
+						match payment_hash.verify(hmac, nonce, expanded_key) {
 							Ok(_) => Some(payment_hash),
 							Err(_) => None,
 						}
