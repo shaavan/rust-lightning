@@ -11082,7 +11082,7 @@ where
 				};
 
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner
+					&invoice_request.inner, None
 				) {
 					Ok(amount_msats) => amount_msats,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
@@ -11121,11 +11121,11 @@ where
 				let response = if invoice_request.keys.is_some() {
 					#[cfg(feature = "std")]
 					let builder = invoice_request.respond_using_derived_keys(
-						payment_paths, payment_hash
+						payment_paths, payment_hash, None
 					);
 					#[cfg(not(feature = "std"))]
 					let builder = invoice_request.respond_using_derived_keys_no_std(
-						payment_paths, payment_hash, created_at
+						payment_paths, payment_hash, created_at, None
 					);
 					builder
 						.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
