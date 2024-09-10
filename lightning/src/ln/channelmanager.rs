@@ -10929,7 +10929,7 @@ where
 				match response {
 					Ok(invoice) => {
 						let nonce = nonce.unwrap_or_else(|| Nonce::from_entropy_source(&*self.entropy_source));
-						let hmac = signer::hmac_for_payment_hash(payment_hash, nonce, expanded_key);
+						let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
 						let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash, nonce, hmac });
 						Some((OffersMessage::Invoice(invoice), responder.respond_with_reply_path(context)))
 					},
