@@ -1060,7 +1060,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 #[test]
 fn pays_bolt12_invoice_asynchronously() {
 	let mut manually_pay_cfg = test_default_channel_config();
-	manually_pay_cfg.manually_handle_bolt12_invoices = true;
+	manually_pay_cfg.manually_handle_bolt12_messages = true;
 
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
