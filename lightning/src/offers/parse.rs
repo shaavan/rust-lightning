@@ -11,6 +11,7 @@
 
 use bitcoin::secp256k1;
 use crate::io;
+use crate::ln::channelmanager::Bolt12PaymentError;
 use crate::ln::msgs::DecodeError;
 use crate::util::ser::CursorReadable;
 
@@ -195,6 +196,18 @@ pub enum Bolt12SemanticError {
 	MissingSignature,
 	/// Verification failed
 	VerificationFailed,
+}
+
+pub enum Bolt12ValidationError {
+	InvalidMetadata,
+	VerificationFailed,
+}
+
+pub enum Bolt12Error {
+	Parse(Bolt12ParseError),
+	Payment(Bolt12PaymentError),
+	Semantic(Bolt12SemanticError),
+	Validation(Bolt12ValidationError),
 }
 
 impl From<bech32::Error> for Bolt12ParseError {
