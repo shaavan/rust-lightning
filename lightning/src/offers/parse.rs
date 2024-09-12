@@ -197,6 +197,11 @@ pub enum Bolt12SemanticError {
 	VerificationFailed,
 }
 
+pub enum Bolt12ResponseError {
+	SemanticError(Bolt12SemanticError),
+	VerficationError,
+}
+
 impl From<bech32::Error> for Bolt12ParseError {
 	fn from(error: bech32::Error) -> Self {
 		Self::Bech32(error)
