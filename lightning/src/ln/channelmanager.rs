@@ -2548,6 +2548,11 @@ pub enum RecentPaymentDetails {
 	},
 }
 
+pub enum Bolt12ResponseError {
+	SemanticError(Bolt12SemanticError),
+	VerficationError,
+}
+
 /// Route hints used in constructing invoices for [phantom node payents].
 ///
 /// [phantom node payments]: crate::sign::PhantomKeysManager
@@ -4277,14 +4282,14 @@ where
 			)
 	}
 
-	pub fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, amount_msats: u64) -> Result<Bolt12Invoice, InvoiceError> {
+	pub fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, amount_msats: u64) -> Result<OffersMessage, Bolt12ResponseError> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
 		let nonce = match context {
 			None if invoice_request.metadata().is_some() => None,
 			Some(OffersContext::InvoiceRequest { nonce }) => Some(nonce),
-			_ => return Err(InvoiceError::from(Bolt12SemanticError::InvalidMetadata)),
+			_ => return Err(Bolt12ResponseError::VerficationError),
 		};
 
 		let invoice_request = match nonce {
@@ -4292,25 +4297,25 @@ where
 				nonce, expanded_key, secp_ctx,
 			) {
 				Ok(invoice_request) => invoice_request,
-				Err(()) => return Err(InvoiceError::from(Bolt12SemanticError::VerificationFailed)),
+				Err(()) => return Err(Bolt12ResponseError::VerficationError),
 			},
 			None => match invoice_request.verify_using_metadata(expanded_key, secp_ctx) {
 				Ok(invoice_request) => invoice_request,
-				Err(()) => return Err(InvoiceError::from(Bolt12SemanticError::VerificationFailed)),
+				Err(()) => return Err(Bolt12ResponseError::VerficationError),
 			},
 		};
 
 		self.get_response_for_verified_invoice_request(&invoice_request, amount_msats)
 	}
 
-	fn get_response_for_verified_invoice_request(&self, invoice_request: &VerifiedInvoiceRequest, amount_msats: u64) -> Result<Bolt12Invoice, InvoiceError> {
+	fn get_response_for_verified_invoice_request(&self, invoice_request: &VerifiedInvoiceRequest, amount_msats: u64) -> Result<OffersMessage, Bolt12ResponseError> {
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let (payment_hash, payment_secret) = match self.create_inbound_payment(
 			Some(amount_msats), relative_expiry, None
 		) {
 			Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
-			Err(()) => return Err(InvoiceError::from(Bolt12SemanticError::InvalidAmount)),
+			Err(()) => return Err(Bolt12ResponseError::SemanticError(Bolt12SemanticError::InvalidAmount)),
 		};
 
 		let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
@@ -4321,7 +4326,7 @@ where
 			amount_msats, payment_secret, payment_context
 		) {
 			Ok(payment_paths) => payment_paths,
-			Err(()) => return Err(InvoiceError::from(Bolt12SemanticError::MissingPaths)),
+			Err(()) => return Err(Bolt12ResponseError::SemanticError(Bolt12SemanticError::MissingPaths)),
 		};
 
 		#[cfg(not(feature = "std"))]
@@ -4364,7 +4369,10 @@ where
 				})
 		};
 
-		result
+		match result {
+			Ok(invoice) => Ok(OffersMessage::Invoice(invoice)),
+			Err(error) => Ok(OffersMessage::InvoiceError(error)),
+		}
 	}
 
 	/// Signals that no further attempts for the given payment should occur. Useful if you have a
@@ -10924,8 +10932,9 @@ where
 				let response = self.get_response_for_verified_invoice_request(&invoice_request, amount_msats);
 
 				match response {
-					Ok(invoice) => Some((OffersMessage::Invoice(invoice), responder.respond())),
-					Err(error) => Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
+					Ok(response) => Some((response, responder.respond())),
+					Err(Bolt12ResponseError::SemanticError(error)) => Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
+					Err(_) => None,
 				}
 			},
 			OffersMessage::Invoice(invoice) => {
