@@ -29,7 +29,7 @@ use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::util::scid_utils;
-use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
+use crate::util::ser::{FixedLengthReader, LengthCalculatingWriter, LengthReadableArgs, Readable, Writeable, Writer};
 
 use core::mem;
 use core::ops::Deref;
@@ -229,8 +229,6 @@ pub struct MessageForwardNode {
 /// route, they are encoded into [`BlindedHop::encrypted_payload`].
 #[derive(Clone)]
 pub(crate) struct ForwardTlvs {
-	/// The padding data used to make all packets of a blinded path the same size
-	pub(crate) padding: Option<Padding>,
 	/// The next hop in the onion message's path.
 	pub(crate) next_hop: NextMessageHop,
 	/// Senders to a blinded path use this value to concatenate the route they find to the
@@ -241,22 +239,51 @@ pub(crate) struct ForwardTlvs {
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
 #[derive(Clone)]
 pub(crate) struct ReceiveTlvs {
-	/// The padding data used to make all packets of a blinded path the same size
-	pub(crate) padding: Option<Padding>,
 	/// If `context` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub context: Option<MessageContext>
 }
 
-impl Writeable for ForwardTlvs {
-	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+pub(crate) struct ForwardTlvsWithPadding {
+	pub(crate) padding: Option<Padding>,
+	pub(crate) tlv: ForwardTlvs
+}
+
+pub(crate) trait Helper {
+	fn helper<W: Writer>(&self, pad_to_length: Option<usize>, writer: &mut W) -> Result<(), io::Error>;
+
+	/// Gets the length of this object after it has been serialized. This can be overridden to
+	/// optimize cases where we prepend an object with its length.
+	// Note that LLVM optimizes this away in most cases! Check that it isn't before you override!
+	#[inline]
+	fn serialized_length(&self) -> usize {
+		let mut len_calc = LengthCalculatingWriter(0);
+		self.helper(None, &mut len_calc).expect("No in-memory data may fail to serialize");
+		len_calc.0
+	}
+}
+
+impl Helper for ForwardTlvs {
+	fn helper<W: Writer>(&self, pad_to_length: Option<usize>, writer: &mut W) -> Result<(), io::Error> {
+		let padding = if let Some(length) = pad_to_length {
+			match length.checked_sub(self.serialized_length()) {
+				Some(length) => Some(Padding::new(length)),
+				None => {
+					debug_assert!(
+						false,
+						"Size of this packet should not be larger than the size of largest packet."
+					);
+					None
+				}
+			}
+		} else { None };
 		let (next_node_id, short_channel_id) = match self.next_hop {
 			NextMessageHop::NodeId(pubkey) => (Some(pubkey), None),
 			NextMessageHop::ShortChannelId(scid) => (None, Some(scid)),
 		};
 		encode_tlv_stream!(writer, {
-			(1, self.padding, option),
+			(1, padding, option),
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
 			(8, self.next_blinding_override, option)
@@ -265,15 +292,39 @@ impl Writeable for ForwardTlvs {
 	}
 }
 
-impl Writeable for ReceiveTlvs {
-	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+impl Helper for ReceiveTlvs {
+	fn helper<W: Writer>(&self, pad_to_length: Option<usize>, writer: &mut W) -> Result<(), io::Error> {
+		let padding = if let Some(length) = pad_to_length {
+			match length.checked_sub(self.serialized_length()) {
+				Some(length) => Some(Padding::new(length)),
+				None => {
+					debug_assert!(
+						false,
+						"Size of this packet should not be larger than the size of largest packet."
+					);
+					None
+				}
+			}
+		} else { None };
 		encode_tlv_stream!(writer, {
-			(1, self.padding, option),
+			(1, padding, option),
 			(65537, self.context, option),
 		});
 		Ok(())
 	}
 }
+
+pub(crate) struct WithPadding<T: Helper> {
+	pad_to_length: Option<usize>,
+	tlv: T,
+}
+
+impl<T: Helper> Writeable for WithPadding<T> {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		self.tlv.helper(self.pad_to_length, writer)
+	}
+}
+
 
 /// Additional data included by the recipient in a [`BlindedMessagePath`].
 ///
