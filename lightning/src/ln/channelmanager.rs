@@ -4282,7 +4282,7 @@ where
 			)
 	}
 
-	pub fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, custom_amount_msats: Option<u64>) -> Result<OffersMessage, Bolt12ResponseError> {
+	fn get_response_for_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, custom_amount_msats: Option<u64>) -> Result<OffersMessage, Bolt12ResponseError> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -4382,8 +4382,57 @@ where
 		}
 	}
 
-	pub fn reject_invoice_request(&self, reason: Bolt12SemanticError) -> InvoiceError {
-		InvoiceError::from(reason)
+	pub fn send_invoice_request_response(
+		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
+		custom_amount_msat: Option<u64>, responder: Responder
+	) -> Result<(), Bolt12ResponseError> {
+		let response = self.get_response_for_invoice_request(invoice_request, context, custom_amount_msat);
+		let mut pending_offers_message = self.pending_offers_messages.lock().unwrap();
+
+		match response {
+			Ok(response) => {
+				match response {
+					OffersMessage::Invoice(invoice) => {
+						let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash: invoice.payment_hash() });
+						let instructions = responder.respond_with_reply_path(context).into_instructions();
+						let message = OffersMessage::Invoice(invoice);
+
+						pending_offers_message.push((message, instructions))
+					},
+					_ => {
+						let instructions = responder.respond().into_instructions();
+
+						pending_offers_message.push((response, instructions))
+					}
+				}
+			}
+			Err(error) => {
+				match error {
+					Bolt12ResponseError::SemanticError(error) => {
+						let invoice_error = InvoiceError::from(error);
+						let message = OffersMessage::InvoiceError(invoice_error);
+
+						let instructions = responder.respond().into_instructions();
+
+						pending_offers_message.push((message, instructions))
+					}
+					// Don't reply back if it is a validation error
+					Bolt12ResponseError::VerficationError => return Err(Bolt12ResponseError::VerficationError),
+				}
+			}
+		};
+
+		Ok(())
+	}
+
+	pub fn reject_invoice_request(&self, reason: Bolt12SemanticError, responder: Responder) {
+		let mut pending_offers_message = self.pending_offers_messages.lock().unwrap();
+		let error = InvoiceError::from(reason);
+
+		let instructions = responder.respond().into_instructions();
+		let message = OffersMessage::InvoiceError(error);
+
+		pending_offers_message.push((message, instructions))
 	}
 
 	/// Signals that no further attempts for the given payment should occur. Useful if you have a
