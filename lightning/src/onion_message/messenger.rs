@@ -444,6 +444,14 @@ pub enum MessageSendInstructions {
 	},
 }
 
+/// Represents the types of [`BlindedMessagePath`] that can be created.
+pub enum BlindedPathType {
+	/// Whether the created [`BlindedMessagePath`]s are compact.
+	Compact,
+	/// Whether the created [`BlindedMessagePath`]s are full-length.
+	Full,
+}
+
 /// A trait defining behavior for routing an [`OnionMessage`].
 pub trait MessageRouter {
 	/// Returns a route for sending an [`OnionMessage`] to the given [`Destination`].
