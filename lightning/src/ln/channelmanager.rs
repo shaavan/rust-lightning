@@ -9038,7 +9038,9 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::InvoiceRequest { nonce };
+		let context = MessageContext::Offers(
+			OffersContext::InvoiceRequest { nonce }
+		);
 		let builder = match blinded_path {
 			Some(blinded_path) => {
 				let path = $self
@@ -9115,7 +9117,9 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
+		let context = MessageContext::Offers(
+			OffersContext::OutboundPayment { payment_id, nonce, hmac: None }
+		);
 
 		let builder = match blinded_path {
 			Some(blinded_path) => {
@@ -9573,7 +9577,7 @@ where
 			.collect::<Vec<_>>();
 
 		self.router
-			.create_blinded_paths(recipient, MessageContext::Offers(context), blinded_path, peers, secp_ctx)
+			.create_blinded_paths(recipient, context, blinded_path, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -10954,7 +10958,7 @@ where
 				nonce,
 				hmac: Some(hmac)
 			});
-			match self.create_blinded_paths(context) {
+			match self.create_blinded_paths(context, BlindedPathType::Full) {
 				Ok(reply_paths) => match self.enqueue_invoice_request(invoice_request, reply_paths) {
 					Ok(_) => {}
 					Err(_) => {
