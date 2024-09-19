@@ -16,8 +16,8 @@ use lightning::onion_message::async_payments::{
 	AsyncPaymentsMessageHandler, HeldHtlcAvailable, ReleaseHeldHtlc,
 };
 use lightning::onion_message::messenger::{
-	CustomOnionMessageHandler, Destination, MessageRouter, MessageSendInstructions,
-	OnionMessagePath, OnionMessenger, Responder, ResponseInstruction,
+	BlindedPathType, CustomOnionMessageHandler, Destination, MessageRouter,
+	MessageSendInstructions, OnionMessagePath, OnionMessenger, Responder, ResponseInstruction,
 };
 use lightning::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use lightning::onion_message::packet::OnionMessageContents;
@@ -96,8 +96,8 @@ impl MessageRouter for TestMessageRouter {
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>,
-		_secp_ctx: &Secp256k1<T>,
+		&self, _recipient: PublicKey, _context: MessageContext, _blinded_path: BlindedPathType,
+		_peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		unreachable!()
 	}
