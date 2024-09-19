@@ -23,7 +23,7 @@ use crate::ln::onion_utils;
 #[cfg(async_payments)]
 use crate::offers::static_invoice::StaticInvoice;
 use crate::offers::invoice::Bolt12Invoice;
-use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, OnionMessagePath};
+use crate::onion_message::messenger::{BlindedPathType, DefaultMessageRouter, Destination, MessageRouter, OnionMessagePath};
 use crate::routing::gossip::{DirectedChannelInfo, EffectiveCapacity, ReadOnlyNetworkGraph, NetworkGraph, NodeId};
 use crate::routing::scoring::{ChannelUsage, LockableScore, ScoreLookUp};
 use crate::sign::EntropySource;
@@ -199,17 +199,10 @@ impl< G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref, S: Deref, SP: Siz
 	fn create_blinded_paths<
 		T: secp256k1::Signing + secp256k1::Verification
 	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>, secp_ctx: &Secp256k1<T>,
+		&self, recipient: PublicKey, context: MessageContext, blinded_path: BlindedPathType, peers: Vec<MessageForwardNode>,
+		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		DefaultMessageRouter::create_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
-	}
-
-	fn create_compact_blinded_paths<
-		T: secp256k1::Signing + secp256k1::Verification
-	> (
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		DefaultMessageRouter::create_compact_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
+		DefaultMessageRouter::create_blinded_paths(&self.network_graph, recipient, context, blinded_path, peers, &self.entropy_source, secp_ctx)
 	}
 }
 
