@@ -2625,9 +2625,7 @@ const MAX_NO_CHANNEL_PEERS: usize = 250;
 /// short-lived, while anything with a greater expiration is considered long-lived.
 ///
 /// Using [`ChannelManager::create_offer_builder`] or [`ChannelManager::create_refund_builder`],
-/// will included a [`BlindedMessagePath`] created using:
-/// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
-/// - [`MessageRouter::create_blinded_paths`] when long-lived.
+/// will included a [`BlindedMessagePath`] created using [`MessageRouter::create_blinded_paths`].
 ///
 /// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
 /// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
@@ -9123,23 +9121,13 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::InvoiceRequest { nonce };
+		let context = MessageContext::Offers (
+			OffersContext::InvoiceRequest { nonce }
+		);
 		let builder = match blinded_path {
-			Some(BlindedPathType::Compact) => {
+			Some(blinded_path) => {
 				let path = $self
-					.create_compact_blinded_paths(context)
-					.and_then(|paths| paths.into_iter().next().ok_or(()))
-					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-				OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-					.chain_hash($self.chain_hash)
-					.path(path)
-			}
-
-			Some(BlindedPathType::Full) => {
-				let context = MessageContext::Offers(context);
-				let path = $self
-					.create_blinded_paths(context)
+					.create_blinded_paths(context, blinded_path)
 					.and_then(|paths| paths.into_iter().next().ok_or(()))
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -9212,28 +9200,14 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
+		let context = MessageContext::Offers (
+			OffersContext::OutboundPayment { payment_id, nonce, hmac: None }
+		);
 
 		let builder = match blinded_path {
-			Some(BlindedPathType::Compact) => {
+			Some(blinded_path) => {
 				let path = $self
-					.create_compact_blinded_paths(context)
-					.and_then(|paths| paths.into_iter().next().ok_or(()))
-					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-				RefundBuilder::deriving_signing_pubkey(
-					node_id, expanded_key, nonce, secp_ctx,
-					amount_msats, payment_id,
-				)?
-				.chain_hash($self.chain_hash)
-				.absolute_expiry(absolute_expiry)
-				.path(path)
-			}
-
-			Some(BlindedPathType::Full) => {
-				let context = MessageContext::Offers(context);
-				let path = $self
-					.create_blinded_paths(context)
+					.create_blinded_paths(context, blinded_path)
 					.and_then(|paths| paths.into_iter().next().ok_or(()))
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -9383,7 +9357,7 @@ where
 		let context = MessageContext::Offers(
 			OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) }
 		);
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.create_blinded_paths(context, BlindedPathType::Full)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -9505,7 +9479,7 @@ where
 				let context = MessageContext::Offers(OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(), nonce, hmac
 				});
-				let reply_paths = self.create_blinded_paths(context)
+				let reply_paths = self.create_blinded_paths(context, BlindedPathType::Full)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -9655,7 +9629,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
+	fn create_blinded_paths(&self, context: MessageContext, blinded_path: BlindedPathType) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
@@ -9664,44 +9638,30 @@ where
 			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
 			.filter(|(_, peer)| peer.is_connected)
 			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| {
-				MessageForwardNode {
-					node_id: *node_id,
-					short_channel_id: None,
+			.map(|(node_id, peer)| {
+				match blinded_path {
+					BlindedPathType::Full => {
+						MessageForwardNode {
+							node_id: *node_id,
+							short_channel_id: None,
+						}
+					}
+					BlindedPathType::Compact => {
+						MessageForwardNode {
+							node_id: *node_id,
+							short_channel_id: peer.channel_by_id
+								.iter()
+								.filter(|(_, channel)| channel.context().is_usable())
+								.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+								.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+						}
+					}
 				}
 			})
 			.collect::<Vec<_>>();
 
 		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, peer)| MessageForwardNode {
-				node_id: *node_id,
-				short_channel_id: peer.channel_by_id
-					.iter()
-					.filter(|(_, channel)| channel.context().is_usable())
-					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
-					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
-			})
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_blinded_paths(recipient, context, blinded_path, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -11088,7 +11048,7 @@ where
 				nonce,
 				hmac: Some(hmac)
 			});
-			match self.create_blinded_paths(context) {
+			match self.create_blinded_paths(context, BlindedPathType::Full) {
 				Ok(reply_paths) => match self.enqueue_invoice_request(invoice_request, reply_paths) {
 					Ok(_) => {}
 					Err(_) => {
