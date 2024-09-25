@@ -962,6 +962,43 @@ impl PaymentParameters {
 	}
 }
 
+/// Information manually provided by the user to route the payment
+#[derive(Clone, Copy)]
+pub struct ManualRoutingParameters {
+	/// Same as [`RouteParameters::max_total_routing_fee_msat`]
+	pub max_total_routing_fee_msat: Option<u64>,
+	/// Same as [`PaymentParameters::max_total_cltv_expiry_delta`]
+	pub max_total_cltv_expiry_delta: Option<u32>,
+	/// Same as [`PaymentParameters::max_path_count`]
+	pub max_path_count: Option<u8>,
+	/// Same as [`PaymentParameters::max_channel_saturation_power_of_half`]
+	pub max_channel_saturation_power_of_half: Option<u8>,
+}
+
+impl_writeable_tlv_based!(ManualRoutingParameters, {
+	(1, max_total_routing_fee_msat, option),
+	(3, max_total_cltv_expiry_delta, option),
+	(5, max_path_count, option),
+	(7, max_channel_saturation_power_of_half, option),
+});
+
+impl ManualRoutingParameters {
+	/// Initates an empty set of [`ManualRoutingParameters`]
+	pub fn new() -> Self {
+		Self {
+			max_total_routing_fee_msat: None,
+			max_total_cltv_expiry_delta: None,
+			max_path_count: None,
+			max_channel_saturation_power_of_half: None,
+		}
+	}
+
+	/// Creates a new set of [`ManualRoutingParameters`] with the updated `max_total_routing_fee_msat`.
+	pub fn with_max_total_routing_fee_msat(self, fee_msat: u64) -> Self {
+		Self { max_total_routing_fee_msat: Some(fee_msat), ..self }
+	}
+}
+
 /// The recipient of a payment, differing based on whether they've hidden their identity with route
 /// blinding.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
