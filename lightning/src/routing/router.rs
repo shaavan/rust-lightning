@@ -962,6 +962,46 @@ impl PaymentParameters {
 	}
 }
 
+/// A struct for overriding specific [`RouteParameters`] values created
+/// from a given [`Bolt12Invoice`].
+///
+/// If any field is set to `None`, the corresponding parameter will not be overridden.
+#[derive(Clone, Copy)]
+pub struct RouteParametersOverride {
+	/// Overrides [`RouteParameters::max_total_routing_fee_msat`] if specified.
+	pub max_total_routing_fee_msat: Option<u64>,
+	/// Overrides [`PaymentParameters::max_total_cltv_expiry_delta`] if specified.
+	pub max_total_cltv_expiry_delta: Option<u32>,
+	/// Overrides [`PaymentParameters::max_path_count`] if specified.
+	pub max_path_count: Option<u8>,
+	/// Overrides [`PaymentParameters::max_channel_saturation_power_of_half`] if specified.
+	pub max_channel_saturation_power_of_half: Option<u8>,
+}
+
+impl_writeable_tlv_based!(RouteParametersOverride, {
+	(1, max_total_routing_fee_msat, option),
+	(3, max_total_cltv_expiry_delta, option),
+	(5, max_path_count, option),
+	(7, max_channel_saturation_power_of_half, option),
+});
+
+impl RouteParametersOverride {
+	/// Initates an empty set of [`RouteParametersOverride`]
+	pub fn new() -> Self {
+		Self {
+			max_total_routing_fee_msat: None,
+			max_total_cltv_expiry_delta: None,
+			max_path_count: None,
+			max_channel_saturation_power_of_half: None,
+		}
+	}
+
+	/// Creates a new set of [`RouteParametersOverride`] with the updated `max_total_routing_fee_msat`.
+	pub fn with_max_total_routing_fee_msat(self, fee_msat: u64) -> Self {
+		Self { max_total_routing_fee_msat: Some(fee_msat), ..self }
+	}
+}
+
 /// The recipient of a payment, differing based on whether they've hidden their identity with route
 /// blinding.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
