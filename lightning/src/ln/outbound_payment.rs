@@ -844,7 +844,7 @@ impl OutboundPayments {
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
 		let payment_hash = invoice.payment_hash();
-		let max_total_routing_fee_msat;
+		let routing_params;
 		let retry_strategy;
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
@@ -852,13 +852,11 @@ impl OutboundPayments {
 					retry_strategy: retry, manual_routing_params, ..
 				} => {
 					retry_strategy = *retry;
-					max_total_routing_fee_msat = manual_routing_params.map(
-						|params| params.max_total_routing_fee_msat
-					).flatten();
+					routing_params = manual_routing_params.unwrap_or_else(|| ManualRoutingParameters::new());
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
-						max_total_routing_fee_msat,
+						max_total_routing_fee_msat: routing_params.max_total_routing_fee_msat,
 					};
 				},
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
@@ -873,12 +871,10 @@ impl OutboundPayments {
 			return Err(Bolt12PaymentError::UnknownRequiredFeatures);
 		}
 
-		let mut route_params = RouteParameters::from_payment_params_and_value(
-			PaymentParameters::from_bolt12_invoice(&invoice), invoice.amount_msats()
+		let route_params = RouteParameters::from_payment_and_manual_params(
+			PaymentParameters::from_bolt12_invoice(&invoice), invoice.amount_msats(), routing_params
 		);
-		if let Some(max_fee_msat) = max_total_routing_fee_msat {
-			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
-		}
+
 		self.send_payment_for_bolt12_invoice_internal(
 			payment_id, payment_hash, None, route_params, retry_strategy, router, first_hops,
 			inflight_htlcs, entropy_source, node_signer, node_id_lookup, secp_ctx, best_block_height,

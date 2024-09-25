@@ -607,6 +607,24 @@ impl RouteParameters {
 		Self { payment_params, final_value_msat, max_total_routing_fee_msat: Some(final_value_msat / 100 + 50_000) }
 	}
 
+	/// Constructs [`RouteParameters`] from the given [`PaymentParameters`], a payment amount,
+	/// and from the provided [`ManualRoutingParameters`].
+	/// 
+	/// [`Self::max_total_routing_fee_msat`] defaults to 1% of the payment amount + 50 sats
+	pub fn from_payment_and_manual_params(mut payment_params: PaymentParameters, final_value_msat: u64, manual_routing_params: ManualRoutingParameters) -> Self {
+		manual_routing_params.max_total_cltv_expiry_delta.map(|v| payment_params.max_total_cltv_expiry_delta = v);
+		manual_routing_params.max_path_count.map(|v| payment_params.max_path_count = v);
+		manual_routing_params.max_channel_saturation_power_of_half.map(|v| payment_params.max_channel_saturation_power_of_half = v);
+
+		let mut route_params = RouteParameters::from_payment_params_and_value(payment_params, final_value_msat);
+
+		manual_routing_params.max_total_routing_fee_msat.map(
+			|fee_msat| route_params.max_total_routing_fee_msat = Some(fee_msat)
+		);
+
+		route_params
+	}
+
 	/// Sets the maximum number of hops that can be included in a payment path, based on the provided
 	/// [`RecipientOnionFields`] and blinded paths.
 	pub fn set_max_path_length(
