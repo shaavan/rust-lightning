@@ -24,7 +24,7 @@ use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::routing::router::{BlindedTail, InFlightHtlcs, Path, PaymentParameters, Route, RouteParameters, Router};
+use crate::routing::router::{BlindedTail, InFlightHtlcs, ManualRoutingParameters, Path, PaymentParameters, Route, RouteParameters, Router};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::util::errors::APIError;
 use crate::util::logger::Logger;
@@ -61,7 +61,7 @@ pub(crate) enum PendingOutboundPayment {
 	AwaitingInvoice {
 		expiration: StaleExpiration,
 		retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>,
+		manual_routing_params: Option<ManualRoutingParameters>,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>
 	},
 	// This state will never be persisted to disk because we transition from `AwaitingInvoice` to
@@ -849,10 +849,12 @@ impl OutboundPayments {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy: retry, max_total_routing_fee_msat: max_total_fee, ..
+					retry_strategy: retry, manual_routing_params, ..
 				} => {
 					retry_strategy = *retry;
-					max_total_routing_fee_msat = *max_total_fee;
+					max_total_routing_fee_msat = manual_routing_params.map(
+						|params| params.max_total_routing_fee_msat
+					).flatten();
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
@@ -1004,7 +1006,7 @@ impl OutboundPayments {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(mut entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy, retryable_invoice_request, max_total_routing_fee_msat, ..
+					retry_strategy, retryable_invoice_request, manual_routing_params, ..
 				} => {
 					let invreq = &retryable_invoice_request
 						.as_ref()
@@ -1031,7 +1033,7 @@ impl OutboundPayments {
 					let payment_hash = PaymentHash(Sha256::hash(&keysend_preimage.0).to_byte_array());
 					let pay_params = PaymentParameters::from_static_invoice(invoice);
 					let mut route_params = RouteParameters::from_payment_params_and_value(pay_params, amount_msat);
-					route_params.max_total_routing_fee_msat = *max_total_routing_fee_msat;
+					route_params.max_total_routing_fee_msat = manual_routing_params.map(|params| params.max_total_routing_fee_msat).flatten();
 
 					if let Err(()) = onion_utils::set_max_path_length(
 						&mut route_params, &RecipientOnionFields::spontaneous_empty(), Some(keysend_preimage),
@@ -1599,6 +1601,10 @@ impl OutboundPayments {
 		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
+		let manual_routing_params = max_total_routing_fee_msat.map(
+			|fee_msats| ManualRoutingParameters::new()
+				.with_max_total_routing_fee_msat(fee_msats)
+		);
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -1608,7 +1614,7 @@ impl OutboundPayments {
 				entry.insert(PendingOutboundPayment::AwaitingInvoice {
 					expiration,
 					retry_strategy,
-					max_total_routing_fee_msat,
+					manual_routing_params,
 					retryable_invoice_request,
 				});
 
@@ -2238,7 +2244,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 	(5, AwaitingInvoice) => {
 		(0, expiration, required),
 		(2, retry_strategy, required),
-		(4, max_total_routing_fee_msat, option),
+		(4, manual_routing_params, option),
 		(5, retryable_invoice_request, option),
 	},
 	(7, InvoiceReceived) => {
