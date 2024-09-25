@@ -24,7 +24,7 @@ use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::routing::router::{BlindedTail, InFlightHtlcs, Path, PaymentParameters, Route, RouteParameters, Router};
+use crate::routing::router::{BlindedTail, InFlightHtlcs, RouteParametersConfig, Path, PaymentParameters, Route, RouteParameters, Router};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::util::errors::APIError;
 use crate::util::logger::Logger;
@@ -61,7 +61,11 @@ pub(crate) enum PendingOutboundPayment {
 	AwaitingInvoice {
 		expiration: StaleExpiration,
 		retry_strategy: Retry,
+		// Deprecated: Retained for backward compatibility.
+		// If set during read, this field overrides `RouteParameters::max_total_routing_fee_msat`
+		// instead of `RouteParametersConfig::max_total_routing_fee_msat`.
 		max_total_routing_fee_msat: Option<u64>,
+		route_params_config: RouteParametersConfig,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>
 	},
 	// This state will never be persisted to disk because we transition from `AwaitingInvoice` to
@@ -70,9 +74,12 @@ pub(crate) enum PendingOutboundPayment {
 	InvoiceReceived {
 		payment_hash: PaymentHash,
 		retry_strategy: Retry,
-		// Note this field is currently just replicated from AwaitingInvoice but not actually
-		// used anywhere.
+		// Deprecated: Retained for backward compatibility.
 		max_total_routing_fee_msat: Option<u64>,
+		// Currently unused, but replicated from `AwaitingInvoice` to avoid potential
+		// race conditions where this field might be missing upon reload. It may be required
+		// for future retries.
+		route_params_config: RouteParametersConfig,
 	},
 	// This state applies when we are paying an often-offline recipient and another node on the
 	// network served us a static invoice on the recipient's behalf in response to our invoice
@@ -849,14 +856,21 @@ impl OutboundPayments {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy: retry, max_total_routing_fee_msat: max_total_fee, ..
+					retry_strategy: retry, max_total_routing_fee_msat: max_total_fee, route_params_config, ..
 				} => {
 					retry_strategy = *retry;
-					max_total_routing_fee_msat = *max_total_fee;
+					// If max_total_fee is present, update route_params_config with the specified fee.
+					// This supports the standard behavior during downgrades.
+					let route_params_config = max_total_fee.map_or(
+						*route_params_config,
+						|fee_msat| route_params_config.with_max_total_routing_fee_msat(fee_msat)
+					);
+					max_total_routing_fee_msat = route_params_config.max_total_routing_fee_msat;
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
-						max_total_routing_fee_msat,
+						max_total_routing_fee_msat: *max_total_fee,
+						route_params_config: route_params_config,
 					};
 				},
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
@@ -1599,6 +1613,11 @@ impl OutboundPayments {
 		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
+		let route_params_config = max_total_routing_fee_msat.map_or(
+			RouteParametersConfig::new(),
+			|fee_msats| RouteParametersConfig::new()
+				.with_max_total_routing_fee_msat(fee_msats)
+		);
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -1608,7 +1627,9 @@ impl OutboundPayments {
 				entry.insert(PendingOutboundPayment::AwaitingInvoice {
 					expiration,
 					retry_strategy,
-					max_total_routing_fee_msat,
+					route_params_config,
+					// Retained for downgrade support.
+					max_total_routing_fee_msat: None,
 					retryable_invoice_request,
 				});
 
@@ -2240,10 +2261,12 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		(2, retry_strategy, required),
 		(4, max_total_routing_fee_msat, option),
 		(5, retryable_invoice_request, option),
+		(7, route_params_config, (default_value, RouteParametersConfig::new())),
 	},
 	(7, InvoiceReceived) => {
 		(0, payment_hash, required),
 		(2, retry_strategy, required),
+		(3, route_params_config, (default_value, RouteParametersConfig::new())),
 		(4, max_total_routing_fee_msat, option),
 	},
 	// Added in 0.0.125. Prior versions will drop these outbounds on downgrade, which is safe because
