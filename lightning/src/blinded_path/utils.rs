@@ -212,3 +212,24 @@ impl Writeable for Padding {
 		Ok(())
 	}
 }
+
+/// A generic struct that applies padding to TLVs, rounding their size off to `round_off`
+pub(crate) struct WithPadding<T: Writeable> {
+    pub(crate) tlvs: T,
+	pub(crate) round_off: usize,
+}
+
+impl<T:Writeable> Writeable for WithPadding<T> {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let length = self.tlvs.serialized_length();
+		let padding_length = (length + self.round_off - 1) / self.round_off * self.round_off - length;
+
+		let padding = Some(Padding::new(padding_length));
+
+		encode_tlv_stream!(writer, {
+			(1, padding, option),
+		});
+
+		self.tlvs.write(writer)
+	}
+}
