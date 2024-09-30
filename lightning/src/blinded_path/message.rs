@@ -17,7 +17,7 @@ use crate::prelude::*;
 use bitcoin::hashes::hmac::Hmac;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode, NodeIdLookUp};
-use crate::blinded_path::utils;
+use crate::blinded_path::utils::{self, WithPadding};
 use crate::io;
 use crate::io::Cursor;
 use crate::ln::channelmanager::PaymentId;
@@ -249,7 +249,7 @@ impl Writeable for ForwardTlvs {
 			NextMessageHop::NodeId(pubkey) => (Some(pubkey), None),
 			NextMessageHop::ShortChannelId(scid) => (None, Some(scid)),
 		};
-		// TODO: write padding
+
 		encode_tlv_stream!(writer, {
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
@@ -261,7 +261,6 @@ impl Writeable for ForwardTlvs {
 
 impl Writeable for ReceiveTlvs {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(65537, self.context, option),
 		});
@@ -466,8 +465,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			Some(scid) => NextMessageHop::ShortChannelId(scid),
 			None => NextMessageHop::NodeId(pubkey),
 		})
-		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
+		.map(|next_hop| WithPadding { tlvs: ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })})
+		.chain(core::iter::once(WithPadding { tlvs: ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })}));
 
 	let path = pks.zip(tlvs);
 
