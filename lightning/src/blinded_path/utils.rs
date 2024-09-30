@@ -170,6 +170,9 @@ fn encrypt_payload<P: Writeable>(payload: P, encrypted_tlvs_rho: [u8; 32]) -> Ve
 	write_adapter.encode()
 }
 
+/// Represents the padding round off size (in bytes) that is used to pad [`BlindedHop`]
+pub(crate) const PADDING_ROUND_OFF: usize = 50;
+
 /// Represents optional padding for encrypted payloads.
 /// Padding is used to ensure payloads have a consistent length.
 pub(crate) struct Padding {
@@ -210,5 +213,25 @@ impl Writeable for Padding {
 			if remaining == 0 { break; }
 		}
 		Ok(())
+	}
+}
+
+/// A generic struct that applies padding to TLVs, rounding their size off to [`PADDING_ROUND_OFF`].
+pub(crate) struct WithPadding<T: Writeable> {
+    pub(crate) tlvs: T,
+}
+
+impl<T:Writeable> Writeable for WithPadding<T> {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let length = self.tlvs.serialized_length();
+		let padding_length = (length + PADDING_ROUND_OFF - 1) / PADDING_ROUND_OFF * PADDING_ROUND_OFF - length;
+
+		let padding = Some(Padding::new(padding_length));
+
+		encode_tlv_stream!(writer, {
+			(1, padding, option),
+		});
+
+		self.tlvs.write(writer)
 	}
 }
