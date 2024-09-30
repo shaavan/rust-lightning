@@ -33,6 +33,8 @@ use core::ops::Deref;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+use super::utils::WithPadding;
+
 /// Information needed to route a payment across a [`BlindedPaymentPath`].
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct BlindedPayInfo {
@@ -464,8 +466,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| node.node_id)
 		.chain(core::iter::once(payee_node_id));
-	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
+	let tlvs = intermediate_nodes.iter().map(|node| WithPadding { tlvs: BlindedPaymentTlvsRef::Forward(&node.tlvs) })
+		.chain(core::iter::once(WithPadding { tlvs: BlindedPaymentTlvsRef::Receive(&payee_tlvs) }));
 
 	let path = pks.zip(tlvs);
 
