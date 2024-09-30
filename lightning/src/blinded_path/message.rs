@@ -34,6 +34,8 @@ use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeabl
 use core::mem;
 use core::ops::Deref;
 
+use super::utils::WithPadding;
+
 /// A blinded path to be used for sending or receiving a message, hiding the identity of the
 /// recipient.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
@@ -442,8 +444,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			Some(scid) => NextMessageHop::ShortChannelId(scid),
 			None => NextMessageHop::NodeId(pubkey),
 		})
-		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
+		.map(|next_hop| WithPadding { tlvs: ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })})
+		.chain(core::iter::once(WithPadding { tlvs: ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })}));
 
 	let path = pks.zip(tlvs);
 
