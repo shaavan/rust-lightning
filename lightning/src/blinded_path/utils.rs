@@ -235,3 +235,18 @@ impl<T:Writeable> Writeable for WithPadding<T> {
 		self.tlvs.write(writer)
 	}
 }
+
+#[cfg(test)]
+/// Checks if all the packets in the blinded path are properly padded, ensuring they are of equal size.
+pub fn is_properly_padded(hops: &[BlindedHop]) -> bool {
+	let first_hop = hops.first().expect("BlindedPath must have at least one hop");
+	let first_payload_size = first_hop.encrypted_payload.len();
+
+	// The uncrypted payload data is padded before getting encrypted.
+	// Assuming the first payload is padded properly, get the extra data length.
+	let extra_length = first_payload_size % PADDING_ROUND_OFF;
+	hops.iter().all(|hop| {
+		// Check that every packet is padded to the round off length subtracting the extra length.
+		(hop.encrypted_payload.len() - extra_length) % PADDING_ROUND_OFF == 0
+	})
+}
