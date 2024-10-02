@@ -13,7 +13,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::message::{BlindedMessagePath, ForwardTlvs, NextMessageHop, ReceiveTlvs};
-use crate::blinded_path::utils::Padding;
+use crate::blinded_path::utils::{Padding, WithPadding};
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 #[cfg(async_payments)]
@@ -368,8 +368,21 @@ impl Readable for ControlTlvs {
 impl Writeable for ControlTlvs {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::Forward(tlvs) => tlvs.write(w),
-			Self::Receive(tlvs) => tlvs.write(w),
+			Self::Forward(tlvs) => {
+				// If `next_hop` is a ShortChannelId, it means the TLVs are in compact representation,
+				// so to save space, don't apply padding. Otherwise, use padding.
+				match tlvs.next_hop {
+					NextMessageHop::NodeId(_) => {
+						WithPadding { tlvs }.write(w)
+					}
+					NextMessageHop::ShortChannelId(_) => {
+						tlvs.write(w)
+					}
+				}
+			},
+			Self::Receive(tlvs) => {
+				WithPadding { tlvs }.write(w)
+			},
 		}
 	}
 }

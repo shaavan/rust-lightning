@@ -17,7 +17,7 @@ use crate::prelude::*;
 use bitcoin::hashes::hmac::Hmac;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode, NodeIdLookUp};
-use crate::blinded_path::utils::{self, WithPadding};
+use crate::blinded_path::utils;
 use crate::io;
 use crate::io::Cursor;
 use crate::ln::channelmanager::PaymentId;
@@ -441,8 +441,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			Some(scid) => NextMessageHop::ShortChannelId(scid),
 			None => NextMessageHop::NodeId(pubkey),
 		})
-		.map(|next_hop| WithPadding { tlvs: ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })})
-		.chain(core::iter::once(WithPadding { tlvs: ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })}));
+		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
+		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
 
 	let path = pks.zip(tlvs);
 
