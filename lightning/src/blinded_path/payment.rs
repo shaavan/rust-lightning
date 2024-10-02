@@ -413,8 +413,12 @@ impl Writeable for ReceiveTlvs {
 impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
-			Self::Forward(tlvs) => tlvs.write(w)?,
-			Self::Receive(tlvs) => tlvs.write(w)?,
+			Self::Forward(tlvs) => {
+				WithPadding { tlvs }.write(w)?
+			},
+			Self::Receive(tlvs) => {
+				WithPadding { tlvs }.write(w)?
+			},
 		}
 		Ok(())
 	}
@@ -463,8 +467,8 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| node.node_id)
 		.chain(core::iter::once(payee_node_id));
-	let tlvs = intermediate_nodes.iter().map(|node| WithPadding { tlvs: BlindedPaymentTlvsRef::Forward(&node.tlvs) })
-		.chain(core::iter::once(WithPadding { tlvs: BlindedPaymentTlvsRef::Receive(&payee_tlvs) }));
+	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
+		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
 	let path = pks.zip(tlvs);
 
