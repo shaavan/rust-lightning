@@ -120,7 +120,9 @@ pub(super) enum Payload<T: OnionMessageContents> {
 		control_tlvs: ReceiveControlTlvs,
 		reply_path: Option<BlindedMessagePath>,
 		message: T,
-	}
+	},
+	/// This payload is for the dummy hops.
+	Dummy,
 }
 
 /// The contents of an [`OnionMessage`] as read from the wire.
@@ -254,6 +256,7 @@ impl<T: OnionMessageContents> Writeable for (Payload<T>, [u8; 32]) {
 					(message.tlv_type(), message, required)
 				})
 			},
+			Payload::Dummy => {}
 		}
 		Ok(())
 	}
@@ -324,6 +327,7 @@ for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomM
 					message: message.ok_or(DecodeError::InvalidValue)?,
 				})
 			},
+			Some(ChaChaPolyReadAdapter { readable: ControlTlvs::Dummy}) => Ok(Payload::Dummy)
 		}
 	}
 }
@@ -337,6 +341,8 @@ pub(crate) enum ControlTlvs {
 	Forward(ForwardTlvs),
 	/// This onion message is intended to be received.
 	Receive(ReceiveTlvs),
+	/// This represents the tlvs of Dummy Hops
+	Dummy,
 }
 
 impl Readable for ControlTlvs {
@@ -395,6 +401,8 @@ impl Writeable for ControlTlvs {
 			Self::Receive(tlvs) => {
 				WithPadding { tlvs }.write(w)
 			},
+			// Don't write anything if it's a dummy hop.
+			Self::Dummy => Ok(()),
 		}
 	}
 }
