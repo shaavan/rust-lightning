@@ -1025,6 +1025,25 @@ where
 
 			Ok(PeeledOnion::Forward(next_hop, onion_message))
 		},
+		Ok((Payload::Dummy, Some((next_hop_hmac, new_packet_bytes)))) => {
+			// let new_pubkey = our_node_id.clone();
+
+			let next_hop = NextMessageHop::NodeId(new_pubkey);
+
+			let outgoing_packet = Packet {
+				version: 0,
+				public_key: new_pubkey,
+				hop_data: new_packet_bytes,
+				hmac: next_hop_hmac,
+			};
+
+			let onion_message = OnionMessage {
+				blinding_point: new_pubkey,
+				onion_routing_packet: outgoing_packet,
+			};
+
+			Ok(PeeledOnion::Forward(next_hop, onion_message))
+		}
 		Err(e) => {
 			log_trace!(logger, "Errored decoding onion message packet: {:?}", e);
 			Err(())
