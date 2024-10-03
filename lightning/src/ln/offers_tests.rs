@@ -58,7 +58,7 @@ use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
-use crate::onion_message::messenger::{Destination, PeeledOnion, MessageSendInstructions};
+use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageSendInstructions, PeeledOnion};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
 use crate::routing::gossip::{NodeAlias, NodeId};
@@ -252,6 +252,57 @@ fn extract_invoice_error<'a, 'b, 'c>(
 		Ok(PeeledOnion::Forward(_, _)) => panic!("Unexpected onion message forward"),
 		Err(e) => panic!("Failed to process onion message {:?}", e),
 	}
+}
+
+/// Checks that an offer can be created with no blinded paths.
+#[test]
+fn create_offer_with_no_blinded_path() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let alice_id = alice.node.get_our_node_id();
+
+	let router = DefaultMessageRouter::new(alice.network_graph, alice.node.entropy_source)
+		.with_no_blinded_path();
+	let offer = alice.offers_handler
+		.create_offer_builder_using_router(router).unwrap()
+		.amount_msats(10_000_000)
+		.build().unwrap();
+	assert_eq!(offer.issuer_signing_pubkey(), Some(alice_id));
+	assert!(offer.paths().is_empty());
+}
+
+/// Checks that a refund can be created with no blinded paths.
+#[test]
+fn create_refund_with_no_blinded_path() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let alice_id = alice.node.get_our_node_id();
+
+	let absolute_expiry = Duration::from_secs(u64::MAX);
+	let payment_id = PaymentId([1; 32]);
+
+	let router = DefaultMessageRouter::new(alice.network_graph, alice.node.entropy_source)
+		.with_no_blinded_path();
+	let refund = alice.offers_handler
+		.create_refund_builder_using_router(router, 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
+		.unwrap()
+		.build().unwrap();
+	assert_eq!(refund.amount_msats(), 10_000_000);
+	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
+	assert_eq!(refund.payer_signing_pubkey(), alice_id);
+	assert!(refund.paths().is_empty());
 }
 
 /// Checks that blinded paths without Tor-only nodes are preferred when constructing an offer.
