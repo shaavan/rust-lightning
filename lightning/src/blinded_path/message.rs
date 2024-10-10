@@ -11,6 +11,7 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::offers::invoice_request::InvoiceRequestFields;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -257,6 +258,12 @@ fn test_size_of_tlvs_instances() {
 
     // Testing ReceiveTlvs with different variants of MessageContext
     test_receive_tlvs(payment_id, nonce, payment_hash, hmac);
+
+	// Testing Payment ForwardTlvs
+	test_payment_forward_tlvs(public_key);
+
+	// Testing Payment ReceiveTlvs
+	test_payment_receive_tlvs(public_key)
 }
 
 #[cfg(test)]
@@ -398,6 +405,93 @@ fn test_receive_tlvs(
     println!(
         "Size of ReceiveTlvs (MessageContext::Custom): {}",
         receive_tlv_custom.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_payment_forward_tlvs(public_key: PublicKey) {
+	use types::features::BlindedHopFeatures;
+	use crate::blinded_path::payment::{self, PaymentConstraints, PaymentRelay};
+
+	let forward_tlv_none = payment::ForwardTlvs {
+		short_channel_id: 20,
+		payment_relay: PaymentRelay {
+			cltv_expiry_delta: 1,
+			fee_proportional_millionths: 2,
+			fee_base_msat: 3
+		},
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 2,
+		},
+		features: BlindedHopFeatures::empty(),
+		next_blinding_override: None,
+	};
+
+	println!(
+        "Size of Payment ForwardTlvs with no pubkey: {}",
+        forward_tlv_none.serialized_length()
+    );
+
+	let forward_tlv = payment::ForwardTlvs {
+		short_channel_id: 20,
+		payment_relay: PaymentRelay {
+			cltv_expiry_delta: 1,
+			fee_proportional_millionths: 2,
+			fee_base_msat: 3
+		},
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 2,
+		},
+		features: BlindedHopFeatures::empty(),
+		next_blinding_override: Some(public_key),
+	};
+
+	println!(
+        "Size of Payment ForwardTlvs with pubkey): {}",
+        forward_tlv.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_payment_receive_tlvs(public_key: PublicKey) {
+	use lightning_invoice::PaymentSecret;
+	use crate::{blinded_path::payment::{self, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints}, offers::offer::OfferId};
+
+	let receive_tlvs_offer = payment::ReceiveTlvs {
+		payment_secret: PaymentSecret([0; 32]),
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 2,
+		},
+		payment_context: payment::PaymentContext::Bolt12Offer(Bolt12OfferContext {
+			offer_id: OfferId([0; 32]),
+			invoice_request: InvoiceRequestFields {
+				payer_signing_pubkey: public_key,
+				quantity: Some(1),
+				payer_note_truncated: None
+			}
+		})
+	};
+
+	println!(
+        "Size of Payment ReceiveTlvs for offer): {}",
+        receive_tlvs_offer.serialized_length()
+    );
+
+	let receive_tlvs_refund = payment::ReceiveTlvs {
+		payment_secret: PaymentSecret([0; 32]),
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 2,
+		},
+		payment_context: payment::PaymentContext::Bolt12Refund(Bolt12RefundContext {})
+	};
+
+	println!(
+        "Size of Payment ReceiveTlvs for refund): {}",
+        receive_tlvs_refund.serialized_length()
     );
 }
 
