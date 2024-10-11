@@ -9126,14 +9126,16 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		);
 		let builder = match blinded_path {
 			Some(blinded_path) => {
-				let path = $self
+				let paths = $self
 					.create_blinded_paths(context, blinded_path)
-					.and_then(|paths| paths.into_iter().next().ok_or(()))
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-					.chain_hash($self.chain_hash)
-					.path(path)
+				let offer_builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+					.chain_hash($self.chain_hash);
+
+				paths.into_iter().fold(offer_builder, |builder, path| {
+					builder.path(path)
+				})
 			}
 
 			None => OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
@@ -9206,18 +9208,20 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		let builder = match blinded_path {
 			Some(blinded_path) => {
-				let path = $self
+				let paths = $self
 					.create_blinded_paths(context, blinded_path)
-					.and_then(|paths| paths.into_iter().next().ok_or(()))
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				RefundBuilder::deriving_signing_pubkey(
+				let refund_builder = RefundBuilder::deriving_signing_pubkey(
 					node_id, expanded_key, nonce, secp_ctx,
 					amount_msats, payment_id,
 				)?
 				.chain_hash($self.chain_hash)
-				.absolute_expiry(absolute_expiry)
-				.path(path)
+				.absolute_expiry(absolute_expiry);
+
+				paths.into_iter().fold(refund_builder, |builder, path| {
+					builder.path(path)
+				})
 			}
 
 			None => RefundBuilder::deriving_signing_pubkey(
@@ -9226,7 +9230,6 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 			)?
 			.chain_hash($self.chain_hash)
 			.absolute_expiry(absolute_expiry)
-			.absolute_expiry(absolute_expiry),
 		};
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
