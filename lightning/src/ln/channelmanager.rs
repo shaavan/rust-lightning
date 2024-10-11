@@ -9124,22 +9124,19 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let context = MessageContext::Offers (
 			OffersContext::InvoiceRequest { nonce }
 		);
+
+		let offer_builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.chain_hash);
+
 		let builder = match blinded_path {
 			Some(blinded_path) => {
 				let paths = $self
 					.create_blinded_paths(context, blinded_path)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				let offer_builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-					.chain_hash($self.chain_hash);
-
-				paths.into_iter().fold(offer_builder, |builder, path| {
-					builder.path(path)
-				})
+				paths.into_iter().fold(offer_builder, OfferBuilder::path)
 			}
-
-			None => OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-				.chain_hash($self.chain_hash),
+			None => offer_builder
 		};
 
 		Ok(builder.into())
@@ -9206,30 +9203,23 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 			OffersContext::OutboundPayment { payment_id, nonce, hmac: None }
 		);
 
+		let refund_builder = RefundBuilder::deriving_signing_pubkey(
+			node_id, expanded_key, nonce, secp_ctx,
+			amount_msats, payment_id,
+		)?
+		.chain_hash($self.chain_hash)
+		.absolute_expiry(absolute_expiry);
+
 		let builder = match blinded_path {
 			Some(blinded_path) => {
 				let paths = $self
 					.create_blinded_paths(context, blinded_path)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				let refund_builder = RefundBuilder::deriving_signing_pubkey(
-					node_id, expanded_key, nonce, secp_ctx,
-					amount_msats, payment_id,
-				)?
-				.chain_hash($self.chain_hash)
-				.absolute_expiry(absolute_expiry);
-
-				paths.into_iter().fold(refund_builder, |builder, path| {
-					builder.path(path)
-				})
+				paths.into_iter().fold(refund_builder, |builder, path| builder.path(path))
 			}
 
-			None => RefundBuilder::deriving_signing_pubkey(
-				node_id, expanded_key, nonce, secp_ctx,
-				amount_msats, payment_id,
-			)?
-			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry)
+			None => refund_builder
 		};
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
