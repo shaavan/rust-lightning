@@ -446,9 +446,29 @@ pub enum MessageSendInstructions {
 
 /// Represents the types of [`BlindedMessagePath`] that can be created.
 pub enum BlindedPathType {
-	/// Whether the created [`BlindedMessagePath`]s are compact.
+	/// A compact version of [`BlindedMessagePath`].
+	///
+	/// Compact blinded paths use a [`ShortChannelId`] instead of a [`NodeId`] to represent forward nodes.
+	/// This approach drastically reduces the size of each individual forward packet but requires
+	/// knowledge of the local channel graph to find the corresponding channel for each node.
+	///
+	/// Compact blinded paths are especially useful when size is a constraint, such as when offers
+	/// and refund information must be represented in QR code form.
+	///
+	/// [`ShortChannelId`]: crate::blinded_path::message::NextMessageHop::ShortChannelId
+	/// [`NodeId`]: crate::blinded_path::message::NextMessageHop::NodeId
 	Compact,
-	/// Whether the created [`BlindedMessagePath`]s are full-length.
+
+	/// A full-length version of [`BlindedMessagePath`].
+	///
+	/// Unlike compact blinded paths, full-length paths use each individual forward node's [`NodeId`] for representation.
+	/// This increases the size of each forward packet as more space is required for representation.
+	/// However, it does not require knowledge of the local channel graph to create the path.
+	///
+	/// Full-length blinded paths are useful when onion messages are communicated over the wire and size constraints are not an issue,
+	/// such as when sending a response to an onion message.
+	///
+	/// [`NodeId`]: crate::blinded_path::message::NextMessageHop::NodeId
 	Full,
 }
 
