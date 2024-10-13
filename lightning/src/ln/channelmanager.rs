@@ -54,7 +54,7 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::types::features::{Bolt12InvoiceFeatures, ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 #[cfg(any(feature = "_test_utils", test))]
 use crate::types::features::Bolt11InvoiceFeatures;
-use crate::routing::router::{BlindedTail, InFlightHtlcs, Path, Payee, PaymentParameters, Route, RouteParameters, Router};
+use crate::routing::router::{BlindedTail, InFlightHtlcs, Path, Payee, PaymentParameters, Route, RouteParameters, RouteParametersConfig, Router};
 use crate::ln::onion_payment::{check_incoming_htlc_cltv, create_recv_pending_htlc_info, create_fwd_pending_htlc_info, decode_incoming_update_add_htlc_onion, InboundHTLCErr, NextPacketDetails};
 use crate::ln::msgs;
 use crate::ln::onion_utils;
@@ -1847,6 +1847,7 @@ where
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::routing::router::RouteParametersConfig;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
@@ -1894,15 +1895,16 @@ where
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::offer::Offer;
+/// # use lightning::routing::router::RouteParametersConfig;
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-/// #     payer_note: Option<String>, retry: Retry, max_total_routing_fee_msat: Option<u64>
+/// #     payer_note: Option<String>, retry: Retry, route_params_config: Option<RouteParametersConfig>
 /// # ) {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
 /// match channel_manager.pay_for_offer(
-///     offer, quantity, amount_msats, payer_note, payment_id, retry, max_total_routing_fee_msat
+///     offer, quantity, amount_msats, payer_note, payment_id, retry, route_params_config
 /// ) {
 ///     Ok(()) => println!("Requesting invoice for offer"),
 ///     Err(e) => println!("Unable to request invoice for offer: {:?}", e),
@@ -9209,10 +9211,15 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
 
+		let route_params_config = max_total_routing_fee_msat.map(
+			|fee_msat| RouteParametersConfig::new()
+				.with_max_total_routing_fee_msat(fee_msat)
+		);
+
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None,
+				payment_id, expiration, retry_strategy, route_params_config, None,
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -9305,7 +9312,7 @@ where
 	pub fn pay_for_offer(
 		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
 		payer_note: Option<String>, payment_id: PaymentId, retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>
+		route_params_config: Option<RouteParametersConfig>
 	) -> Result<(), Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
@@ -9347,7 +9354,7 @@ where
 		};
 		self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
+				payment_id, expiration, retry_strategy, route_params_config,
 				Some(retryable_invoice_request)
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;

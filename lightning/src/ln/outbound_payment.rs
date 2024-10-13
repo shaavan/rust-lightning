@@ -1610,14 +1610,10 @@ impl OutboundPayments {
 
 	pub(super) fn add_new_awaiting_invoice(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
+		route_params_config: Option<RouteParametersConfig>, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
-		let route_params_config = max_total_routing_fee_msat.map_or(
-			RouteParametersConfig::new(),
-			|fee_msats| RouteParametersConfig::new()
-				.with_max_total_routing_fee_msat(fee_msats)
-		);
+		let route_params_config = route_params_config.unwrap_or(RouteParametersConfig::new());
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -1629,7 +1625,7 @@ impl OutboundPayments {
 					retry_strategy,
 					route_params_config,
 					// Retained for downgrade support.
-					max_total_routing_fee_msat,
+					max_total_routing_fee_msat: route_params_config.max_total_routing_fee_msat,
 					retryable_invoice_request,
 				});
 
@@ -2298,7 +2294,7 @@ mod tests {
 	use crate::offers::offer::OfferBuilder;
 	use crate::offers::test_utils::*;
 	use crate::routing::gossip::NetworkGraph;
-	use crate::routing::router::{InFlightHtlcs, Path, PaymentParameters, Route, RouteHop, RouteParameters};
+	use crate::routing::router::{InFlightHtlcs, Path, PaymentParameters, Route, RouteHop, RouteParameters, RouteParametersConfig};
 	use crate::sync::{Arc, Mutex, RwLock};
 	use crate::util::errors::APIError;
 	use crate::util::hash_tables::new_hash_map;
@@ -2712,10 +2708,12 @@ mod tests {
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
+		let route_params_config = RouteParametersConfig::new().with_max_total_routing_fee_msat(invoice.amount_msats() / 100 + 50_000);
+
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
 				payment_id, expiration, Retry::Attempts(0),
-				Some(invoice.amount_msats() / 100 + 50_000), None,
+				Some(route_params_config), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2813,9 +2811,11 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(pending_events.lock().unwrap().is_empty());
 
+		let route_params_config = RouteParametersConfig::new().with_max_total_routing_fee_msat(1234);
+
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), Some(1234), None,
+				payment_id, expiration, Retry::Attempts(0), Some(route_params_config), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
