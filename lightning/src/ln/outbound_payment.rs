@@ -63,7 +63,7 @@ pub(crate) enum PendingOutboundPayment {
 		retry_strategy: Retry,
 		// Deprecated: Retained for backward compatibility.
 		// If set during read, this field overrides `RouteParameters::max_total_routing_fee_msat`
-		// instead of `RouteParametersOverride::max_total_routing_fee_msat`.
+		// instead of `UserParameters::max_total_routing_fee_msat`.
 		max_total_routing_fee_msat: Option<u64>,
 		user_params: UserParameters,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>
@@ -857,7 +857,7 @@ impl OutboundPayments {
 					retry_strategy: retry, max_total_routing_fee_msat: max_total_fee, user_params, ..
 				} => {
 					retry_strategy = *retry;
-					// If max_total_fee is present, update route_params_override with the specified fee.
+					// If max_total_fee is present, update user_params with the specified fee.
 					// This supports the standard behavior during downgrades.
 					let user_params = max_total_fee
 						.map_or(*user_params, |fee| user_params.with_max_total_routing_fee_msat(fee));
@@ -1015,7 +1015,7 @@ impl OutboundPayments {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(mut entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy, retryable_invoice_request, route_params_override, ..
+					retry_strategy, retryable_invoice_request, user_params, ..
 				} => {
 					let invreq = &retryable_invoice_request
 						.as_ref()
@@ -1042,7 +1042,7 @@ impl OutboundPayments {
 					let payment_hash = PaymentHash(Sha256::hash(&keysend_preimage.0).to_byte_array());
 					let pay_params = PaymentParameters::from_static_invoice(invoice);
 					let mut route_params = RouteParameters::from_payment_params_and_value(pay_params, amount_msat);
-					route_params.max_total_routing_fee_msat = route_params_override.map(|params| params.max_total_routing_fee_msat).flatten();
+					route_params.max_total_routing_fee_msat = user_params.map(|params| params.max_total_routing_fee_msat).flatten();
 
 					if let Err(()) = onion_utils::set_max_path_length(
 						&mut route_params, &RecipientOnionFields::spontaneous_empty(), Some(keysend_preimage),
@@ -1607,13 +1607,10 @@ impl OutboundPayments {
 
 	pub(super) fn add_new_awaiting_invoice(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
+		user_params: Option<UserParameters>, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
-		let user_params = max_total_routing_fee_msat.map_or(UserParameters::new(),
-			|fee_msats| UserParameters::new()
-				.with_max_total_routing_fee_msat(fee_msats)
-		);
+		let user_params = user_params.unwrap_or(UserParameters::new());
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -2293,7 +2290,7 @@ mod tests {
 	use crate::offers::offer::OfferBuilder;
 	use crate::offers::test_utils::*;
 	use crate::routing::gossip::NetworkGraph;
-	use crate::routing::router::{InFlightHtlcs, Path, PaymentParameters, Route, RouteHop, RouteParameters};
+	use crate::routing::router::{InFlightHtlcs, Path, PaymentParameters, Route, RouteHop, RouteParameters, UserParameters};
 	use crate::sync::{Arc, Mutex, RwLock};
 	use crate::util::errors::APIError;
 	use crate::util::hash_tables::new_hash_map;
@@ -2707,10 +2704,12 @@ mod tests {
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
+		let user_params = UserParameters::new().with_max_total_routing_fee_msat(invoice.amount_msats() / 100 + 50_000);
+
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
 				payment_id, expiration, Retry::Attempts(0),
-				Some(invoice.amount_msats() / 100 + 50_000), None,
+				Some(user_params), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2808,9 +2807,11 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(pending_events.lock().unwrap().is_empty());
 
+		let user_params = UserParameters::new().with_max_total_routing_fee_msat(1234);
+
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), Some(1234), None,
+				payment_id, expiration, Retry::Attempts(0), Some(user_params), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
