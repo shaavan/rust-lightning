@@ -849,7 +849,7 @@ impl OutboundPayments {
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
 		let payment_hash = invoice.payment_hash();
-		let max_total_routing_fee_msat;
+		let params_override;
 		let retry_strategy;
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
@@ -864,9 +864,7 @@ impl OutboundPayments {
 							params_override.with_max_total_routing_fee_msat(fee_msat)
 						).or_else(|| Some(RouteParametersOverride::new().with_max_total_routing_fee_msat(fee_msat)))
 					});
-					max_total_routing_fee_msat = route_params_override.and_then(
-						|params| params.max_total_routing_fee_msat
-					);
+					params_override = route_params_override;
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
@@ -886,11 +884,12 @@ impl OutboundPayments {
 		}
 
 		let mut route_params = RouteParameters::from_payment_params_and_value(
-			PaymentParameters::from_bolt12_invoice(&invoice), invoice.amount_msats()
+			PaymentParameters::from_bolt12_invoice(&invoice, params_override), invoice.amount_msats()
 		);
-		if let Some(max_fee_msat) = max_total_routing_fee_msat {
-			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
-		}
+
+		params_override.and_then(|p| p.max_total_routing_fee_msat)
+			.map(|max_fee_msat| route_params.max_total_routing_fee_msat = Some(max_fee_msat));
+
 		self.send_payment_for_bolt12_invoice_internal(
 			payment_id, payment_hash, None, route_params, retry_strategy, router, first_hops,
 			inflight_htlcs, entropy_source, node_signer, node_id_lookup, secp_ctx, best_block_height,
@@ -2718,7 +2717,7 @@ mod tests {
 
 		router.expect_find_route(
 			RouteParameters::from_payment_params_and_value(
-				PaymentParameters::from_bolt12_invoice(&invoice),
+				PaymentParameters::from_bolt12_invoice(&invoice, None),
 				invoice.amount_msats(),
 			),
 			Err(LightningError { err: String::new(), action: ErrorAction::IgnoreError }),
@@ -2770,7 +2769,7 @@ mod tests {
 			.sign(recipient_sign).unwrap();
 
 		let route_params = RouteParameters {
-			payment_params: PaymentParameters::from_bolt12_invoice(&invoice),
+			payment_params: PaymentParameters::from_bolt12_invoice(&invoice, None),
 			final_value_msat: invoice.amount_msats(),
 			max_total_routing_fee_msat: Some(1234),
 		};

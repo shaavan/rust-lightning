@@ -845,10 +845,18 @@ impl PaymentParameters {
 	/// Creates parameters for paying to a blinded payee from the provided invoice. Sets
 	/// [`Payee::Blinded::route_hints`], [`Payee::Blinded::features`], and
 	/// [`PaymentParameters::expiry_time`].
-	pub fn from_bolt12_invoice(invoice: &Bolt12Invoice) -> Self {
-		Self::blinded(invoice.payment_paths().to_vec())
+	pub fn from_bolt12_invoice(invoice: &Bolt12Invoice, params_override: Option<RouteParametersOverride>) -> Self {
+		let mut payment_params = Self::blinded(invoice.payment_paths().to_vec())
 			.with_bolt12_features(invoice.invoice_features().clone()).unwrap()
-			.with_expiry_time(invoice.created_at().as_secs().saturating_add(invoice.relative_expiry().as_secs()))
+			.with_expiry_time(invoice.created_at().as_secs().saturating_add(invoice.relative_expiry().as_secs()));
+
+		if let Some(params_override) = params_override {
+			params_override.max_total_cltv_expiry_delta.map(|v| payment_params.max_total_cltv_expiry_delta = v);
+			params_override.max_path_count.map(|v| payment_params.max_path_count = v);
+			params_override.max_channel_saturation_power_of_half.map(|v| payment_params.max_channel_saturation_power_of_half = v);
+		};
+
+		payment_params
 	}
 
 	/// Creates parameters for paying to a blinded payee from the provided invoice. Sets
