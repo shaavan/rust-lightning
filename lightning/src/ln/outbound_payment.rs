@@ -851,7 +851,7 @@ impl OutboundPayments {
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
 		let payment_hash = invoice.payment_hash();
-		let max_total_routing_fee_msat;
+		let params_config;
 		let retry_strategy;
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
@@ -863,14 +863,14 @@ impl OutboundPayments {
 					// This supports the standard behavior during downgrades.
 					let route_params_config = max_total_fee.map_or(
 						*route_params_config,
-						|fee_msat| route_params_config.with_max_total_routing_fee_msat(fee_msat)
+						|fee_msat| route_params_config.with_max_total_routing_fee_msat(fee_msat),
 					);
-					max_total_routing_fee_msat = route_params_config.max_total_routing_fee_msat;
+					params_config = route_params_config;
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
 						max_total_routing_fee_msat: *max_total_fee,
-						route_params_config: route_params_config,
+						route_params_config,
 					};
 				},
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
@@ -886,11 +886,13 @@ impl OutboundPayments {
 		}
 
 		let mut route_params = RouteParameters::from_payment_params_and_value(
-			PaymentParameters::from_bolt12_invoice(&invoice), invoice.amount_msats()
+			PaymentParameters::from_bolt12_invoice(&invoice).with_user_config(params_config), invoice.amount_msats()
 		);
-		if let Some(max_fee_msat) = max_total_routing_fee_msat {
-			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
+
+		if let Some(fee_msat) = params_config.max_total_routing_fee_msat {
+			route_params.max_total_routing_fee_msat = Some(fee_msat);
 		}
+
 		self.send_payment_for_bolt12_invoice_internal(
 			payment_id, payment_hash, None, route_params, retry_strategy, router, first_hops,
 			inflight_htlcs, entropy_source, node_signer, node_id_lookup, secp_ctx, best_block_height,
@@ -1018,7 +1020,7 @@ impl OutboundPayments {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(mut entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy, retryable_invoice_request, max_total_routing_fee_msat, ..
+					retry_strategy, retryable_invoice_request, max_total_routing_fee_msat, route_params_config, ..
 				} => {
 					let invreq = &retryable_invoice_request
 						.as_ref()
@@ -1041,11 +1043,22 @@ impl OutboundPayments {
 							return Err(Bolt12PaymentError::UnknownRequiredFeatures)
 						}
 					};
+
+					// If max_total_fee is present, update route_params_config with the specified fee.
+					// This supports the standard behavior during downgrades.
+					let params_config = max_total_routing_fee_msat.map_or(
+						*route_params_config,
+						|fee_msat| route_params_config.with_max_total_routing_fee_msat(fee_msat),
+					);
+
 					let keysend_preimage = PaymentPreimage(entropy_source.get_secure_random_bytes());
 					let payment_hash = PaymentHash(Sha256::hash(&keysend_preimage.0).to_byte_array());
-					let pay_params = PaymentParameters::from_static_invoice(invoice);
+					let pay_params = PaymentParameters::from_static_invoice(invoice).with_user_config(params_config);
 					let mut route_params = RouteParameters::from_payment_params_and_value(pay_params, amount_msat);
-					route_params.max_total_routing_fee_msat = *max_total_routing_fee_msat;
+
+					if let Some(fee_msat) = params_config.max_total_routing_fee_msat {
+						route_params.max_total_routing_fee_msat = Some(fee_msat);
+					}
 
 					if let Err(()) = onion_utils::set_max_path_length(
 						&mut route_params, &RecipientOnionFields::spontaneous_empty(), Some(keysend_preimage),

@@ -875,6 +875,16 @@ impl PaymentParameters {
 		}
 	}
 
+	/// Update the parameters with the configuration provided by user.
+	pub fn with_user_config(self, params_config: RouteParametersConfig) -> Self {
+		Self {
+			max_total_cltv_expiry_delta: params_config.max_total_cltv_expiry_delta,
+			max_path_count: params_config.max_path_count,
+			max_channel_saturation_power_of_half: params_config.max_channel_saturation_power_of_half,
+			.. self
+		}
+	}
+
 	/// Includes the payee's features. Errors if the parameters were not initialized with
 	/// [`PaymentParameters::from_bolt12_invoice`].
 	///
