@@ -998,9 +998,25 @@ impl Readable for RouteParametersV2 {
 }
 
 impl RouteParametersV2 {
-	// TODO: Introduce a function parallel to fn from_payment_params_and_value.
+	/// Constructs [`RouteParameters`] from the given [`PaymentParameters`] and a payment amount.
+	///
+	/// [`Self::max_total_routing_fee_msat`] defaults to 1% of the payment amount + 50 sats
+	pub fn from_params_and_value(mut user_params: UserParameters, invoice_params: InvoiceParameters, final_value_msat: u64) -> Self {
+		user_params.max_total_routing_fee_msat.get_or_insert_with(|| final_value_msat / 100 + 50_000);
 
-	// TODO: Introduce fn set_max_path_length(). First create onion_utils::set_max_path_length_v2
+		Self { user_params, invoice_params, final_value_msat }
+	}
+
+	/// Sets the maximum number of hops that can be included in a payment path, based on the provided
+	/// [`RecipientOnionFields`] and blinded paths.
+	pub fn set_max_path_length(
+		&mut self, recipient_onion: &RecipientOnionFields, is_keysend: bool, best_block_height: u32
+	) -> Result<(), ()> {
+		let keysend_preimage_opt = is_keysend.then(|| PaymentPreimage([42; 32]));
+		onion_utils::set_max_path_length_v2(
+			self, recipient_onion, keysend_preimage_opt, best_block_height
+		)
+	}
 }
 
 #[derive(Clone, Copy)]
