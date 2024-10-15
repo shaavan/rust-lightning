@@ -24,7 +24,7 @@ use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::routing::router::{BlindedTail, InFlightHtlcs, Path, PaymentParameters, Route, RouteParameters, Router, UserParameters};
+use crate::routing::router::{BlindedTail, InFlightHtlcs, InvoiceParameters, Path, PaymentParameters, Route, RouteParameters, RouteParametersV2, Router, UserParameters};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::util::errors::APIError;
 use crate::util::logger::Logger;
@@ -849,7 +849,7 @@ impl OutboundPayments {
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
 		let payment_hash = invoice.payment_hash();
-		let max_total_routing_fee_msat;
+		let user_params;
 		let retry_strategy;
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
@@ -859,15 +859,15 @@ impl OutboundPayments {
 					retry_strategy = *retry;
 					// If max_total_fee is present, update user_params with the specified fee.
 					// This supports the standard behavior during downgrades.
-					let user_params = max_total_fee
+					let user_route_params = max_total_fee
 						.map_or(*user_params, |fee| user_params.with_max_total_routing_fee_msat(fee));
 
-					max_total_routing_fee_msat = user_params.max_total_routing_fee_msat;
+					user_params = user_route_params;
 
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: *retry,
-						user_params,
+						user_params: user_route_params,
 					};
 				},
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
@@ -882,12 +882,8 @@ impl OutboundPayments {
 			return Err(Bolt12PaymentError::UnknownRequiredFeatures);
 		}
 
-		let mut route_params = RouteParameters::from_payment_params_and_value(
-			PaymentParameters::from_bolt12_invoice(&invoice), invoice.amount_msats()
-		);
-		if let Some(max_fee_msat) = max_total_routing_fee_msat {
-			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
-		}
+		let route_params = RouteParametersV2::from_params_and_value(user_params, InvoiceParameters::from_bolt12_invoice(&invoice), invoice.amount_msats());
+
 		self.send_payment_for_bolt12_invoice_internal(
 			payment_id, payment_hash, None, route_params, retry_strategy, router, first_hops,
 			inflight_htlcs, entropy_source, node_signer, node_id_lookup, secp_ctx, best_block_height,
@@ -899,7 +895,7 @@ impl OutboundPayments {
 		R: Deref, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
 	>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash,
-		keysend_preimage: Option<PaymentPreimage>, mut route_params: RouteParameters,
+		keysend_preimage: Option<PaymentPreimage>, mut route_params: RouteParametersV2,
 		retry_strategy: Retry, router: &R, first_hops: Vec<ChannelDetails>, inflight_htlcs: IH,
 		entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
 		secp_ctx: &Secp256k1<secp256k1::All>, best_block_height: u32, logger: &L,
@@ -917,7 +913,7 @@ impl OutboundPayments {
 	{
 		// Advance any blinded path where the introduction node is our node.
 		if let Ok(our_node_id) = node_signer.get_node_id(Recipient::Node) {
-			for path in route_params.payment_params.payee.blinded_route_hints_mut().iter_mut() {
+			for path in route_params.invoice_params.payee.blinded_route_hints_mut().iter_mut() {
 				let introduction_node_id = match path.introduction_node() {
 					IntroductionNode::NodeId(pubkey) => *pubkey,
 					IntroductionNode::DirectedShortChannelId(direction, scid) => {
@@ -1172,7 +1168,7 @@ impl OutboundPayments {
 	fn find_initial_route<R: Deref, NS: Deref, IH, L: Deref>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash,
 		recipient_onion: &RecipientOnionFields, keysend_preimage: Option<PaymentPreimage>,
-		route_params: &mut RouteParameters, router: &R, first_hops: &Vec<ChannelDetails>,
+		route_params: &mut RouteParametersV2, router: &R, first_hops: &Vec<ChannelDetails>,
 		inflight_htlcs: &IH, node_signer: &NS, best_block_height: u32, logger: &L,
 	) -> Result<Route, RetryableSendFailure>
 	where
@@ -1189,7 +1185,7 @@ impl OutboundPayments {
 			}
 		}
 
-		onion_utils::set_max_path_length(
+		onion_utils::set_max_path_length_v2(
 			route_params, recipient_onion, keysend_preimage, best_block_height
 		)
 			.map_err(|()| {
