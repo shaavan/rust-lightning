@@ -997,6 +997,12 @@ impl Readable for RouteParametersV2 {
 	}
 }
 
+impl RouteParametersV2 {
+	// TODO: Introduce a function parallel to fn from_payment_params_and_value.
+
+	// TODO: Introduce fn set_max_path_length(). First create onion_utils::set_max_path_length_v2
+}
+
 #[derive(Clone, Copy)]
 pub struct UserParameters {
 	/// The maximum total fees, in millisatoshi, that may accrue during route finding.
@@ -1042,6 +1048,48 @@ impl_writeable_tlv_based!(UserParameters, {
 	(7, max_path_length, (default_value, MAX_PATH_LENGTH_ESTIMATE)),
 	(9, max_channel_saturation_power_of_half, (default_value, DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF))
 });
+
+impl UserParameters {
+	/// Creates a new set of Parameters with default values.
+	pub fn new() -> Self {
+		Self {
+			max_total_routing_fee_msat: None,
+			max_total_cltv_expiry_delta: DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA,
+			max_path_count: DEFAULT_MAX_PATH_COUNT,
+			max_path_length: MAX_PATH_LENGTH_ESTIMATE,
+			max_channel_saturation_power_of_half: DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF,
+		}
+	}
+
+	/// Inroduce a limit for the maximum total fees, in millisatoshi, that may accrue during route finding.
+	/// 
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_max_total_routing_fee_msat(self, max_total_routing_fee_msat: u64) -> Self {
+		Self { max_total_routing_fee_msat: Some(max_total_routing_fee_msat), ..self }
+	}
+
+	/// Includes a limit for the total CLTV expiry delta which is considered during routing
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_max_total_cltv_expiry_delta(self, max_total_cltv_expiry_delta: u32) -> Self {
+		Self { max_total_cltv_expiry_delta, ..self }
+	}
+
+	/// Includes a limit for the maximum number of payment paths that may be used.
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_max_path_count(self, max_path_count: u8) -> Self {
+		Self { max_path_count, ..self }
+	}
+
+	/// Includes a limit for the maximum share of a channel's total capacity that can be sent over, as
+	/// a power of 1/2. See [`PaymentParameters::max_channel_saturation_power_of_half`].
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_max_channel_saturation_power_of_half(self, max_channel_saturation_power_of_half: u8) -> Self {
+		Self { max_channel_saturation_power_of_half, ..self }
+	}
+}
 
 pub struct InvoiceParameters {
 	/// Information about the payee, such as their features and route hints for their channels.
@@ -1123,6 +1171,131 @@ impl ReadableArgs<u32> for InvoiceParameters {
 			previously_failed_channels: previously_failed_channels.unwrap_or(Vec::new()),
 			previously_failed_blinded_path_idxs: previously_failed_blinded_path_idxs.unwrap_or(Vec::new()),
 		})
+	}
+}
+
+impl InvoiceParameters {
+	/// Creates a payee with the node id of the given `pubkey`.
+	///
+	/// The `final_cltv_expiry_delta` should match the expected final CLTV delta the recipient has
+	/// provided.
+	pub fn from_node_id(payee_pubkey: PublicKey, final_cltv_expiry_delta: u32) -> Self {
+		Self {
+			payee: Payee::Clear { node_id: payee_pubkey, route_hints: vec![], features: None, final_cltv_expiry_delta },
+			expiry_time: None,
+			previously_failed_channels: Vec::new(),
+			previously_failed_blinded_path_idxs: Vec::new(),
+		}
+	}
+
+	/// Creates a payee with the node id of the given `pubkey` to use for keysend payments.
+	///
+	/// The `final_cltv_expiry_delta` should match the expected final CLTV delta the recipient has
+	/// provided.
+	///
+	/// Note that MPP keysend is not widely supported yet. The `allow_mpp` lets you choose
+	/// whether your router will be allowed to find a multi-part route for this payment. If you
+	/// set `allow_mpp` to true, you should ensure a payment secret is set on send, likely via
+	/// [`RecipientOnionFields::secret_only`].
+	///
+	/// [`RecipientOnionFields::secret_only`]: crate::ln::channelmanager::RecipientOnionFields::secret_only
+	pub fn for_keysend(payee_pubkey: PublicKey, final_cltv_expiry_delta: u32, allow_mpp: bool) -> Self {
+		Self::from_node_id(payee_pubkey, final_cltv_expiry_delta)
+			.with_bolt11_features(Bolt11InvoiceFeatures::for_keysend(allow_mpp))
+			.expect("PaymentParameters::from_node_id should always initialize the payee as unblinded")
+	}
+
+	/// Creates parameters for paying to a blinded payee from the provided invoice. Sets
+	/// [`Payee::Blinded::route_hints`], [`Payee::Blinded::features`], and
+	/// [`PaymentParameters::expiry_time`].
+	pub fn from_bolt12_invoice(invoice: &Bolt12Invoice) -> Self {
+		Self::blinded(invoice.payment_paths().to_vec())
+			.with_bolt12_features(invoice.invoice_features().clone()).unwrap()
+			.with_expiry_time(invoice.created_at().as_secs().saturating_add(invoice.relative_expiry().as_secs()))
+	}
+
+	/// Creates parameters for paying to a blinded payee from the provided invoice. Sets
+	/// [`Payee::Blinded::route_hints`], [`Payee::Blinded::features`], and
+	/// [`PaymentParameters::expiry_time`].
+	#[cfg(async_payments)]
+	pub fn from_static_invoice(invoice: &StaticInvoice) -> Self {
+		Self::blinded(invoice.payment_paths().to_vec())
+			.with_bolt12_features(invoice.invoice_features().clone()).unwrap()
+			.with_expiry_time(invoice.created_at().as_secs().saturating_add(invoice.relative_expiry().as_secs()))
+	}
+
+	/// Creates parameters for paying to a blinded payee from the provided blinded route hints.
+	pub fn blinded(blinded_route_hints: Vec<BlindedPaymentPath>) -> Self {
+		Self {
+			payee: Payee::Blinded { route_hints: blinded_route_hints, features: None },
+			expiry_time: None,
+			previously_failed_channels: Vec::new(),
+			previously_failed_blinded_path_idxs: Vec::new(),
+		}
+	}
+
+	/// Includes the payee's features. Errors if the parameters were not initialized with
+	/// [`PaymentParameters::from_bolt12_invoice`].
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_bolt12_features(self, features: Bolt12InvoiceFeatures) -> Result<Self, ()> {
+		match self.payee {
+			Payee::Clear { .. } => Err(()),
+			Payee::Blinded { route_hints, .. } =>
+				Ok(Self { payee: Payee::Blinded { route_hints, features: Some(features) }, ..self })
+		}
+	}
+
+	/// Includes the payee's features. Errors if the parameters were initialized with
+	/// [`PaymentParameters::from_bolt12_invoice`].
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_bolt11_features(self, features: Bolt11InvoiceFeatures) -> Result<Self, ()> {
+		match self.payee {
+			Payee::Blinded { .. } => Err(()),
+			Payee::Clear { route_hints, node_id, final_cltv_expiry_delta, .. } =>
+				Ok(Self {
+					payee: Payee::Clear {
+						route_hints, node_id, features: Some(features), final_cltv_expiry_delta
+					}, ..self
+				})
+		}
+	}
+
+	/// Includes hints for routing to the payee. Errors if the parameters were initialized with
+	/// [`PaymentParameters::from_bolt12_invoice`].
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_route_hints(self, route_hints: Vec<RouteHint>) -> Result<Self, ()> {
+		match self.payee {
+			Payee::Blinded { .. } => Err(()),
+			Payee::Clear { node_id, features, final_cltv_expiry_delta, .. } =>
+				Ok(Self {
+					payee: Payee::Clear {
+						route_hints, node_id, features, final_cltv_expiry_delta,
+					}, ..self
+				})
+		}
+	}
+
+	/// Includes a payment expiration in seconds relative to the UNIX epoch.
+	///
+	/// This is not exported to bindings users since bindings don't support move semantics
+	pub fn with_expiry_time(self, expiry_time: u64) -> Self {
+		Self { expiry_time: Some(expiry_time), ..self }
+	}
+
+	pub(crate) fn insert_previously_failed_blinded_path(&mut self, failed_blinded_tail: &BlindedTail) {
+		let mut found_blinded_tail = false;
+		for (idx, path) in self.payee.blinded_route_hints().iter().enumerate() {
+			if &failed_blinded_tail.hops == path.blinded_hops() &&
+				failed_blinded_tail.blinding_point == path.blinding_point()
+			{
+				self.previously_failed_blinded_path_idxs.push(idx as u64);
+				found_blinded_tail = true;
+			}
+		}
+		debug_assert!(found_blinded_tail);
 	}
 }
 
