@@ -962,6 +962,170 @@ impl PaymentParameters {
 	}
 }
 
+pub struct RouteParametersV2 {
+	/// Parameters specified by user. Defaults to default if not provided.
+	pub user_params: UserParameters,
+	// Parameters derived from the Invoice
+	pub invoice_params: InvoiceParameters,
+	/// The amount in msats sent on the failed payment path.
+	pub final_value_msat: u64,
+}
+
+impl Writeable for RouteParametersV2 {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		write_tlv_fields!(writer, {
+			(0, self.user_params, required),
+			(2, self.invoice_params, required),
+			(4, self.final_value_msat, required),
+		});
+		Ok(())
+	}
+}
+
+impl Readable for RouteParametersV2 {
+	fn read<R: io::Read>(reader: &mut R) -> Result<Self, DecodeError> {
+		_init_and_read_len_prefixed_tlv_fields!(reader, {
+			(0, user_params, required),
+			(2, invoice_params, (required: ReadableArgs, 0)),
+			(4, final_value_msat, required),
+		});
+		Ok(Self {
+			user_params: user_params.0.unwrap(),
+			invoice_params: invoice_params.0.unwrap(),
+			final_value_msat: final_value_msat.0.unwrap(),
+		})
+	}
+}
+
+#[derive(Clone, Copy)]
+pub struct UserParameters {
+	/// The maximum total fees, in millisatoshi, that may accrue during route finding.
+	///
+	/// This limit also applies to the total fees that may arise while retrying failed payment
+	/// paths.
+	///
+	/// Note that values below a few sats may result in some paths being spuriously ignored.
+	pub max_total_routing_fee_msat: Option<u64>,
+
+	/// The maximum total CLTV delta we accept for the route.
+	/// Defaults to [`DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA`].
+	pub max_total_cltv_expiry_delta: u32,
+
+	/// The maximum number of paths that may be used by (MPP) payments.
+	/// Defaults to [`DEFAULT_MAX_PATH_COUNT`].
+	pub max_path_count: u8,
+
+	/// The maximum number of [`Path::hops`] in any returned path.
+	/// Defaults to [`MAX_PATH_LENGTH_ESTIMATE`].
+	pub max_path_length: u8,
+
+	/// Selects the maximum share of a channel's total capacity which will be sent over a channel,
+	/// as a power of 1/2. A higher value prefers to send the payment using more MPP parts whereas
+	/// a lower value prefers to send larger MPP parts, potentially saturating channels and
+	/// increasing failure probability for those paths.
+	///
+	/// Note that this restriction will be relaxed during pathfinding after paths which meet this
+	/// restriction have been found. While paths which meet this criteria will be searched for, it
+	/// is ultimately up to the scorer to select them over other paths.
+	///
+	/// A value of 0 will allow payments up to and including a channel's total announced usable
+	/// capacity, a value of one will only use up to half its capacity, two 1/4, etc.
+	///
+	/// Default value: [`DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF`]
+	pub max_channel_saturation_power_of_half: u8,
+}
+
+impl_writeable_tlv_based!(UserParameters, {
+	(1, max_total_routing_fee_msat, option),
+	(3, max_total_cltv_expiry_delta, (default_value, DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA)),
+	(5, max_path_count, (default_value, DEFAULT_MAX_PATH_COUNT)),
+	(7, max_path_length, (default_value, MAX_PATH_LENGTH_ESTIMATE)),
+	(9, max_channel_saturation_power_of_half, (default_value, DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF))
+});
+
+pub struct InvoiceParameters {
+	/// Information about the payee, such as their features and route hints for their channels.
+	pub payee: Payee,
+
+	/// Expiration of a payment to the payee, in seconds relative to the UNIX epoch.
+	pub expiry_time: Option<u64>,
+
+	/// A list of SCIDs which this payment was previously attempted over and which caused the
+	/// payment to fail. Future attempts for the same payment shouldn't be relayed through any of
+	/// these SCIDs.
+	pub previously_failed_channels: Vec<u64>,
+
+	/// A list of indices corresponding to blinded paths in [`Payee::Blinded::route_hints`] which this
+	/// payment was previously attempted over and which caused the payment to fail. Future attempts
+	/// for the same payment shouldn't be relayed through any of these blinded paths.
+	pub previously_failed_blinded_path_idxs: Vec<u64>,
+}
+
+impl Writeable for InvoiceParameters {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		let mut clear_hints = &vec![];
+		let mut blinded_hints = None;
+		match &self.payee {
+			Payee::Clear { route_hints, .. } => clear_hints = route_hints,
+			Payee::Blinded { route_hints, .. } => {
+				let hints_iter = route_hints.iter().map(|path| (&path.payinfo, path.inner_blinded_path()));
+				blinded_hints = Some(crate::util::ser::IterableOwned(hints_iter));
+			}
+		}
+		write_tlv_fields!(writer, {
+			(0, self.payee.node_id(), option),
+			(2, self.payee.features(), option),
+			(4, *clear_hints, required_vec),
+			(6, self.expiry_time, option),
+			(7, self.previously_failed_channels, required_vec),
+			(8, blinded_hints, option),
+			(9, self.payee.final_cltv_expiry_delta(), option),
+			(11, self.previously_failed_blinded_path_idxs, required_vec),
+		});
+		Ok(())
+	}
+}
+
+impl ReadableArgs<u32> for InvoiceParameters {
+	fn read<R: io::Read>(reader: &mut R, default_final_cltv_expiry_delta: u32) -> Result<Self, DecodeError> {
+		_init_and_read_len_prefixed_tlv_fields!(reader, {
+			(0, payee_pubkey, option),
+			(2, features, (option: ReadableArgs, payee_pubkey.is_some())),
+			(4, clear_route_hints, required_vec),
+			(6, expiry_time, option),
+			(7, previously_failed_channels, optional_vec),
+			(8, blinded_route_hints, optional_vec),
+			(9, final_cltv_expiry_delta, (default_value, default_final_cltv_expiry_delta)),
+			(11, previously_failed_blinded_path_idxs, optional_vec),
+		});
+		let blinded_route_hints = blinded_route_hints.unwrap_or(vec![]);
+		let payee = if blinded_route_hints.len() != 0 {
+			if clear_route_hints.len() != 0 || payee_pubkey.is_some() { return Err(DecodeError::InvalidValue) }
+			Payee::Blinded {
+				route_hints: blinded_route_hints
+					.into_iter()
+					.map(|(payinfo, path)| BlindedPaymentPath::from_parts(path, payinfo))
+					.collect(),
+				features: features.and_then(|f: Features| f.bolt12()),
+			}
+		} else {
+			Payee::Clear {
+				route_hints: clear_route_hints,
+				node_id: payee_pubkey.ok_or(DecodeError::InvalidValue)?,
+				features: features.and_then(|f| f.bolt11()),
+				final_cltv_expiry_delta: final_cltv_expiry_delta.0.unwrap(),
+			}
+		};
+
+		Ok(Self {
+			payee,
+			expiry_time,
+			previously_failed_channels: previously_failed_channels.unwrap_or(Vec::new()),
+			previously_failed_blinded_path_idxs: previously_failed_blinded_path_idxs.unwrap_or(Vec::new()),
+		})
+	}
+}
+
 /// The recipient of a payment, differing based on whether they've hidden their identity with route
 /// blinding.
 #[derive(Clone, Debug, Hash, PartialEq, Eq)]
