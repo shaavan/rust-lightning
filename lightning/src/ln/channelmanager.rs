@@ -9153,18 +9153,19 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
 
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
 			.chain_hash($self.chain_hash);
 
 		if let Some(path_type) = blinded_path {
-			let path = match path_type {
+			let paths = match path_type {
 				BlindedPathType::Compact => $self.create_compact_blinded_paths(context),
 				BlindedPathType::Full => $self.create_blinded_paths(MessageContext::Offers(context)),
 			}
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-			return Ok(builder.path(path));
+			builder = paths.into_iter().fold(builder, |builder, path| {
+				builder.path(path)
+			});
 		}
 
 		Ok(builder.into())
@@ -9237,14 +9238,15 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		.absolute_expiry(absolute_expiry);
 
 		if let Some(path_type) = blinded_path {
-			let path = match path_type {
+			let paths = match path_type {
 				BlindedPathType::Compact => $self.create_compact_blinded_paths(context),
 				BlindedPathType::Full => $self.create_blinded_paths(MessageContext::Offers(context)),
 			}
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-			builder = builder.path(path)
+			builder = paths.into_iter().fold(builder, |builder, path| {
+				builder.path(path)
+			})
 		}
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
