@@ -1952,16 +1952,17 @@ where
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::routing::router::RouteParametersConfig;
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
-/// #     max_total_routing_fee_msat: Option<u64>
+/// #     route_params_config: Option<RouteParametersConfig>
 /// # ) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
 /// let refund = channel_manager
 ///     .create_refund_builder(
-///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
+///         amount_msats, absolute_expiry, payment_id, retry, route_params_config
 ///     )?
 /// # ;
 /// # // Needed for compiling for c_bindings
@@ -9189,7 +9190,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
 	pub fn create_refund_builder(
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
-		retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>
+		retry_strategy: Retry, route_params_config: Option<RouteParametersConfig>
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -9210,11 +9211,6 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 			.path(path);
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
-
-		let route_params_config = max_total_routing_fee_msat.map(
-			|fee_msat| RouteParametersConfig::new()
-				.with_max_total_routing_fee_msat(fee_msat)
-		);
 
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
