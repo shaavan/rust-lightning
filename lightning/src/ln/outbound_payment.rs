@@ -860,7 +860,7 @@ impl OutboundPayments {
 				} => {
 					retry_strategy = *retry;
 					// If max_total_fee is present, update route_params_config with the specified fee.
-					// This supports the standard behavior during downgrades.
+					// This supports the standard behavior during upgrades.
 					let route_params_config = max_total_fee.map_or(
 						*route_params_config,
 						|fee_msat| route_params_config.with_max_total_routing_fee_msat(fee_msat),
