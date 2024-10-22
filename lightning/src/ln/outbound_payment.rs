@@ -1629,7 +1629,7 @@ impl OutboundPayments {
 					retry_strategy,
 					route_params_config,
 					// Retained for downgrade support.
-					max_total_routing_fee_msat: None,
+					max_total_routing_fee_msat,
 					retryable_invoice_request,
 				});
 
