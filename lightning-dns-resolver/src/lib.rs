@@ -225,11 +225,12 @@ mod test {
 		}
 
 		fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-			&self, recipient: PublicKey, context: MessageContext, _peers: Vec<PublicKey>,
-			secp_ctx: &Secp256k1<T>,
+			&self, recipient: PublicKey, context: MessageContext, custom_tlvs: Vec<u8>,
+			_peers: Vec<PublicKey>, secp_ctx: &Secp256k1<T>,
 		) -> Result<Vec<BlindedMessagePath>, ()> {
 			let keys = KeysManager::new(&[0; 32], 42, 43);
-			Ok(vec![BlindedMessagePath::one_hop(recipient, context, &keys, secp_ctx).unwrap()])
+			Ok(vec![BlindedMessagePath::one_hop(recipient, context, custom_tlvs, &keys, secp_ctx)
+				.unwrap()])
 		}
 	}
 	impl Deref for DirectlyConnectedRouter {
@@ -331,8 +332,14 @@ mod test {
 		let (msg, context) =
 			payer.resolver.resolve_name(payment_id, name.clone(), &*payer_keys).unwrap();
 		let query_context = MessageContext::DNSResolver(context);
-		let reply_path =
-			BlindedMessagePath::one_hop(payer_id, query_context, &*payer_keys, &secp_ctx).unwrap();
+		let reply_path = BlindedMessagePath::one_hop(
+			payer_id,
+			query_context,
+			Vec::new(),
+			&*payer_keys,
+			&secp_ctx,
+		)
+		.unwrap();
 		payer.pending_messages.lock().unwrap().push((
 			DNSResolverMessage::DNSSECQuery(msg),
 			MessageSendInstructions::WithSpecifiedReplyPath {
