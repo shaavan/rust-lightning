@@ -164,6 +164,7 @@ fn one_hop_blinded_path_with_custom_tlv() {
 			htlc_minimum_msat: chan_upd_1_2.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::unknown(),
+		custom_tlvs: None,
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
@@ -267,7 +268,7 @@ fn blinded_path_with_custom_tlv() {
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[3], Some(amt_msat), None);
 	let route_params = get_blinded_route_parameters(amt_msat, payment_secret, 1, 1_0000_0000,
 		nodes.iter().skip(2).map(|n| n.node.get_our_node_id()).collect(), &[&chan_upd_2_3],
-		&chanmon_cfgs[3].keys_manager);
+		&chanmon_cfgs[3].keys_manager, None);
 
 	// Calculate the maximum custom TLV value size where a valid onion packet is still possible.
 	const CUSTOM_TLV_TYPE: u64 = 65537;

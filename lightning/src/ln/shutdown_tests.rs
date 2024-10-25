@@ -439,7 +439,7 @@ fn do_htlc_fail_async_shutdown(blinded_recipient: bool) {
 		crate::ln::blinded_payment_tests::get_blinded_route_parameters(
 			amt_msat, our_payment_secret, 1, 100000000,
 			nodes.iter().skip(1).map(|n| n.node.get_our_node_id()).collect(), &[&chan_2.0.contents],
-			&chanmon_cfgs[2].keys_manager)
+			&chanmon_cfgs[2].keys_manager, None)
 	} else {
 		RouteParameters::from_payment_params_and_value(
 			PaymentParameters::from_node_id(nodes[2].node.get_our_node_id(), TEST_FINAL_CLTV), amt_msat)
