@@ -2909,8 +2909,9 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 						next_blinding_override,
 					})
 				},
+				// Note: The custom tlvs in the receive tlvs is not used here.
 				ChaChaPolyReadAdapter { readable: BlindedPaymentTlvs::Receive(ReceiveTlvs {
-					payment_secret, payment_constraints, payment_context
+					payment_secret, payment_constraints, payment_context, custom_tlvs: user_custom_tlvs
 				})} => {
 					if total_msat.unwrap_or(0) > MAX_VALUE_MSAT { return Err(DecodeError::InvalidValue) }
 					Ok(Self::BlindedReceive {
@@ -2923,7 +2924,7 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 						intro_node_blinding_point,
 						keysend_preimage,
 						sender_custom_tlvs,
-						user_custom_tlvs: Vec::new(),
+						user_custom_tlvs,
 					})
 				},
 			}
