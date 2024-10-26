@@ -77,6 +77,7 @@ fn blinded_payment_path(
 				intro_node_min_htlc_opt.unwrap_or_else(|| channel_upds.last().unwrap().htlc_minimum_msat),
 		},
 		payment_context: PaymentContext::unknown(),
+		custom_data: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	BlindedPaymentPath::new(
@@ -123,6 +124,7 @@ fn do_one_hop_blinded_path(success: bool) {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::unknown(),
+		custom_data: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
@@ -167,6 +169,7 @@ fn mpp_to_one_hop_blinded_path() {
 			htlc_minimum_msat: chan_upd_1_3.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::unknown(),
+		custom_data: Vec::new(),
 	};
 	let blinded_path = BlindedPaymentPath::new(
 		&[], nodes[3].node.get_our_node_id(), payee_tlvs, u64::MAX, TEST_FINAL_CLTV as u16,
@@ -1376,6 +1379,7 @@ fn custom_tlvs_to_blinded_path() {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::unknown(),
+		custom_data: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
