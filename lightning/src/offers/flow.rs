@@ -59,6 +59,21 @@ where
     NS::Target: NodeSigner,
     L::Target: Logger,
 {
+	pub fn new(
+		channel_manager: NT, entropy_source: ES, node_signer: NS, logger: L
+	) -> Self {
+		let mut secp_ctx = Secp256k1::new();
+		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
+		OffersMessageFlow {
+			secp_ctx,
+			pending_offers_messages: Mutex::new(Vec::new()),
+			channel_manager,
+			entropy_source,
+			node_signer,
+			logger,
+		}
+	}
+
     fn verify_bolt12_invoice(
 		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
 	) -> Result<PaymentId, ()> {
