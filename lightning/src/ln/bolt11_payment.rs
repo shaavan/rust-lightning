@@ -12,7 +12,7 @@
 use bitcoin::hashes::Hash;
 use lightning_invoice::Bolt11Invoice;
 
-use crate::ln::channelmanager::RecipientOnionFields;
+use crate::ln::channelmanager::{NewTrait, RecipientOnionFields};
 use crate::routing::router::{PaymentParameters, RouteParameters};
 use crate::types::payment::PaymentHash;
 

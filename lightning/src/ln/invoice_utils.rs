@@ -11,7 +11,7 @@ use crate::chain::chaininterface::{BroadcasterInterface, FeeEstimator};
 use crate::sign::{Recipient, NodeSigner, SignerProvider, EntropySource};
 use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::ln::channel_state::ChannelDetails;
-use crate::ln::channelmanager::{ChannelManager, MIN_FINAL_CLTV_EXPIRY_DELTA};
+use crate::ln::channelmanager::{ChannelManager, MIN_FINAL_CLTV_EXPIRY_DELTA, NewTrait};
 use crate::ln::channelmanager::{PhantomRouteHints, MIN_CLTV_EXPIRY_DELTA};
 use crate::ln::inbound_payment::{create, create_from_hash, ExpandedKey};
 use crate::routing::gossip::RoutingFees;

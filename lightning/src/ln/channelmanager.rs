@@ -4417,79 +4417,6 @@ where
 		}
 	}
 
-	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
-		let best_block_height = self.best_block.read().unwrap().height;
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		let features = self.bolt12_invoice_features();
-		self.pending_outbound_payments
-			.send_payment_for_bolt12_invoice(
-				invoice, payment_id, &self.router, self.list_usable_channels(), features,
-				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
-				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
-				|args| self.send_payment_along_path(args)
-			)
-	}
-
-	#[cfg(async_payments)]
-	fn initiate_async_payment(
-		&self, invoice: &StaticInvoice, payment_id: PaymentId
-	) -> Result<(), Bolt12PaymentError> {
-		let mut res = Ok(());
-		PersistenceNotifierGuard::optionally_notify(self, || {
-			let best_block_height = self.best_block.read().unwrap().height;
-			let features = self.bolt12_invoice_features();
-			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
-				invoice, payment_id, features, best_block_height, &*self.entropy_source,
-				&self.pending_events
-			);
-			match outbound_pmts_res {
-				Ok(()) => {},
-				Err(Bolt12PaymentError::UnexpectedInvoice) | Err(Bolt12PaymentError::DuplicateInvoice) => {
-					res = outbound_pmts_res.map(|_| ());
-					return NotifyOption::SkipPersistNoEvents
-				},
-				Err(e) => {
-					res = Err(e);
-					return NotifyOption::DoPersist
-				}
-			};
-
-			let nonce = Nonce::from_entropy_source(&*self.entropy_source);
-			let hmac = payment_id.hmac_for_async_payment(nonce, &self.inbound_payment_key);
-			let reply_paths = match self.create_blinded_paths(
-				MessageContext::AsyncPayments(
-					AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac }
-				)
-			) {
-				Ok(paths) => paths,
-				Err(()) => {
-					self.abandon_payment_with_reason(payment_id, PaymentFailureReason::RouteNotFound);
-					res = Err(Bolt12PaymentError::BlindedPathCreationFailed);
-					return NotifyOption::DoPersist
-				}
-			};
-
-			let mut pending_async_payments_messages = self.pending_async_payments_messages.lock().unwrap();
-			const HTLC_AVAILABLE_LIMIT: usize = 10;
-			reply_paths
-				.iter()
-				.flat_map(|reply_path| invoice.message_paths().iter().map(move |invoice_path| (invoice_path, reply_path)))
-				.take(HTLC_AVAILABLE_LIMIT)
-				.for_each(|(invoice_path, reply_path)| {
-					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-						destination: Destination::BlindedPath(invoice_path.clone()),
-						reply_path: reply_path.clone(),
-					};
-					let message = AsyncPaymentsMessage::HeldHtlcAvailable(HeldHtlcAvailable {});
-					pending_async_payments_messages.push((message, instructions));
-				});
-
-			NotifyOption::DoPersist
-		});
-
-		res
-	}
-
 	#[cfg(async_payments)]
 	fn send_payment_for_static_invoice(
 		&self, payment_id: PaymentId
@@ -4545,10 +4472,7 @@ where
 		self.abandon_payment_with_reason(payment_id, PaymentFailureReason::UserAbandoned)
 	}
 
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
-	}
+	
 
 	/// Send a spontaneous payment, which is a payment that does not require the recipient to have
 	/// generated an invoice. Optionally, you may specify the preimage. If you do choose to specify
@@ -9498,42 +9422,7 @@ where
 		}
 	}
 
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: Self::claim_funds
-	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
-	pub fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
-		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
-			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
-			min_final_cltv_expiry_delta)
-	}
+	
 
 	/// Gets a [`PaymentSecret`] for a given [`PaymentHash`], for which the payment preimage is
 	/// stored external to LDK.
@@ -9675,30 +9564,6 @@ where
 		self.message_router
 			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
-	/// [`Router::create_blinded_payment_paths`].
-	fn create_blinded_payment_paths(
-		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
-	) -> Result<Vec<BlindedPaymentPath>, ()> {
-		let secp_ctx = &self.secp_ctx;
-
-		let first_hops = self.list_usable_channels();
-		let payee_node_id = self.get_our_node_id();
-		let max_cltv_expiry = self.best_block.read().unwrap().height + CLTV_FAR_FAR_AWAY
-			+ LATENCY_GRACE_PERIOD_BLOCKS;
-		let payee_tlvs = ReceiveTlvs {
-			payment_secret,
-			payment_constraints: PaymentConstraints {
-				max_cltv_expiry,
-				htlc_minimum_msat: 1,
-			},
-			payment_context,
-		};
-		self.router.create_blinded_payment_paths(
-			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
-		)
 	}
 
 	/// Gets a fake short channel id for use in receiving [phantom node payments]. These fake scids
@@ -11079,6 +10944,185 @@ where
 				}
 			}
 		}
+	}
+}
+
+pub trait NewTrait {
+	fn inbound_payment_key(&self) -> &inbound_payment::ExpandedKey;
+
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32, min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
+	fn create_blinded_payment_paths( &self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext) -> Result<Vec<BlindedPaymentPath>, ()>;
+
+	fn highest_seen_timestamp(&self) -> u64;
+
+
+	#[cfg(async_payments)]
+	fn initiate_async_payment(&self, invoice: &StaticInvoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
+
+	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
+}
+
+
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
+NewTrait for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+where
+	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
+	T::Target: BroadcasterInterface,
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	SP::Target: SignerProvider,
+	F::Target: FeeEstimator,
+	R::Target: Router,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	fn inbound_payment_key(&self) -> &inbound_payment::ExpandedKey {
+		&self.inbound_payment_key
+	}
+
+	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
+	/// to pay us.
+	///
+	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
+	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
+	///
+	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
+	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
+	/// should then be passed directly to [`claim_funds`].
+	///
+	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
+	///
+	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
+	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
+	///
+	/// # Note
+	///
+	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
+	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
+	///
+	/// Errors if `min_value_msat` is greater than total bitcoin supply.
+	///
+	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
+	/// on versions of LDK prior to 0.0.114.
+	///
+	/// [`claim_funds`]: Self::claim_funds
+	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
+	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
+	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
+	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
+		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
+			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
+			min_final_cltv_expiry_delta)
+	}
+
+	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
+	/// [`Router::create_blinded_payment_paths`].
+	fn create_blinded_payment_paths(
+		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		let secp_ctx = &self.secp_ctx;
+
+		let first_hops = self.list_usable_channels();
+		let payee_node_id = self.get_our_node_id();
+		let max_cltv_expiry = self.best_block.read().unwrap().height + CLTV_FAR_FAR_AWAY
+			+ LATENCY_GRACE_PERIOD_BLOCKS;
+		let payee_tlvs = ReceiveTlvs {
+			payment_secret,
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry,
+				htlc_minimum_msat: 1,
+			},
+			payment_context,
+		};
+		self.router.create_blinded_payment_paths(
+			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
+		)
+	}
+
+	fn highest_seen_timestamp(&self) -> u64 {
+		self.highest_seen_timestamp.load(Ordering::Acquire) as u64
+	}
+
+	#[cfg(async_payments)]
+	fn initiate_async_payment(
+		&self, invoice: &StaticInvoice, payment_id: PaymentId
+	) -> Result<(), Bolt12PaymentError> {
+		let mut res = Ok(());
+		PersistenceNotifierGuard::optionally_notify(self, || {
+			let best_block_height = self.best_block.read().unwrap().height;
+			let features = self.bolt12_invoice_features();
+			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
+				invoice, payment_id, features, best_block_height, &*self.entropy_source,
+				&self.pending_events
+			);
+			match outbound_pmts_res {
+				Ok(()) => {},
+				Err(Bolt12PaymentError::UnexpectedInvoice) | Err(Bolt12PaymentError::DuplicateInvoice) => {
+					res = outbound_pmts_res.map(|_| ());
+					return NotifyOption::SkipPersistNoEvents
+				},
+				Err(e) => {
+					res = Err(e);
+					return NotifyOption::DoPersist
+				}
+			};
+
+			let nonce = Nonce::from_entropy_source(&*self.entropy_source);
+			let hmac = payment_id.hmac_for_async_payment(nonce, &self.inbound_payment_key);
+			let reply_paths = match self.create_blinded_paths(
+				MessageContext::AsyncPayments(
+					AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac }
+				)
+			) {
+				Ok(paths) => paths,
+				Err(()) => {
+					self.abandon_payment_with_reason(payment_id, PaymentFailureReason::RouteNotFound);
+					res = Err(Bolt12PaymentError::BlindedPathCreationFailed);
+					return NotifyOption::DoPersist
+				}
+			};
+
+			let mut pending_async_payments_messages = self.pending_async_payments_messages.lock().unwrap();
+			const HTLC_AVAILABLE_LIMIT: usize = 10;
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| invoice.message_paths().iter().map(move |invoice_path| (invoice_path, reply_path)))
+				.take(HTLC_AVAILABLE_LIMIT)
+				.for_each(|(invoice_path, reply_path)| {
+					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+						destination: Destination::BlindedPath(invoice_path.clone()),
+						reply_path: reply_path.clone(),
+					};
+					let message = AsyncPaymentsMessage::HeldHtlcAvailable(HeldHtlcAvailable {});
+					pending_async_payments_messages.push((message, instructions));
+				});
+
+			NotifyOption::DoPersist
+		});
+
+		res
+	}
+
+	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
+		let best_block_height = self.best_block.read().unwrap().height;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		let features = self.bolt12_invoice_features();
+		self.pending_outbound_payments
+			.send_payment_for_bolt12_invoice(
+				invoice, payment_id, &self.router, self.list_usable_channels(), features,
+				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
+				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
+				|args| self.send_payment_along_path(args)
+			)
+	}
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
 	}
 }
 
