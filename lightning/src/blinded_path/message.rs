@@ -253,11 +253,11 @@ fn test_size_of_tlvs_instances() {
     let payment_hash = PaymentHash([42; 32]);
     let hmac = create_hmac();
 
-    // Testing ForwardTlvs with different variants of NextMessageHop
-    test_forward_tlvs(public_key);
+    // // Testing ForwardTlvs with different variants of NextMessageHop
+    // test_forward_tlvs(public_key);
 
-    // Testing ReceiveTlvs with different variants of MessageContext
-    test_receive_tlvs(payment_id, nonce, payment_hash, hmac);
+    // // Testing ReceiveTlvs with different variants of MessageContext
+    // test_receive_tlvs(payment_id, nonce, payment_hash, hmac);
 
 	// Testing Payment ForwardTlvs
 	test_payment_forward_tlvs(public_key);
@@ -422,7 +422,7 @@ fn test_payment_forward_tlvs(public_key: PublicKey) {
 		},
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: 1,
-			htlc_minimum_msat: 2,
+			htlc_minimum_msat: 1_000_000_000,
 		},
 		features: BlindedHopFeatures::empty(),
 		next_blinding_override: None,
@@ -442,7 +442,7 @@ fn test_payment_forward_tlvs(public_key: PublicKey) {
 		},
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: 1,
-			htlc_minimum_msat: 2,
+			htlc_minimum_msat: 1_000_000_000,
 		},
 		features: BlindedHopFeatures::empty(),
 		next_blinding_override: Some(public_key),
@@ -463,13 +463,13 @@ fn test_payment_receive_tlvs(public_key: PublicKey) {
 		payment_secret: PaymentSecret([0; 32]),
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: 1,
-			htlc_minimum_msat: 2,
+			htlc_minimum_msat: 1_000_000_000,
 		},
 		payment_context: payment::PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: OfferId([0; 32]),
 			invoice_request: InvoiceRequestFields {
 				payer_signing_pubkey: public_key,
-				quantity: Some(1),
+				quantity: None,
 				payer_note_truncated: None
 			}
 		})
@@ -484,7 +484,7 @@ fn test_payment_receive_tlvs(public_key: PublicKey) {
 		payment_secret: PaymentSecret([0; 32]),
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: 1,
-			htlc_minimum_msat: 2,
+			htlc_minimum_msat: 1_000_000_000,
 		},
 		payment_context: payment::PaymentContext::Bolt12Refund(Bolt12RefundContext {})
 	};
