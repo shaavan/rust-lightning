@@ -3275,6 +3275,8 @@ pub fn create_node_chanmgrs<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg<'b>
 			network,
 			best_block: BestBlock::from_network(network),
 		};
+		// The ones that don't have references are actually themselves referenced by NodeCfg.
+		// The one that are referenced, are owned by NodeCfg
 		let node = ChannelManager::new(cfgs[i].fee_estimator, &cfgs[i].chain_monitor, cfgs[i].tx_broadcaster, &cfgs[i].router, &cfgs[i].message_router, cfgs[i].logger, cfgs[i].keys_manager,
 			cfgs[i].keys_manager, cfgs[i].keys_manager, if node_config[i].is_some() { node_config[i].clone().unwrap() } else { test_default_channel_config() }, params, genesis_block.header.time);
 		chanmgrs.push(node);
