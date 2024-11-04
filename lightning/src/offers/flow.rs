@@ -8,7 +8,7 @@
 // licenses.
 
 use core::ops::Deref;
-use std::sync::Mutex;
+use crate::sync::{Arc, Mutex};
 
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::secp256k1;
@@ -89,6 +89,11 @@ where
 			},
 			_ => Err(()),
 		}
+	}
+
+	#[cfg(test)]
+	pub fn set_new_trait_implementer(&mut self, channelmanager: NT) {
+		self.channel_manager = channelmanager;
 	}
 }
 

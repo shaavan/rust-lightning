@@ -10,6 +10,7 @@
 //! A bunch of useful utilities for building networks of nodes and exchanging messages between
 //! nodes for functional tests.
 
+use crate::blinded_path::message::OffersContext;
 use crate::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Listen, Watch, chainmonitor::Persist};
 use crate::chain::channelmonitor::ChannelMonitor;
 use crate::chain::transaction::OutPoint;
@@ -17,13 +18,14 @@ use crate::events::{ClaimedHTLC, ClosureReason, Event, HTLCDestination, MessageS
 use crate::events::bump_transaction::{BumpTransactionEvent, BumpTransactionEventHandler, Wallet, WalletSource};
 use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
+use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
 use crate::ln::channelmanager::{AChannelManager, ChainParameters, ChannelManager, ChannelManagerReadArgs, RAACommitmentOrder, PaymentSendFailure, RecipientOnionFields, PaymentId, MIN_CLTV_EXPIRY_DELTA};
 use crate::types::features::InitFeatures;
 use crate::ln::msgs;
 use crate::ln::msgs::{ChannelMessageHandler, OnionMessageHandler, RoutingMessageHandler};
 use crate::ln::peer_handler::IgnoringMessageHandler;
-use crate::onion_message::messenger::OnionMessenger;
+use crate::onion_message::messenger::{MessageSendInstructions, OnionMessenger, Responder, ResponseInstruction};
 use crate::routing::gossip::{P2PGossipSync, NetworkGraph, NetworkUpdate};
 use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
 use crate::sign::{EntropySource, RandomBytes};
@@ -409,12 +411,31 @@ type TestChannelManager<'node_cfg, 'chan_mon_cfg> = ChannelManager<
 	&'chan_mon_cfg test_utils::TestLogger,
 >;
 
-pub type TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg> = OffersMessageFlow<
-	&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
-	&'node_cfg test_utils::TestKeysInterface,
-	&'node_cfg test_utils::TestKeysInterface,
-	&'chan_mon_cfg test_utils::TestLogger,
+pub type TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg> = Mutex<
+	OffersMessageFlow<
+		&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
+		&'node_cfg test_utils::TestKeysInterface,
+		&'node_cfg test_utils::TestKeysInterface,
+		&'chan_mon_cfg test_utils::TestLogger,
+		>
 >;
+
+impl<'chan_man, 'node_cfg, 'chan_mon_cfg> OffersMessageHandler
+   for TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg>
+{
+   fn handle_message(
+       &self,
+       message: OffersMessage,
+       context: Option<OffersContext>,
+       responder: Option<Responder>,
+   ) -> Option<(OffersMessage, ResponseInstruction)> {
+       self.lock().unwrap().handle_message(message, context, responder)
+   }
+
+   fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
+       self.lock().unwrap().release_pending_messages()
+   }
+}
 
 type TestOnionMessenger<'chan_man, 'node_cfg, 'chan_mon_cfg> = OnionMessenger<
 	DedicatedEntropy,
@@ -422,7 +443,7 @@ type TestOnionMessenger<'chan_man, 'node_cfg, 'chan_mon_cfg> = OnionMessenger<
 	&'chan_mon_cfg test_utils::TestLogger,
 	&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
 	&'node_cfg test_utils::TestMessageRouter<'chan_mon_cfg>,
-	&'chan_man TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg>,
+	Arc<TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg>>,
 	&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
 	IgnoringMessageHandler, // TODO: Swap for ChannelManager (when built with the "dnssec" feature)
 	IgnoringMessageHandler,
@@ -449,6 +470,7 @@ pub struct Node<'chan_man, 'node_cfg: 'chan_man, 'chan_mon_cfg: 'node_cfg> {
 	pub keys_manager: &'chan_mon_cfg test_utils::TestKeysInterface,
 	pub node: &'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
 	pub onion_messenger: TestOnionMessenger<'chan_man, 'node_cfg, 'chan_mon_cfg>,
+	pub offers_handler: Arc<TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg>>,
 	pub network_graph: &'node_cfg NetworkGraph<&'chan_mon_cfg test_utils::TestLogger>,
 	pub gossip_sync: P2PGossipSync<&'node_cfg NetworkGraph<&'chan_mon_cfg test_utils::TestLogger>, &'chan_mon_cfg test_utils::TestChainSource, &'chan_mon_cfg test_utils::TestLogger>,
 	pub node_seed: [u8; 32],
@@ -1174,10 +1196,12 @@ macro_rules! reload_node {
 		$new_chain_monitor = $crate::util::test_utils::TestChainMonitor::new(Some($node.chain_source), $node.tx_broadcaster.clone(), $node.logger, $node.fee_estimator, &$persister, &$node.keys_manager);
 		$node.chain_monitor = &$new_chain_monitor;
 
-		$new_channelmanager = _reload_node(&$node, $new_config, &chanman_encoded, $monitors_encoded);
+		{
+			$new_channelmanager = _reload_node(&$node, $new_config, &chanman_encoded, $monitors_encoded);
+		}
+
 		$node.node = &$new_channelmanager;
-		let offers_flow = TestOffersMessageFlow::new(&$new_channelmanager, &$node.keys_manager, &$node.keys_manager, $node.logger);
-		$node.onion_messenger.set_offers_handler(&offers_flow);
+		$node.offers_handler.lock().unwrap().set_new_trait_implementer(&$new_channelmanager);
 	};
 	($node: expr, $chanman_encoded: expr, $monitors_encoded: expr, $persister: ident, $new_chain_monitor: ident, $new_channelmanager: ident) => {
 		reload_node!($node, $crate::util::config::UserConfig::default(), $chanman_encoded, $monitors_encoded, $persister, $new_chain_monitor, $new_channelmanager);
@@ -3293,12 +3317,13 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 
 	for i in 0..node_count {
 		let dedicated_entropy = DedicatedEntropy(RandomBytes::new([i as u8; 32]));
-		let offers_flow = OffersMessageFlow::new(
+		let offers_flow = Arc::new(Mutex::new(OffersMessageFlow::new(
 			&chan_mgrs[i], cfgs[i].keys_manager, cfgs[i].keys_manager, cfgs[i].logger
-		);
+		)));
+
 		let onion_messenger = OnionMessenger::new(
 			dedicated_entropy, cfgs[i].keys_manager, cfgs[i].logger, &chan_mgrs[i],
-			&cfgs[i].message_router, &offers_flow, &chan_mgrs[i], IgnoringMessageHandler {},
+			&cfgs[i].message_router, offers_flow.clone(), &chan_mgrs[i], IgnoringMessageHandler {},
 			IgnoringMessageHandler {},
 		);
 		let gossip_sync = P2PGossipSync::new(cfgs[i].network_graph.as_ref(), None, cfgs[i].logger);
@@ -3309,7 +3334,8 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 			message_router: &cfgs[i].message_router, chain_monitor: &cfgs[i].chain_monitor,
 			keys_manager: &cfgs[i].keys_manager, node: &chan_mgrs[i],
 			network_graph: cfgs[i].network_graph.as_ref(), gossip_sync,
-			node_seed: cfgs[i].node_seed, onion_messenger, network_chan_count: chan_count.clone(),
+			node_seed: cfgs[i].node_seed, onion_messenger,
+			offers_handler: offers_flow, network_chan_count: chan_count.clone(),
 			network_payment_count: payment_count.clone(), logger: cfgs[i].logger,
 			blocks: Arc::clone(&cfgs[i].tx_broadcaster.blocks),
 			connect_style: Rc::clone(&connect_style),

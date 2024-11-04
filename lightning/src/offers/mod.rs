@@ -30,4 +30,4 @@ pub(crate) mod signer;
 #[cfg(async_payments)]
 pub mod static_invoice;
 #[cfg(test)]
-pub(crate) mod test_utils;
+pub mod test_utils;

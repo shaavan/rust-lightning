@@ -188,3 +188,4 @@ impl<L: Logger + ?Sized> ReadableArgs<(u64, &L)> for OffersMessage {
 		}
 	}
 }
+
