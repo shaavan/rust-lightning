@@ -10,7 +10,6 @@
 //! A bunch of useful utilities for building networks of nodes and exchanging messages between
 //! nodes for functional tests.
 
-use crate::blinded_path::message::OffersContext;
 use crate::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Listen, Watch, chainmonitor::Persist};
 use crate::chain::channelmonitor::ChannelMonitor;
 use crate::chain::transaction::OutPoint;
@@ -18,14 +17,13 @@ use crate::events::{ClaimedHTLC, ClosureReason, Event, HTLCDestination, MessageS
 use crate::events::bump_transaction::{BumpTransactionEvent, BumpTransactionEventHandler, Wallet, WalletSource};
 use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
-use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
 use crate::ln::channelmanager::{AChannelManager, ChainParameters, ChannelManager, ChannelManagerReadArgs, RAACommitmentOrder, PaymentSendFailure, RecipientOnionFields, PaymentId, MIN_CLTV_EXPIRY_DELTA};
 use crate::types::features::InitFeatures;
 use crate::ln::msgs;
 use crate::ln::msgs::{ChannelMessageHandler, OnionMessageHandler, RoutingMessageHandler};
 use crate::ln::peer_handler::IgnoringMessageHandler;
-use crate::onion_message::messenger::{MessageSendInstructions, OnionMessenger, Responder, ResponseInstruction};
+use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{P2PGossipSync, NetworkGraph, NetworkUpdate};
 use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
 use crate::sign::{EntropySource, RandomBytes};
@@ -411,31 +409,12 @@ type TestChannelManager<'node_cfg, 'chan_mon_cfg> = ChannelManager<
 	&'chan_mon_cfg test_utils::TestLogger,
 >;
 
-pub type TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg> = Mutex<
-	OffersMessageFlow<
-		&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
-		&'node_cfg test_utils::TestKeysInterface,
-		&'node_cfg test_utils::TestKeysInterface,
-		&'chan_mon_cfg test_utils::TestLogger,
-		>
+pub type TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg> = OffersMessageFlow<
+	&'chan_man TestChannelManager<'node_cfg, 'chan_mon_cfg>,
+	&'node_cfg test_utils::TestKeysInterface,
+	&'node_cfg test_utils::TestKeysInterface,
+	&'chan_mon_cfg test_utils::TestLogger,
 >;
-
-impl<'chan_man, 'node_cfg, 'chan_mon_cfg> OffersMessageHandler
-   for TestOffersMessageFlow<'chan_man, 'node_cfg, 'chan_mon_cfg>
-{
-   fn handle_message(
-       &self,
-       message: OffersMessage,
-       context: Option<OffersContext>,
-       responder: Option<Responder>,
-   ) -> Option<(OffersMessage, ResponseInstruction)> {
-       self.lock().unwrap().handle_message(message, context, responder)
-   }
-
-   fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
-       self.lock().unwrap().release_pending_messages()
-   }
-}
 
 type TestOnionMessenger<'chan_man, 'node_cfg, 'chan_mon_cfg> = OnionMessenger<
 	DedicatedEntropy,
@@ -1145,7 +1124,7 @@ fn check_claimed_htlcs_match_route<'a, 'b, 'c>(origin_node: &Node<'a, 'b, 'c>, r
 	}
 }
 
-pub fn _reload_node<'a, 'b, 'c>(node: &'a Node<'a, 'b, 'c>, default_config: UserConfig, chanman_encoded: &[u8], monitors_encoded: &[&[u8]]) -> TestChannelManager<'b, 'c> {
+pub fn _reload_node<'a, 'b, 'c, 'd>(node: &Node<'a, 'b, 'c>, default_config: UserConfig, chanman_encoded: &[u8], monitors_encoded: &[&[u8]]) -> TestChannelManager<'b, 'c> {
 	let mut monitors_read = Vec::with_capacity(monitors_encoded.len());
 	for encoded in monitors_encoded {
 		let mut monitor_read = &encoded[..];
@@ -1200,8 +1179,14 @@ macro_rules! reload_node {
 			$new_channelmanager = _reload_node(&$node, $new_config, &chanman_encoded, $monitors_encoded);
 		}
 
+		let offers_handler = $crate::sync::Arc::new($crate::offers::flow::OffersMessageFlow::new(
+			&$new_channelmanager, $node.keys_manager, $node.keys_manager, $node.logger
+		));
+
 		$node.node = &$new_channelmanager;
-		$node.offers_handler.lock().unwrap().set_new_trait_implementer(&$new_channelmanager);
+		$node.offers_handler = offers_handler.clone();
+
+		$node.onion_messenger.set_offers_handler(offers_handler);
 	};
 	($node: expr, $chanman_encoded: expr, $monitors_encoded: expr, $persister: ident, $new_chain_monitor: ident, $new_channelmanager: ident) => {
 		reload_node!($node, $crate::util::config::UserConfig::default(), $chanman_encoded, $monitors_encoded, $persister, $new_chain_monitor, $new_channelmanager);
@@ -3317,9 +3302,9 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 
 	for i in 0..node_count {
 		let dedicated_entropy = DedicatedEntropy(RandomBytes::new([i as u8; 32]));
-		let offers_flow = Arc::new(Mutex::new(OffersMessageFlow::new(
+		let offers_flow = Arc::new(OffersMessageFlow::new(
 			&chan_mgrs[i], cfgs[i].keys_manager, cfgs[i].keys_manager, cfgs[i].logger
-		)));
+		));
 
 		let onion_messenger = OnionMessenger::new(
 			dedicated_entropy, cfgs[i].keys_manager, cfgs[i].logger, &chan_mgrs[i],

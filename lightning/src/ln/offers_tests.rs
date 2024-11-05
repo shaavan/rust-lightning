@@ -2325,26 +2325,7 @@ fn no_double_pay_with_stale_channelmanager() {
 	let monitor_0 = get_monitor!(nodes[0], chan_id_0).encode();
 	let monitor_1 = get_monitor!(nodes[0], chan_id_1).encode();
 
-	persister = crate::util::test_utils::TestPersister::new();
-	chain_monitor = crate::util::test_utils::TestChainMonitor::new(
-		Some(nodes[0].chain_source.clone()),
-		nodes[0].tx_broadcaster.clone(),
-		nodes[0].logger.clone(),
-		nodes[0].fee_estimator.clone(),
-		&persister,
-		&nodes[0].keys_manager
-	);
-	nodes[0].chain_monitor = &chain_monitor;
-
-	alice_deserialized = _reload_node(
-		&nodes[0],
-		crate::util::config::UserConfig::default(),
-		&alice_chan_manager_serialized,
-		&[&monitor_0, &monitor_1]
-	);
-
-	nodes[0].node = &alice_deserialized;
-	nodes[0].offers_handler.lock().unwrap().set_new_trait_implementer(&alice_deserialized);
+	reload_node!(nodes[0], &alice_chan_manager_serialized, &[&monitor_0, &monitor_1], persister, chain_monitor, alice_deserialized);
 	
 	// The stale manager results in closing the channels.
 	check_closed_event!(nodes[0], 2, ClosureReason::OutdatedChannelManager, [bob_id, bob_id], 10_000_000);
