@@ -1323,7 +1323,7 @@ fn custom_tlvs_to_blinded_path() {
 	);
 
 	let recipient_onion_fields = RecipientOnionFields::spontaneous_empty()
-		.with_custom_tlvs(vec![((1 << 16) + 1, vec![42, 42])])
+		.with_sender_custom_tlvs(vec![((1 << 16) + 3, vec![42, 42])])
 		.unwrap();
 	nodes[0].node.send_payment(payment_hash, recipient_onion_fields.clone(),
 		PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
@@ -1336,11 +1336,11 @@ fn custom_tlvs_to_blinded_path() {
 	let path = &[&nodes[1]];
 	let args = PassAlongPathArgs::new(&nodes[0], path, amt_msat, payment_hash, ev)
 		.with_payment_secret(payment_secret)
-		.with_custom_tlvs(recipient_onion_fields.custom_tlvs.clone());
+		.with_sender_custom_tlvs(recipient_onion_fields.sender_custom_tlvs.clone());
 	do_pass_along_path(args);
 	claim_payment_along_route(
 		ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]]], payment_preimage)
-			.with_custom_tlvs(recipient_onion_fields.custom_tlvs.clone())
+			.with_sender_custom_tlvs(recipient_onion_fields.sender_custom_tlvs.clone())
 	);
 }
 
