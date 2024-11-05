@@ -2668,7 +2668,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 						assert_eq!(our_payment_hash, *payment_hash);
 						assert_eq!(node.node.get_our_node_id(), receiver_node_id.unwrap());
 						assert!(onion_fields.is_some());
-						assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, custom_tlvs);
+						assert_eq!(onion_fields.as_ref().unwrap().sender_custom_tlvs, custom_tlvs);
 						assert_eq!(onion_fields.as_ref().unwrap().payment_metadata, payment_metadata);
 						match &purpose {
 							PaymentPurpose::Bolt11InvoicePayment { payment_preimage, payment_secret, .. } => {
@@ -2849,7 +2849,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(preimage, our_payment_preimage);
 			assert_eq!(htlcs.len(), expected_paths.len());  // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
-			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, custom_tlvs);
+			assert_eq!(onion_fields.as_ref().unwrap().sender_custom_tlvs, custom_tlvs);
 			check_claimed_htlcs_match_route(origin_node, expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
 		},
@@ -2866,7 +2866,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(&payment_hash.0, &Sha256::hash(&our_payment_preimage.0)[..]);
 			assert_eq!(htlcs.len(), expected_paths.len());  // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
-			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, custom_tlvs);
+			assert_eq!(onion_fields.as_ref().unwrap().sender_custom_tlvs, custom_tlvs);
 			check_claimed_htlcs_match_route(origin_node, expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
 		}

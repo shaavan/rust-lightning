@@ -262,7 +262,9 @@ where
 								encrypted_tlvs: &blinded_hop.encrypted_payload,
 								intro_node_blinding_point: blinding_point.take(),
 								keysend_preimage: *keysend_preimage,
-								custom_tlvs: &recipient_onion.custom_tlvs,
+								sender_custom_tlvs: &recipient_onion.sender_custom_tlvs,
+								// Can I get blinded path receivetlvs here?
+								user_custom_tlvs: &recipient_onion.user_custom_tlvs,
 							},
 						);
 					} else {
@@ -284,7 +286,8 @@ where
 						}),
 						payment_metadata: recipient_onion.payment_metadata.as_ref(),
 						keysend_preimage: *keysend_preimage,
-						custom_tlvs: &recipient_onion.custom_tlvs,
+						sender_custom_tlvs: &recipient_onion.sender_custom_tlvs,
+						user_custom_tlvs: &recipient_onion.user_custom_tlvs,
 						sender_intended_htlc_amt_msat: value_msat,
 						cltv_expiry_height: cltv,
 					},

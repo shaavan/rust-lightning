@@ -187,7 +187,9 @@ pub enum PendingHTLCRouting {
 		/// For HTLCs received by LDK, this will ultimately be exposed in
 		/// [`Event::PaymentClaimable::onion_fields`] as
 		/// [`RecipientOnionFields::custom_tlvs`].
-		custom_tlvs: Vec<(u64, Vec<u8>)>,
+		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
+		/// Custom TLVs which were set by us through the reply path
+		user_custom_tlvs: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
 	},
@@ -217,7 +219,9 @@ pub enum PendingHTLCRouting {
 		///
 		/// For HTLCs received by LDK, these will ultimately bubble back up as
 		/// [`RecipientOnionFields::custom_tlvs`].
-		custom_tlvs: Vec<(u64, Vec<u8>)>,
+		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
+		/// Custom TLVs which were set by us through the reply path
+		user_custom_tlvs: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
 	},
@@ -5712,23 +5716,24 @@ where
 								let (cltv_expiry, onion_payload, payment_data, payment_context, phantom_shared_secret, mut onion_fields) = match routing {
 									PendingHTLCRouting::Receive {
 										payment_data, payment_metadata, payment_context,
-										incoming_cltv_expiry, phantom_shared_secret, custom_tlvs,
+										incoming_cltv_expiry, phantom_shared_secret, sender_custom_tlvs, user_custom_tlvs,
 										requires_blinded_error: _
 									} => {
 										let _legacy_hop_data = Some(payment_data.clone());
 										let onion_fields = RecipientOnionFields { payment_secret: Some(payment_data.payment_secret),
-												payment_metadata, custom_tlvs };
+												payment_metadata, sender_custom_tlvs, user_custom_tlvs };
 										(incoming_cltv_expiry, OnionPayload::Invoice { _legacy_hop_data },
 											Some(payment_data), payment_context, phantom_shared_secret, onion_fields)
 									},
 									PendingHTLCRouting::ReceiveKeysend {
 										payment_data, payment_preimage, payment_metadata,
-										incoming_cltv_expiry, custom_tlvs, requires_blinded_error: _
+										incoming_cltv_expiry, sender_custom_tlvs, user_custom_tlvs, requires_blinded_error: _
 									} => {
 										let onion_fields = RecipientOnionFields {
 											payment_secret: payment_data.as_ref().map(|data| data.payment_secret),
 											payment_metadata,
-											custom_tlvs,
+											sender_custom_tlvs,
+											user_custom_tlvs,
 										};
 										(incoming_cltv_expiry, OnionPayload::Spontaneous(payment_preimage),
 											payment_data, None, None, onion_fields)
@@ -6700,10 +6705,10 @@ where
 						}
 					});
 
-				if let Some(RecipientOnionFields { ref custom_tlvs, .. }) = claiming_payment.onion_fields {
-					if !custom_tlvs_known && custom_tlvs.iter().any(|(typ, _)| typ % 2 == 0) {
+				if let Some(RecipientOnionFields { ref sender_custom_tlvs, .. }) = claiming_payment.onion_fields {
+					if !custom_tlvs_known && sender_custom_tlvs.iter().any(|(typ, _)| typ % 2 == 0) {
 						log_info!(self.logger, "Rejecting payment with payment hash {} as we cannot accept payment with unknown even TLVs: {}",
-							&payment_hash, log_iter!(custom_tlvs.iter().map(|(typ, _)| typ).filter(|typ| *typ % 2 == 0)));
+							&payment_hash, log_iter!(sender_custom_tlvs.iter().map(|(typ, _)| typ).filter(|typ| *typ % 2 == 0)));
 						claimable_payments.pending_claiming_payments.remove(&payment_hash);
 						mem::drop(claimable_payments);
 						for htlc in payment.htlcs {
@@ -11455,9 +11460,10 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(1, phantom_shared_secret, option),
 		(2, incoming_cltv_expiry, required),
 		(3, payment_metadata, option),
-		(5, custom_tlvs, optional_vec),
+		(5, sender_custom_tlvs, optional_vec),
 		(7, requires_blinded_error, (default_value, false)),
 		(9, payment_context, option),
+		(11, user_custom_tlvs, optional_vec),
 	},
 	(2, ReceiveKeysend) => {
 		(0, payment_preimage, required),
@@ -11465,7 +11471,8 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(2, incoming_cltv_expiry, required),
 		(3, payment_metadata, option),
 		(4, payment_data, option), // Added in 0.0.116
-		(5, custom_tlvs, optional_vec),
+		(5, sender_custom_tlvs, optional_vec),
+		(7, user_custom_tlvs, optional_vec),
 	},
 );
 
@@ -14182,7 +14189,8 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: sender_intended_amt_msat,
 			}),
-			custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(),
+			user_custom_tlvs: Vec::new(),
 		};
 		// Check that if the amount we received + the penultimate hop extra fee is less than the sender
 		// intended amount, we fail the payment.
@@ -14204,7 +14212,8 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: sender_intended_amt_msat,
 			}),
-			custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(),
+			user_custom_tlvs: Vec::new(),
 		};
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		assert!(create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
@@ -14228,7 +14237,8 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: 100,
 			}),
-			custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(),
+			user_custom_tlvs: Vec::new(),
 		}, [0; 32], PaymentHash([0; 32]), 100, 23, None, true, None, current_height,
 			node[0].node.default_configuration.accept_mpp_keysend);
 
