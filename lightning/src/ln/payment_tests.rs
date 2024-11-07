@@ -3787,8 +3787,12 @@ fn test_retry_custom_tlvs() {
 	let mut route_params = route.route_params.clone().unwrap();
 
 	let sender_custom_tlvs = vec![((1 << 16) + 3, vec![0x42u8; 16])];
+	let user_custom_tlvs = vec![0x43u8; 16];
 	let onion_fields = RecipientOnionFields::secret_only(payment_secret);
-	let onion_fields = onion_fields.with_sender_custom_tlvs(sender_custom_tlvs.clone()).unwrap();
+	let onion_fields = onion_fields
+		.with_user_custom_tlvs(user_custom_tlvs.clone())
+		.with_sender_custom_tlvs(sender_custom_tlvs.clone())
+		.unwrap();
 
 	nodes[0].router.expect_find_route(route_params.clone(), Ok(route.clone()));
 	nodes[0].node.send_payment(payment_hash, onion_fields,
@@ -3840,10 +3844,12 @@ fn test_retry_custom_tlvs() {
 	let path = &[&nodes[1], &nodes[2]];
 	let args = PassAlongPathArgs::new(&nodes[0], path, 1_000_000, payment_hash, events.pop().unwrap())
 		.with_payment_secret(payment_secret)
+		.with_user_custom_tlvs(user_custom_tlvs.clone())
 		.with_sender_custom_tlvs(sender_custom_tlvs.clone());
 	do_pass_along_path(args);
 	claim_payment_along_route(
 		ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1], &nodes[2]]], payment_preimage)
+			.with_user_custom_tlvs(user_custom_tlvs)
 			.with_sender_custom_tlvs(sender_custom_tlvs)
 	);
 }
