@@ -674,6 +674,11 @@ impl RecipientOnionFields {
 		Ok(self)
 	}
 
+	pub fn with_user_custom_tlvs(mut self, custom_tlvs: Vec<u8>) -> Self {
+		self.user_custom_tlvs = custom_tlvs;
+		self
+	}
+
 	/// Gets the custom TLVs that will be sent or have been received.
 	///
 	/// Custom TLVs allow sending extra application-specific data with a payment. They provide
