@@ -1145,13 +1145,6 @@ mod tests {
 				TestScorer,
 			>,
 		>,
-		Arc<
-			DefaultMessageRouter<
-				Arc<NetworkGraph<Arc<test_utils::TestLogger>>>,
-				Arc<test_utils::TestLogger>,
-				Arc<KeysManager>,
-			>,
-		>,
 		Arc<test_utils::TestLogger>,
 	>;
 
@@ -1578,7 +1571,6 @@ mod tests {
 				chain_monitor.clone(),
 				tx_broadcaster.clone(),
 				router.clone(),
-				msg_router.clone(),
 				logger.clone(),
 				keys_manager.clone(),
 				keys_manager.clone(),

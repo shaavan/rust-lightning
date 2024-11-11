@@ -15,7 +15,6 @@ use crate::ln::channelmanager::{Bolt11InvoiceParameters, ChannelManager, Phantom
 use crate::ln::inbound_payment::{create, create_from_hash, ExpandedKey};
 use crate::routing::gossip::RoutingFees;
 use crate::routing::router::{RouteHint, RouteHintHop, Router};
-use crate::onion_message::messenger::MessageRouter;
 use crate::util::logger::{Logger, Record};
 use bitcoin::secp256k1::PublicKey;
 use alloc::collections::{btree_map, BTreeMap};
@@ -329,8 +328,8 @@ fn rotate_through_iterators<T, I: Iterator<Item = T>>(mut vecs: Vec<I>) -> impl 
 /// confirmations during routing.
 ///
 /// [`MIN_FINAL_CLTV_EXPIRY_DETLA`]: crate::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA
-pub fn create_invoice_from_channelmanager<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
-	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
+pub fn create_invoice_from_channelmanager<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>(
+	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, L>, amt_msat: Option<u64>,
 	description: String, invoice_expiry_delta_secs: u32, min_final_cltv_expiry_delta: Option<u16>,
 ) -> Result<Bolt11Invoice, SignOrCreationError<()>>
 where
@@ -341,7 +340,6 @@ where
 	SP::Target: SignerProvider,
 	F::Target: FeeEstimator,
 	R::Target: Router,
-	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
 	let description = Description::new(description).map_err(SignOrCreationError::CreationError)?;
@@ -372,8 +370,8 @@ where
 /// confirmations during routing.
 ///
 /// [`MIN_FINAL_CLTV_EXPIRY_DETLA`]: crate::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA
-pub fn create_invoice_from_channelmanager_with_description_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
-	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
+pub fn create_invoice_from_channelmanager_with_description_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>(
+	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, L>, amt_msat: Option<u64>,
 	description_hash: Sha256, invoice_expiry_delta_secs: u32,
 	min_final_cltv_expiry_delta: Option<u16>,
 ) -> Result<Bolt11Invoice, SignOrCreationError<()>>
@@ -385,7 +383,6 @@ where
 	SP::Target: SignerProvider,
 	F::Target: FeeEstimator,
 	R::Target: Router,
-	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
 	let params = Bolt11InvoiceParameters {
@@ -406,8 +403,8 @@ where
 /// This may be useful if you're building an on-chain swap or involving another protocol where
 /// the payment hash is also involved outside the scope of lightning and want to set the
 /// description hash.
-pub fn create_invoice_from_channelmanager_with_description_hash_and_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
-	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
+pub fn create_invoice_from_channelmanager_with_description_hash_and_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>(
+	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, L>, amt_msat: Option<u64>,
 	description_hash: Sha256, invoice_expiry_delta_secs: u32, payment_hash: PaymentHash,
 	min_final_cltv_expiry_delta: Option<u16>,
 ) -> Result<Bolt11Invoice, SignOrCreationError<()>>
@@ -419,7 +416,6 @@ where
 	SP::Target: SignerProvider,
 	F::Target: FeeEstimator,
 	R::Target: Router,
-	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
 	let params = Bolt11InvoiceParameters {
@@ -438,8 +434,8 @@ where
 /// This version allows for providing a custom [`PaymentHash`] for the invoice.
 /// This may be useful if you're building an on-chain swap or involving another protocol where
 /// the payment hash is also involved outside the scope of lightning.
-pub fn create_invoice_from_channelmanager_with_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
-	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
+pub fn create_invoice_from_channelmanager_with_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, L: Deref>(
+	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, L>, amt_msat: Option<u64>,
 	description: String, invoice_expiry_delta_secs: u32, payment_hash: PaymentHash,
 	min_final_cltv_expiry_delta: Option<u16>,
 ) -> Result<Bolt11Invoice, SignOrCreationError<()>>
@@ -451,7 +447,6 @@ where
 	SP::Target: SignerProvider,
 	F::Target: FeeEstimator,
 	R::Target: Router,
-	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
 	let description = Description::new(description).map_err(SignOrCreationError::CreationError)?;
