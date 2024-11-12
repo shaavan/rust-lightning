@@ -1728,6 +1728,14 @@ pub trait OnionMessageHandler {
 	///
 	/// Note that this method is called before [`Self::peer_connected`].
 	fn provided_init_features(&self, their_node_id: PublicKey) -> InitFeatures;
+
+	/// Indicates that a message was received from any peer for any handler.
+	/// Called before the message is passed to the appropriate handler.
+	/// Useful for indicating that a network connection is active.
+	///
+	/// Note: Since this function is called frequently, it should be as
+	/// efficient as possible for its intended purpose.
+	fn message_received(&self) {}
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
