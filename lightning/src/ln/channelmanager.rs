@@ -2594,7 +2594,7 @@ pub struct ChainParameters {
 
 #[derive(Copy, Clone, PartialEq)]
 #[must_use]
-enum NotifyOption {
+pub(crate) enum NotifyOption {
 	DoPersist,
 	SkipPersistHandleEvents,
 	SkipPersistNoEvents,
@@ -2610,7 +2610,7 @@ enum NotifyOption {
 /// We allow callers to either always notify by constructing with `notify_on_drop` or choose to
 /// notify or not based on whether relevant changes have been made, providing a closure to
 /// `optionally_notify` which returns a `NotifyOption`.
-struct PersistenceNotifierGuard<'a, F: FnMut() -> NotifyOption> {
+pub(crate) struct PersistenceNotifierGuard<'a, F: FnMut() -> NotifyOption> {
 	event_persist_notifier: &'a Notifier,
 	needs_persist_flag: &'a AtomicBool,
 	should_persist: F,
@@ -2625,11 +2625,11 @@ impl<'a> PersistenceNotifierGuard<'a, fn() -> NotifyOption> { // We don't care w
 	/// This must always be called if the changes included a `ChannelMonitorUpdate`, as well as in
 	/// other cases where losing the changes on restart may result in a force-close or otherwise
 	/// isn't ideal.
-	fn notify_on_drop<C: AChannelManager>(cm: &'a C) -> PersistenceNotifierGuard<'a, impl FnMut() -> NotifyOption> {
+	pub(crate) fn notify_on_drop<C: AChannelManager>(cm: &'a C) -> PersistenceNotifierGuard<'a, impl FnMut() -> NotifyOption> {
 		Self::optionally_notify(cm, || -> NotifyOption { NotifyOption::DoPersist })
 	}
 
-	fn optionally_notify<F: FnMut() -> NotifyOption, C: AChannelManager>(cm: &'a C, mut persist_check: F)
+	pub(crate) fn optionally_notify<F: FnMut() -> NotifyOption, C: AChannelManager>(cm: &'a C, mut persist_check: F)
 	-> PersistenceNotifierGuard<'a, impl FnMut() -> NotifyOption> {
 		let read_guard = cm.get_cm().total_consistency_lock.read().unwrap();
 		let force_notify = cm.get_cm().process_background_events();
@@ -2656,7 +2656,7 @@ impl<'a> PersistenceNotifierGuard<'a, fn() -> NotifyOption> { // We don't care w
 	/// Note that if any [`ChannelMonitorUpdate`]s are possibly generated,
 	/// [`ChannelManager::process_background_events`] MUST be called first (or
 	/// [`Self::optionally_notify`] used).
-	fn optionally_notify_skipping_background_events<F: Fn() -> NotifyOption, C: AChannelManager>
+	pub(crate) fn optionally_notify_skipping_background_events<F: Fn() -> NotifyOption, C: AChannelManager>
 	(cm: &'a C, persist_check: F) -> PersistenceNotifierGuard<'a, F> {
 		let read_guard = cm.get_cm().total_consistency_lock.read().unwrap();
 
@@ -2711,7 +2711,7 @@ pub const MIN_CLTV_EXPIRY_DELTA: u16 = 6*7;
 // scale them up to suit its security policy. At the network-level, we shouldn't constrain them too much,
 // while avoiding to introduce a DoS vector. Further, a low CTLV_FAR_FAR_AWAY could be a source of
 // routing failure for any HTLC sender picking up an LDK node among the first hops.
-pub(super) const CLTV_FAR_FAR_AWAY: u32 = 14 * 24 * 6;
+pub(crate) const CLTV_FAR_FAR_AWAY: u32 = 14 * 24 * 6;
 
 /// Minimum CLTV difference between the current block height and received inbound payments.
 /// Invoices generated for payment to us must set their `min_final_cltv_expiry_delta` field to at least
@@ -9680,7 +9680,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 /// Sending multiple requests increases the chances of successful delivery in case some
 /// paths are unavailable. However, only one invoice for a given [`PaymentId`] will be paid,
 /// even if multiple invoices are received.
-const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
+pub(crate) const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
 where

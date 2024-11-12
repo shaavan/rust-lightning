@@ -828,7 +828,7 @@ impl OutboundPayments {
 		}
 	}
 
-	pub(super) fn send_payment_for_bolt12_invoice<
+	pub fn send_payment_for_bolt12_invoice<
 		R: Deref, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
 	>(
 		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, router: &R,
