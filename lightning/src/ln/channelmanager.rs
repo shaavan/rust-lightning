@@ -1115,7 +1115,7 @@ impl_writeable_tlv_based_enum_upgradable!(MonitorUpdateCompletionAction,
 );
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum EventCompletionAction {
+pub enum EventCompletionAction {
 	ReleaseRAAChannelMonitorUpdate {
 		counterparty_node_id: PublicKey,
 		channel_funding_outpoint: OutPoint,
@@ -1677,7 +1677,7 @@ where
 /// currently open channels.
 ///
 /// ```
-/// # use lightning::ln::channelmanager::AChannelManager;
+/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons};
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) {
 /// # let channel_manager = channel_manager.get_cm();
@@ -3395,11 +3395,6 @@ where
 		}
 	}
 
-	/// Gets the current configuration applied to all new channels.
-	pub fn get_current_default_configuration(&self) -> &UserConfig {
-		&self.default_configuration
-	}
-
 	fn create_and_insert_outbound_scid_alias(&self) -> u64 {
 		let height = self.best_block.read().unwrap().height;
 		let mut outbound_scid_alias = 0;
@@ -3564,19 +3559,6 @@ where
 			}
 		}
 		res
-	}
-
-	/// Gets the list of usable channels, in random order. Useful as an argument to
-	/// [`Router::find_route`] to ensure non-announced channels are used.
-	///
-	/// These are guaranteed to have their [`ChannelDetails::is_usable`] value set to true, see the
-	/// documentation for [`ChannelDetails::is_usable`] for more info on exactly what the criteria
-	/// are.
-	pub fn list_usable_channels(&self) -> Vec<ChannelDetails> {
-		// Note we use is_live here instead of usable which leads to somewhat confused
-		// internal/external nomenclature, but that's ok cause that's probably what the user
-		// really wanted anyway.
-		self.list_funded_channels_with_filter(|&(_, ref channel)| channel.context.is_live())
 	}
 
 	/// Gets the list of channels we have with a given counterparty, in random order.
@@ -4316,97 +4298,6 @@ where
 		})
 	}
 
-	fn send_payment_along_path(&self, args: SendAlongPathArgs) -> Result<(), APIError> {
-		let SendAlongPathArgs {
-			path, payment_hash, recipient_onion, total_value, cur_height, payment_id, keysend_preimage,
-			invoice_request, session_priv_bytes
-		} = args;
-		// The top-level caller should hold the total_consistency_lock read lock.
-		debug_assert!(self.total_consistency_lock.try_write().is_err());
-		let prng_seed = self.entropy_source.get_secure_random_bytes();
-		let session_priv = SecretKey::from_slice(&session_priv_bytes[..]).expect("RNG is busted");
-
-		let (onion_packet, htlc_msat, htlc_cltv) = onion_utils::create_payment_onion(
-			&self.secp_ctx, &path, &session_priv, total_value, recipient_onion, cur_height,
-			payment_hash, keysend_preimage, invoice_request, prng_seed
-		).map_err(|e| {
-			let logger = WithContext::from(&self.logger, Some(path.hops.first().unwrap().pubkey), None, Some(*payment_hash));
-			log_error!(logger, "Failed to build an onion for path for payment hash {}", payment_hash);
-			e
-		})?;
-
-		let err: Result<(), _> = loop {
-			let (counterparty_node_id, id) = match self.short_to_chan_info.read().unwrap().get(&path.hops.first().unwrap().short_channel_id) {
-				None => {
-					let logger = WithContext::from(&self.logger, Some(path.hops.first().unwrap().pubkey), None, Some(*payment_hash));
-					log_error!(logger, "Failed to find first-hop for payment hash {}", payment_hash);
-					return Err(APIError::ChannelUnavailable{err: "No channel available with first hop!".to_owned()})
-				},
-				Some((cp_id, chan_id)) => (cp_id.clone(), chan_id.clone()),
-			};
-
-			let logger = WithContext::from(&self.logger, Some(counterparty_node_id), Some(id), Some(*payment_hash));
-			log_trace!(logger,
-				"Attempting to send payment with payment hash {} along path with next hop {}",
-				payment_hash, path.hops.first().unwrap().short_channel_id);
-
-			let per_peer_state = self.per_peer_state.read().unwrap();
-			let peer_state_mutex = per_peer_state.get(&counterparty_node_id)
-				.ok_or_else(|| APIError::ChannelUnavailable{err: "No peer matching the path's first hop found!".to_owned() })?;
-			let mut peer_state_lock = peer_state_mutex.lock().unwrap();
-			let peer_state = &mut *peer_state_lock;
-			if let hash_map::Entry::Occupied(mut chan_phase_entry) = peer_state.channel_by_id.entry(id) {
-				match chan_phase_entry.get_mut() {
-					ChannelPhase::Funded(chan) => {
-						if !chan.context.is_live() {
-							return Err(APIError::ChannelUnavailable{err: "Peer for first hop currently disconnected".to_owned()});
-						}
-						let funding_txo = chan.context.get_funding_txo().unwrap();
-						let logger = WithChannelContext::from(&self.logger, &chan.context, Some(*payment_hash));
-						let send_res = chan.send_htlc_and_commit(htlc_msat, payment_hash.clone(),
-							htlc_cltv, HTLCSource::OutboundRoute {
-								path: path.clone(),
-								session_priv: session_priv.clone(),
-								first_hop_htlc_msat: htlc_msat,
-								payment_id,
-							}, onion_packet, None, &self.fee_estimator, &&logger);
-						match break_chan_phase_entry!(self, send_res, chan_phase_entry) {
-							Some(monitor_update) => {
-								match handle_new_monitor_update!(self, funding_txo, monitor_update, peer_state_lock, peer_state, per_peer_state, chan) {
-									false => {
-										// Note that MonitorUpdateInProgress here indicates (per function
-										// docs) that we will resend the commitment update once monitor
-										// updating completes. Therefore, we must return an error
-										// indicating that it is unsafe to retry the payment wholesale,
-										// which we do in the send_payment check for
-										// MonitorUpdateInProgress, below.
-										return Err(APIError::MonitorUpdateInProgress);
-									},
-									true => {},
-								}
-							},
-							None => {},
-						}
-					},
-					_ => return Err(APIError::ChannelUnavailable{err: "Channel to first hop is unfunded".to_owned()}),
-				};
-			} else {
-				// The channel was likely removed after we fetched the id from the
-				// `short_to_chan_info` map, but before we successfully locked the
-				// `channel_by_id` map.
-				// This can occur as no consistency guarantees exists between the two maps.
-				return Err(APIError::ChannelUnavailable{err: "No channel available with first hop!".to_owned()});
-			}
-			return Ok(());
-		};
-		match handle_error!(self, err, path.hops.first().unwrap().pubkey) {
-			Ok(_) => unreachable!(),
-			Err(e) => {
-				Err(APIError::ChannelUnavailable { err: e.err })
-			},
-		}
-	}
-
 	/// Sends a payment along a given route.
 	///
 	/// This method is *DEPRECATED*, use [`Self::send_payment`] instead. If you wish to fix the
@@ -4676,11 +4567,6 @@ where
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn abandon_payment(&self, payment_id: PaymentId) {
 		self.abandon_payment_with_reason(payment_id, PaymentFailureReason::UserAbandoned)
-	}
-
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
 	}
 
 	/// Send a spontaneous payment, which is a payment that does not require the recipient to have
@@ -9387,6 +9273,276 @@ impl Default for Bolt11InvoiceParameters {
 	}
 }
 
+pub trait OffersMessageCommons {
+	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
+	/// to pay us.
+	///
+	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
+	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
+	///
+	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
+	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
+	/// should then be passed directly to [`claim_funds`].
+	///
+	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
+	///
+	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
+	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
+	///
+	/// # Note
+	///
+	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
+	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
+	///
+	/// Errors if `min_value_msat` is greater than total bitcoin supply.
+	///
+	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
+	/// on versions of LDK prior to 0.0.114.
+	///
+	/// [`claim_funds`]: Self::claim_funds
+	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
+	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
+	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
+	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
+
+	/// Gets the list of usable channels, in random order. Useful as an argument to
+	/// [`Router::find_route`] to ensure non-announced channels are used.
+	///
+	/// These are guaranteed to have their [`ChannelDetails::is_usable`] value set to true, see the
+	/// documentation for [`ChannelDetails::is_usable`] for more info on exactly what the criteria
+	/// are.
+	fn list_usable_channels(&self) -> Vec<ChannelDetails>;
+	
+	/// Gets the current configuration applied to all new channels.
+	fn get_current_default_configuration(&self) -> &UserConfig;
+
+	/// Gets inflight HTLC information by processing pending outbound payments that are in
+	/// our channels. May be used during pathfinding to account for in-use channel liquidity.	
+	fn compute_inflight_htlcs(&self) -> InFlightHtlcs;
+
+	/// Gets the [`ChainHash`] of the chain.
+	fn get_chain_hash(&self) -> ChainHash;
+
+	/// Gets the current [`BestBlock`]
+	fn get_best_block(&self) -> BestBlock;
+	
+	/// Gets the node id, and channel scid for the peers to use for blinded path.
+	fn get_peers_for_blinded_path(&self) -> Vec<MessageForwardNode>;
+
+	/// Get the information of the pending [`OutboundPayments`]
+	fn get_pending_outbound_payments(&self) -> &OutboundPayments;
+	
+	/// Add a new pending [`Event`] to the list of pending events.
+	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>));
+	
+	/// Gets the [`Bolt12InvoiceFeatures`].
+	fn bolt12_invoice_features(&self) -> Bolt12InvoiceFeatures;
+	
+	/// Sends payment along path using the payment [`SendAlongPathArgs`]
+	fn send_payment_along_path(&self, args: SendAlongPathArgs) -> Result<(), APIError>;
+	
+	/// Get the list of pending events.
+	fn get_pending_events(&self) -> &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>;
+
+	/// Abandon the payment with reason.
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
+}
+
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+where
+	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
+	T::Target: BroadcasterInterface,
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	SP::Target: SignerProvider,
+	F::Target: FeeEstimator,
+	R::Target: Router,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+
+{
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
+		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
+			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
+			min_final_cltv_expiry_delta)
+	}
+
+	fn list_usable_channels(&self) -> Vec<ChannelDetails> {
+		// Note we use is_live here instead of usable which leads to somewhat confused
+		// internal/external nomenclature, but that's ok cause that's probably what the user
+		// really wanted anyway.
+		self.list_funded_channels_with_filter(|&(_, ref channel)| channel.context.is_live())
+	}
+
+	/// Gets the current configuration applied to all new channels.
+	fn get_current_default_configuration(&self) -> &UserConfig {
+		&self.default_configuration
+	}
+
+	/// Gets inflight HTLC information by processing pending outbound payments that are in
+	/// our channels. May be used during pathfinding to account for in-use channel liquidity.
+	fn compute_inflight_htlcs(&self) -> InFlightHtlcs {
+		let mut inflight_htlcs = InFlightHtlcs::new();
+
+		let per_peer_state = self.per_peer_state.read().unwrap();
+		for (_cp_id, peer_state_mutex) in per_peer_state.iter() {
+			let mut peer_state_lock = peer_state_mutex.lock().unwrap();
+			let peer_state = &mut *peer_state_lock;
+			for chan in peer_state.channel_by_id.values().filter_map(
+				|phase| if let ChannelPhase::Funded(chan) = phase { Some(chan) } else { None }
+			) {
+				for (htlc_source, _) in chan.inflight_htlc_sources() {
+					if let HTLCSource::OutboundRoute { path, .. } = htlc_source {
+						inflight_htlcs.process_path(path, self.get_our_node_id());
+					}
+				}
+			}
+		}
+
+		inflight_htlcs
+	}
+
+	fn get_chain_hash(&self) -> ChainHash {
+		self.chain_hash
+	}
+
+	fn get_best_block(&self) -> BestBlock {
+		*self.best_block.read().unwrap()
+	}
+
+	fn get_peers_for_blinded_path(&self) -> Vec<MessageForwardNode> {
+		self.per_peer_state.read().unwrap()
+			.iter()
+			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
+			.filter(|(_, peer)| peer.is_connected)
+			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
+			.map(|(node_id, peer)| MessageForwardNode {
+				node_id: *node_id,
+				short_channel_id: peer.channel_by_id
+					.iter()
+					.filter(|(_, channel)| channel.context().is_usable())
+					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+			})
+			.collect::<Vec<_>>()
+	}
+
+	fn get_pending_outbound_payments(&self) -> &OutboundPayments {
+		&self.pending_outbound_payments
+	}
+
+	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>)) {
+		self.pending_events.lock().unwrap().push_back(event);
+	}
+
+	fn bolt12_invoice_features(&self) -> Bolt12InvoiceFeatures {
+		provided_bolt12_invoice_features(&self.default_configuration)
+	}
+
+	fn send_payment_along_path(&self, args: SendAlongPathArgs) -> Result<(), APIError> {
+		let SendAlongPathArgs {
+			path, payment_hash, recipient_onion, total_value, cur_height, payment_id, keysend_preimage,
+			invoice_request, session_priv_bytes
+		} = args;
+		// The top-level caller should hold the total_consistency_lock read lock.
+		debug_assert!(self.total_consistency_lock.try_write().is_err());
+		let prng_seed = self.entropy_source.get_secure_random_bytes();
+		let session_priv = SecretKey::from_slice(&session_priv_bytes[..]).expect("RNG is busted");
+
+		let (onion_packet, htlc_msat, htlc_cltv) = onion_utils::create_payment_onion(
+			&self.secp_ctx, &path, &session_priv, total_value, recipient_onion, cur_height,
+			payment_hash, keysend_preimage, invoice_request, prng_seed
+		).map_err(|e| {
+			let logger = WithContext::from(&self.logger, Some(path.hops.first().unwrap().pubkey), None, Some(*payment_hash));
+			log_error!(logger, "Failed to build an onion for path for payment hash {}", payment_hash);
+			e
+		})?;
+
+		let err: Result<(), _> = loop {
+			let (counterparty_node_id, id) = match self.short_to_chan_info.read().unwrap().get(&path.hops.first().unwrap().short_channel_id) {
+				None => {
+					let logger = WithContext::from(&self.logger, Some(path.hops.first().unwrap().pubkey), None, Some(*payment_hash));
+					log_error!(logger, "Failed to find first-hop for payment hash {}", payment_hash);
+					return Err(APIError::ChannelUnavailable{err: "No channel available with first hop!".to_owned()})
+				},
+				Some((cp_id, chan_id)) => (cp_id.clone(), chan_id.clone()),
+			};
+
+			let logger = WithContext::from(&self.logger, Some(counterparty_node_id), Some(id), Some(*payment_hash));
+			log_trace!(logger,
+				"Attempting to send payment with payment hash {} along path with next hop {}",
+				payment_hash, path.hops.first().unwrap().short_channel_id);
+
+			let per_peer_state = self.per_peer_state.read().unwrap();
+			let peer_state_mutex = per_peer_state.get(&counterparty_node_id)
+				.ok_or_else(|| APIError::ChannelUnavailable{err: "No peer matching the path's first hop found!".to_owned() })?;
+			let mut peer_state_lock = peer_state_mutex.lock().unwrap();
+			let peer_state = &mut *peer_state_lock;
+			if let hash_map::Entry::Occupied(mut chan_phase_entry) = peer_state.channel_by_id.entry(id) {
+				match chan_phase_entry.get_mut() {
+					ChannelPhase::Funded(chan) => {
+						if !chan.context.is_live() {
+							return Err(APIError::ChannelUnavailable{err: "Peer for first hop currently disconnected".to_owned()});
+						}
+						let funding_txo = chan.context.get_funding_txo().unwrap();
+						let logger = WithChannelContext::from(&self.logger, &chan.context, Some(*payment_hash));
+						let send_res = chan.send_htlc_and_commit(htlc_msat, payment_hash.clone(),
+							htlc_cltv, HTLCSource::OutboundRoute {
+								path: path.clone(),
+								session_priv: session_priv.clone(),
+								first_hop_htlc_msat: htlc_msat,
+								payment_id,
+							}, onion_packet, None, &self.fee_estimator, &&logger);
+						match break_chan_phase_entry!(self, send_res, chan_phase_entry) {
+							Some(monitor_update) => {
+								match handle_new_monitor_update!(self, funding_txo, monitor_update, peer_state_lock, peer_state, per_peer_state, chan) {
+									false => {
+										// Note that MonitorUpdateInProgress here indicates (per function
+										// docs) that we will resend the commitment update once monitor
+										// updating completes. Therefore, we must return an error
+										// indicating that it is unsafe to retry the payment wholesale,
+										// which we do in the send_payment check for
+										// MonitorUpdateInProgress, below.
+										return Err(APIError::MonitorUpdateInProgress);
+									},
+									true => {},
+								}
+							},
+							None => {},
+						}
+					},
+					_ => return Err(APIError::ChannelUnavailable{err: "Channel to first hop is unfunded".to_owned()}),
+				};
+			} else {
+				// The channel was likely removed after we fetched the id from the
+				// `short_to_chan_info` map, but before we successfully locked the
+				// `channel_by_id` map.
+				// This can occur as no consistency guarantees exists between the two maps.
+				return Err(APIError::ChannelUnavailable{err: "No channel available with first hop!".to_owned()});
+			}
+			return Ok(());
+		};
+		match handle_error!(self, err, path.hops.first().unwrap().pubkey) {
+			Ok(_) => unreachable!(),
+			Err(e) => {
+				Err(APIError::ChannelUnavailable { err: e.err })
+			},
+		}
+	}
+
+	fn get_pending_events(&self) -> &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>> {
+		&self.pending_events
+	}
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
+	}
+}
+
 macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
 	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer. The offer's
@@ -9790,43 +9946,6 @@ where
 		}
 	}
 
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: Self::claim_funds
-	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
-	pub fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
-		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
-			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
-			min_final_cltv_expiry_delta)
-	}
-
 	/// Gets a [`PaymentSecret`] for a given [`PaymentHash`], for which the payment preimage is
 	/// stored external to LDK.
 	///
@@ -10036,29 +10155,6 @@ where
 			if short_to_chan_info.contains_key(&scid_candidate) { continue }
 			return scid_candidate
 		}
-	}
-
-	/// Gets inflight HTLC information by processing pending outbound payments that are in
-	/// our channels. May be used during pathfinding to account for in-use channel liquidity.
-	pub fn compute_inflight_htlcs(&self) -> InFlightHtlcs {
-		let mut inflight_htlcs = InFlightHtlcs::new();
-
-		let per_peer_state = self.per_peer_state.read().unwrap();
-		for (_cp_id, peer_state_mutex) in per_peer_state.iter() {
-			let mut peer_state_lock = peer_state_mutex.lock().unwrap();
-			let peer_state = &mut *peer_state_lock;
-			for chan in peer_state.channel_by_id.values().filter_map(
-				|phase| if let ChannelPhase::Funded(chan) = phase { Some(chan) } else { None }
-			) {
-				for (htlc_source, _) in chan.inflight_htlc_sources() {
-					if let HTLCSource::OutboundRoute { path, .. } = htlc_source {
-						inflight_htlcs.process_path(path, self.get_our_node_id());
-					}
-				}
-			}
-		}
-
-		inflight_htlcs
 	}
 
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -10706,12 +10802,6 @@ where
 	#[cfg(any(feature = "_test_utils", test))]
 	pub fn bolt11_invoice_features(&self) -> Bolt11InvoiceFeatures {
 		provided_bolt11_invoice_features(&self.default_configuration)
-	}
-
-	/// Fetches the set of [`Bolt12InvoiceFeatures`] flags that are provided by or required by
-	/// [`ChannelManager`].
-	fn bolt12_invoice_features(&self) -> Bolt12InvoiceFeatures {
-		provided_bolt12_invoice_features(&self.default_configuration)
 	}
 
 	/// Fetches the set of [`ChannelFeatures`] flags that are provided by or required by
@@ -13528,7 +13618,7 @@ mod tests {
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
 	use crate::ln::types::ChannelId;
 	use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
-	use crate::ln::channelmanager::{create_recv_pending_htlc_info, HTLCForwardInfo, inbound_payment, PaymentId, PaymentSendFailure, RecipientOnionFields, InterceptId};
+	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, OffersMessageCommons, PaymentId, PaymentSendFailure, RecipientOnionFields};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{self, ErrorAction};
 	use crate::ln::msgs::ChannelMessageHandler;

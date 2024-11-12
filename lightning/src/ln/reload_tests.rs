@@ -500,7 +500,7 @@ fn test_manager_serialize_deserialize_inconsistent_monitor() {
 #[cfg(feature = "std")]
 fn do_test_data_loss_protect(reconnect_panicing: bool, substantially_old: bool, not_stale: bool) {
 	use crate::routing::router::{RouteParameters, PaymentParameters};
-	use crate::ln::channelmanager::Retry;
+	use crate::ln::channelmanager::{OffersMessageCommons, Retry};
 	use crate::util::string::UntrustedString;
 	// When we get a data_loss_protect proving we're behind, we immediately panic as the
 	// chain::Watch API requirements have been violated (e.g. the user restored from a backup). The

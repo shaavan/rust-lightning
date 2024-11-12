@@ -125,7 +125,7 @@ pub(crate) enum PendingOutboundPayment {
 	},
 }
 
-pub(crate) struct RetryableInvoiceRequest {
+pub struct RetryableInvoiceRequest {
 	pub(crate) invoice_request: InvoiceRequest,
 	pub(crate) nonce: Nonce,
 }
@@ -710,7 +710,7 @@ impl RecipientOnionFields {
 }
 
 /// Arguments for [`super::channelmanager::ChannelManager::send_payment_along_path`].
-pub(super) struct SendAlongPathArgs<'a> {
+pub struct SendAlongPathArgs<'a> {
 	pub path: &'a Path,
 	pub payment_hash: &'a PaymentHash,
 	pub recipient_onion: &'a RecipientOnionFields,
@@ -722,7 +722,7 @@ pub(super) struct SendAlongPathArgs<'a> {
 	pub session_priv_bytes: [u8; 32],
 }
 
-pub(super) struct OutboundPayments {
+pub struct OutboundPayments {
 	pub(super) pending_outbound_payments: Mutex<HashMap<PaymentId, PendingOutboundPayment>>,
 	awaiting_invoice: AtomicBool,
 	retry_lock: Mutex<()>,
