@@ -1622,7 +1622,7 @@ impl OutboundPayments {
 		(payment, onion_session_privs)
 	}
 
-	pub(super) fn add_new_awaiting_invoice(
+	pub(crate) fn add_new_awaiting_invoice(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
 		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
