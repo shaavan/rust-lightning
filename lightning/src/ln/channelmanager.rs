@@ -1124,11 +1124,16 @@ impl_writeable_tlv_based_enum_upgradable!(MonitorUpdateCompletionAction,
 	},
 );
 
+/// TODO: Write docs
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum EventCompletionAction {
+pub enum EventCompletionAction {
+	/// TODO: Write docs
 	ReleaseRAAChannelMonitorUpdate {
+		/// TODO: Write docs
 		counterparty_node_id: PublicKey,
+		/// TODO: Write docs
 		channel_funding_outpoint: OutPoint,
+		/// TODO: Write docs
 		channel_id: ChannelId,
 	},
 }
@@ -2555,9 +2560,9 @@ where
 	needs_persist_flag: AtomicBool,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
-	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+	pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
 	#[cfg(any(test, feature = "_test_utils"))]
-	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+	pub(crate) pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
 	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
@@ -3435,7 +3440,7 @@ where
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_offers_messages: Arc::new(Mutex::new(Vec::new())),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
@@ -3455,11 +3460,6 @@ where
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
 		}
-	}
-
-	/// Gets the current configuration applied to all new channels.
-	pub fn get_current_default_configuration(&self) -> &UserConfig {
-		&self.default_configuration
 	}
 
 	fn create_and_insert_outbound_scid_alias(&self) -> u64 {
@@ -4658,36 +4658,6 @@ where
 		}
 	}
 
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()> {
-		let secp_ctx = &self.secp_ctx;
-		let expanded_key = &self.inbound_payment_key;
-
-		match context {
-			None if invoice.is_for_refund_without_paths() => {
-				invoice.verify_using_metadata(expanded_key, secp_ctx)
-			},
-			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
-				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
-			},
-			_ => Err(()),
-		}
-	}
-
-	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
-		let best_block_height = self.best_block.read().unwrap().height;
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		let features = self.bolt12_invoice_features();
-		self.pending_outbound_payments
-			.send_payment_for_bolt12_invoice(
-				invoice, payment_id, &self.router, self.list_usable_channels(), features,
-				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
-				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
-				|args| self.send_payment_along_path(args)
-			)
-	}
-
 	#[cfg(async_payments)]
 	fn initiate_async_payment(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId
@@ -4801,11 +4771,6 @@ where
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn abandon_payment(&self, payment_id: PaymentId) {
 		self.abandon_payment_with_reason(payment_id, PaymentFailureReason::UserAbandoned)
-	}
-
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
 	}
 
 	/// Send a spontaneous payment, which is a payment that does not require the recipient to have
@@ -9556,6 +9521,237 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	}
 } }
 
+/// Functions commonly shared in usage between [`ChannelManager`] & `OffersMessageFlow`
+pub trait OffersMessageCommons {
+	/// Get pending offers messages
+	fn get_pending_offers_messages(&self) -> Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>;
+
+	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
+	/// to pay us.
+	///
+	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
+	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
+	///
+	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
+	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
+	/// should then be passed directly to [`claim_funds`].
+	///
+	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
+	///
+	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
+	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
+	///
+	/// # Note
+	///
+	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
+	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
+	///
+	/// Errors if `min_value_msat` is greater than total bitcoin supply.
+	///
+	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
+	/// on versions of LDK prior to 0.0.114.
+	///
+	/// [`claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
+	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
+	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
+	/// [`create_inbound_payment_for_hash`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment_for_hash
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
+
+	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
+	/// [`Router::create_blinded_payment_paths`].
+	fn create_blinded_payment_paths(
+		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
+	) -> Result<Vec<BlindedPaymentPath>, ()>;
+
+	/// Verify bolt12 invoice
+	fn verify_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
+	) -> Result<PaymentId, ()>;
+
+	/// Gets the current configuration applied to all new channels.
+	fn get_current_default_configuration(&self) -> &UserConfig;
+
+	/// Send payment for verified bolt12 invoice
+	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
+
+	/// Add new pending event
+	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>));
+
+	/// Abandon Payment with Reason
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
+
+	/// Release invoice requests awaiting invoice
+	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)>;
+
+	/// Creates a collection of blinded paths by delegating to
+	/// [`MessageRouter::create_blinded_paths`].
+	///
+	/// Errors if the `MessageRouter` errors.
+	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+
+	/// Enqueue invoice request
+	fn enqueue_invoice_request(
+		&self,
+		invoice_request: InvoiceRequest,
+		reply_paths: Vec<BlindedMessagePath>,
+	) -> Result<(), Bolt12SemanticError>;
+
+	/// Get the current time determined by highest seen timestamp
+	fn get_current_blocktime(&self) -> Duration;
+}
+
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+where
+	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
+	T::Target: BroadcasterInterface,
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	SP::Target: SignerProvider,
+	F::Target: FeeEstimator,
+	R::Target: Router,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	fn get_pending_offers_messages(&self) -> Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>> {
+        self.pending_offers_messages.clone()
+    }
+
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
+		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
+			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
+			min_final_cltv_expiry_delta)
+	}
+
+	fn create_blinded_payment_paths(
+		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		let secp_ctx = &self.secp_ctx;
+
+		let first_hops = self.list_usable_channels();
+		let payee_node_id = self.get_our_node_id();
+		let max_cltv_expiry = self.best_block.read().unwrap().height + CLTV_FAR_FAR_AWAY
+			+ LATENCY_GRACE_PERIOD_BLOCKS;
+		let payee_tlvs = ReceiveTlvs {
+			payment_secret,
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry,
+				htlc_minimum_msat: 1,
+			},
+			payment_context,
+		};
+		self.router.create_blinded_payment_paths(
+			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
+		)
+	}
+
+	fn verify_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
+	) -> Result<PaymentId, ()> {
+		let secp_ctx = &self.secp_ctx;
+		let expanded_key = &self.inbound_payment_key;
+
+		match context {
+			None if invoice.is_for_refund_without_paths() => {
+				invoice.verify_using_metadata(expanded_key, secp_ctx)
+			},
+			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
+				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
+			},
+			_ => Err(()),
+		}
+	}
+
+	fn get_current_default_configuration(&self) -> &UserConfig {
+		&self.default_configuration
+	}
+
+	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
+		let best_block_height = self.best_block.read().unwrap().height;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		let features = self.bolt12_invoice_features();
+		self.pending_outbound_payments
+			.send_payment_for_bolt12_invoice(
+				invoice, payment_id, &self.router, self.list_usable_channels(), features,
+				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
+				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
+				|args| self.send_payment_along_path(args)
+			)
+	}
+
+	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>)) {
+		self.pending_events.lock().unwrap().push_back(event);
+	}
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		self.pending_outbound_payments.abandon_payment(payment_id, reason, &self.pending_events);
+	}
+
+	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)> {
+		self.pending_outbound_payments.release_invoice_requests_awaiting_invoice()
+	}
+
+	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
+		let recipient = self.get_our_node_id();
+		let secp_ctx = &self.secp_ctx;
+
+		let peers = self.per_peer_state.read().unwrap()
+			.iter()
+			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
+			.filter(|(_, peer)| peer.is_connected)
+			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
+			.map(|(node_id, _)| *node_id)
+			.collect::<Vec<_>>();
+
+		self.message_router
+			.create_blinded_paths(recipient, context, peers, secp_ctx)
+			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
+	}
+
+	fn enqueue_invoice_request(
+		&self,
+		invoice_request: InvoiceRequest,
+		reply_paths: Vec<BlindedMessagePath>,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		if !invoice_request.paths().is_empty() {
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| invoice_request.paths().iter().map(move |path| (path, reply_path)))
+				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
+				.for_each(|(path, reply_path)| {
+					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+						destination: Destination::BlindedPath(path.clone()),
+						reply_path: reply_path.clone(),
+					};
+					let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+					pending_offers_messages.push((message, instructions));
+				});
+		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
+			for reply_path in reply_paths {
+				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+					destination: Destination::Node(node_id),
+					reply_path,
+				};
+				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+				pending_offers_messages.push((message, instructions));
+			}
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
+		}
+
+		Ok(())
+	}
+
+	fn get_current_blocktime(&self) -> Duration {
+		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
+	}
+}
+
 /// Defines the maximum number of [`OffersMessage`] including different reply paths to be sent
 /// along different paths.
 /// Sending multiple requests increases the chances of successful delivery in case some
@@ -9703,42 +9899,6 @@ where
 		create_pending_payment(&invoice_request, nonce)?;
 
 		self.enqueue_invoice_request(invoice_request, reply_paths)
-	}
-
-	fn enqueue_invoice_request(
-		&self,
-		invoice_request: InvoiceRequest,
-		reply_paths: Vec<BlindedMessagePath>,
-	) -> Result<(), Bolt12SemanticError> {
-		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if !invoice_request.paths().is_empty() {
-			reply_paths
-				.iter()
-				.flat_map(|reply_path| invoice_request.paths().iter().map(move |path| (path, reply_path)))
-				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
-				.for_each(|(path, reply_path)| {
-					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-						destination: Destination::BlindedPath(path.clone()),
-						reply_path: reply_path.clone(),
-					};
-					let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-					pending_offers_messages.push((message, instructions));
-				});
-		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
-			for reply_path in reply_paths {
-				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: Destination::Node(node_id),
-					reply_path,
-				};
-				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-				pending_offers_messages.push((message, instructions));
-			}
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
-		}
-
-		Ok(())
 	}
 
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
@@ -9908,43 +10068,6 @@ where
 		Ok(())
 	}
 
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: Self::claim_funds
-	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
-	pub fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
-		inbound_payment::create(&self.inbound_payment_key, min_value_msat, invoice_expiry_delta_secs,
-			&self.entropy_source, self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
-			min_final_cltv_expiry_delta)
-	}
-
 	/// Gets a [`PaymentSecret`] for a given [`PaymentHash`], for which the payment preimage is
 	/// stored external to LDK.
 	///
@@ -10039,27 +10162,6 @@ where
 	}
 
 	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| *node_id)
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
 	/// [`MessageRouter::create_compact_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
@@ -10085,30 +10187,6 @@ where
 		self.message_router
 			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
-	/// [`Router::create_blinded_payment_paths`].
-	fn create_blinded_payment_paths(
-		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
-	) -> Result<Vec<BlindedPaymentPath>, ()> {
-		let secp_ctx = &self.secp_ctx;
-
-		let first_hops = self.list_usable_channels();
-		let payee_node_id = self.get_our_node_id();
-		let max_cltv_expiry = self.best_block.read().unwrap().height + CLTV_FAR_FAR_AWAY
-			+ LATENCY_GRACE_PERIOD_BLOCKS;
-		let payee_tlvs = ReceiveTlvs {
-			payment_secret,
-			payment_constraints: PaymentConstraints {
-				max_cltv_expiry,
-				htlc_minimum_msat: 1,
-			},
-			payment_context,
-		};
-		self.router.create_blinded_payment_paths(
-			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
-		)
 	}
 
 	/// Gets a fake short channel id for use in receiving [phantom node payments]. These fake scids
@@ -13679,7 +13757,7 @@ where
 
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_offers_messages: Arc::new(Mutex::new(Vec::new())),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			pending_broadcast_messages: Mutex::new(Vec::new()),
