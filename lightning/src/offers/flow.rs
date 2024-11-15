@@ -11,6 +11,7 @@
 
 use alloc::vec::Vec;
 use core::ops::Deref;
+use core::time::Duration;
 
 use bitcoin::secp256k1::{self, Secp256k1};
 
@@ -28,10 +29,16 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::{DerivedMetadata, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 
 use crate::sign::EntropySource;
 use crate::util::logger::{Logger, WithContext};
+
+#[cfg(c_bindings)]
+use {
+	crate::offers::offer::OfferWithDerivedMetadataBuilder,
+};
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
 ///
@@ -78,24 +85,84 @@ where
     }
 }
 
-/// TODO
+/// ## BOLT 12 Offers
+///
+/// The [`offers`] module is useful for creating BOLT 12 offers. An [`Offer`] is a precursor to a
+/// [`Bolt12Invoice`], which must first be requested by the payer. The interchange of these messages
+/// as defined in the specification is handled by [`OffersMessageFlow`] and its implementation of
+/// [`OffersMessageHandler`]. However, this only works with an [`Offer`] created using a builder
+/// returned by [`create_offer_builder`]. With this approach, BOLT 12 offers and invoices are
+/// stateless just as BOLT 11 invoices are.
+///
+/// ```
+/// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
+/// # use lightning::ln::channelmanager::AChannelManager;
+/// # use lightning::offers::flow::AnOffersMessageFlow;
+/// # use lightning::offers::parse::Bolt12SemanticError;
+///
+/// #
+/// # fn example<T: AnOffersMessageFlow, U: AChannelManager>(offers_flow: T, channel_manager: U) -> Result<(), Bolt12SemanticError> {
+/// # let offers_flow = offers_flow.get_omf();
+/// # let channel_manager = channel_manager.get_cm();
+/// # let absolute_expiry = None;
+/// # let offer = offers_flow
+///     .create_offer_builder(absolute_expiry)?
+/// # ;
+/// # // Needed for compiling for c_bindings
+/// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
+/// # let offer = builder
+///     .description("coffee".to_string())
+///     .amount_msats(10_000_000)
+///     .build()?;
+/// let bech32_offer = offer.to_string();
+///
+/// // On the event processing thread
+/// channel_manager.process_pending_events(&|event| {
+///     match event {
+///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
+///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(payment_preimage), .. } => {
+///                 println!("Claiming payment {}", payment_hash);
+///                 channel_manager.claim_funds(payment_preimage);
+///             },
+///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: None, .. } => {
+///                 println!("Unknown payment hash: {}", payment_hash);
+///             }
+/// #           _ => {},
+///         },
+///         Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
+///             println!("Claimed {} msats", amount_msat);
+///         },
+///         // ...
+///     #     _ => {},
+///     }
+///     Ok(())
+/// });
+/// # Ok(())
+/// # }
+/// ```
+///
+/// [`Bolt12Invoice`]: crate::offers::invoice
+/// [`create_offer_builder`]: Self::create_offer_builder
+/// [`Offer`]: crate::offers::offer
+/// [`offers`]: crate::offers
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, L: Deref>
 where
-	ES::Target: EntropySource,
-	OMC::Target: OffersMessageCommons,
-	L::Target: Logger,
+    ES::Target: EntropySource,
+    OMC::Target: OffersMessageCommons,
+    L::Target: Logger,
 {
-	secp_ctx: Secp256k1<secp256k1::All>,
+    secp_ctx: Secp256k1<secp256k1::All>,
 
-	entropy_source: ES,
+    entropy_source: ES,
 
-	/// Contains function shared between OffersMessageHandler, and ChannelManager.
-	commons: OMC,
+    /// Contains functions shared between OffersMessageHandler and ChannelManager.
+    commons: OMC,
 
-	/// The Logger for use in the OffersMessageFlow and which may be used to log
-	/// information during deserialization.
-	pub logger: L,
+    /// The Logger for use in the OffersMessageFlow and which may be used to log
+    /// information during deserialization.
+    pub logger: L,
 }
+
 
 impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageFlow<ES, OMC, L>
 where
@@ -110,8 +177,8 @@ where
 
 		Self {
 			secp_ctx,
-			commons,
 			entropy_source,
+			commons,
 			logger,
 		}
 	}
@@ -413,4 +480,71 @@ where
 	fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.commons.get_pending_offers_messages())
 	}
+}
+
+macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
+	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
+	/// [`OffersMessageFlow`] when handling [`InvoiceRequest`] messages for the offer. The offer's
+	/// expiration will be `absolute_expiry` if `Some`, otherwise it will not expire.
+	///
+	/// # Privacy
+	///
+	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the offer based on the given
+	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
+	/// privacy implications as well as those of the parameterized [`Router`], which implements
+	/// [`MessageRouter`].
+	///
+	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
+	///
+	/// # Limitations
+	///
+	/// Requires a direct connection to the introduction node in the responding [`InvoiceRequest`]'s
+	/// reply path.
+	///
+	/// # Errors
+	///
+	/// Errors if the parameterized [`Router`] is unable to create a blinded path for the offer.
+	///
+	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]: crate::ln::channelmanager::MAX_SHORT_LIVED_RELATIVE_EXPIRY
+	/// [`MessageRouter`]: crate::onion_message::messenger::MessageRouter
+	/// [`Offer`]: crate::offers::offer
+	/// [`Router`]: crate::routing::router::Router
+	pub fn create_offer_builder(
+		&$self, absolute_expiry: Option<Duration>
+	) -> Result<$builder, Bolt12SemanticError> {
+		let node_id = $self.commons.get_our_node_id();
+		let expanded_key = &$self.commons.get_expanded_key();
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = OffersContext::InvoiceRequest { nonce };
+		let path = $self.commons.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.commons.get_chain_hash())
+			.path(path);
+
+		let builder = match absolute_expiry {
+			None => builder,
+			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
+		};
+
+		Ok(builder.into())
+	}
+} }
+
+impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageFlow<ES, OMC, L>
+where
+    ES::Target: EntropySource,
+    OMC::Target: OffersMessageCommons,
+    L::Target: Logger,
+{
+	#[cfg(not(c_bindings))]
+	create_offer_builder!(self, OfferBuilder<DerivedMetadata, secp256k1::All>);
+	#[cfg(c_bindings)]
+	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
 }
