@@ -21,6 +21,7 @@ use crate::ln::channel::{
 	calculate_our_funding_satoshis, OutboundV2Channel, MIN_CHAN_DUST_LIMIT_SATOSHIS,
 };
 use crate::ln::channel_keys::{DelayedPaymentBasepoint, HtlcBasepoint, RevocationBasepoint};
+use crate::ln::channelmanager::OffersMessageCommons;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::ChannelMessageHandler;
 use crate::ln::msgs::{CommitmentSigned, TxAddInput, TxAddOutput, TxComplete};
