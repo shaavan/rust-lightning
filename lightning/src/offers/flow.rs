@@ -33,6 +33,50 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::sign::EntropySource;
 use crate::util::logger::{Logger, WithContext};
 
+/// A trivial trait which describes any [`OffersMessageFlow`].
+///
+/// This is not exported to bindings users as general cover traits aren't useful in other
+/// languages.
+pub trait AnOffersMessageFlow {
+	/// A type implementing [`EntropySource`].
+	type EntropySource: EntropySource + ?Sized;
+	/// A type that may be dereferenced to [`Self::EntropySource`].
+	type ES: Deref<Target = Self::EntropySource>;
+
+	/// A type implementing [`OffersMessageCommons`].
+	type OffersMessageCommons: OffersMessageCommons + ?Sized;
+	/// A type that may be dereferenced to [`Self::OffersMessageCommons`].
+	type OMC: Deref<Target = Self::OffersMessageCommons>;
+
+	/// A type implementing [`Logger`].
+	type Logger: Logger + ?Sized;
+	/// A type that may be dereferenced to [`Self::Logger`].
+	type L: Deref<Target = Self::Logger>;
+
+	/// Returns a reference to the actual [`OffersMessageFlow`] object.
+	fn get_omf(&self) -> &OffersMessageFlow<Self::ES, Self::OMC, Self::L>;
+}
+
+impl<ES: Deref, OMC: Deref, L: Deref> AnOffersMessageFlow for OffersMessageFlow<ES, OMC, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	L::Target: Logger,
+{
+	type EntropySource = ES::Target;
+	type ES = ES;
+
+	type OffersMessageCommons = OMC::Target;
+	type OMC = OMC;
+
+	type Logger = L::Target;
+	type L = L;
+
+	fn get_omf(&self) -> &OffersMessageFlow<ES, OMC, L> {
+		self
+	}
+}
+
 /// TODO
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, L: Deref>
 where
