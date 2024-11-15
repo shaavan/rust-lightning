@@ -6817,8 +6817,8 @@ where
 	/// [`Event::PaymentClaimed`]: crate::events::Event::PaymentClaimed
 	/// [`process_pending_events`]: EventsProvider::process_pending_events
 	/// [`create_inbound_payment`]: Self::create_inbound_payment
-	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
-	/// [`claim_funds_with_known_custom_tlvs`]: Self::claim_funds_with_known_custom_tlvs
+	/// [`create_inbound_payment_for_hash`]: ChannelManager::create_inbound_payment_for_hash
+	/// [`claim_funds_with_known_custom_tlvs`]: ChannelManager::claim_funds_with_known_custom_tlvs
 	pub fn claim_funds(&self, payment_preimage: PaymentPreimage) {
 		self.claim_payment_internal(payment_preimage, false);
 	}
@@ -9521,7 +9521,9 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	}
 } }
 
-/// Functions commonly shared in usage between [`ChannelManager`] & `OffersMessageFlow`
+/// Functions commonly shared in usage between [`ChannelManager`] & [`OffersMessageFlow`]
+/// 
+/// [`OffersMessageFlow`]: crate::offers::flow::OffersMessageFlow
 pub trait OffersMessageCommons {
 	/// Get pending offers messages
 	fn get_pending_offers_messages(&self) -> Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>;
