@@ -17,7 +17,7 @@ use types::payment::PaymentPreimage;
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::payment::{Bolt12OfferContext, PaymentContext};
 use crate::events::{Event, EventHandler, PaymentFailureReason};
-use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, PaymentId, Verification};
+use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, PaymentId, RecentPaymentDetails, Verification};
 use crate::ln::inbound_payment;
 use crate::ln::outbound_payment::{Retry, RetryableInvoiceRequest, StaleExpiration};
 use crate::onion_message::messenger::{MessageSendInstructions, Responder, ResponseInstruction};
@@ -139,6 +139,68 @@ where
 /// # }
 /// ```
 ///
+/// A [`Refund`] is a request for an invoice to be paid. Like *paying* for an [`Offer`], *creating*
+/// a [`Refund`] involves maintaining state since it represents a future outbound payment.
+/// Therefore, use [`create_refund_builder`] when creating one, otherwise [`ChannelManager`] will
+/// refuse to pay any corresponding [`Bolt12Invoice`] that it receives.
+///
+/// ```
+/// # use core::time::Duration;
+/// # use lightning::events::{Event, EventsProvider};
+/// # use lightning::ln::channelmanager::{PaymentId, RecentPaymentDetails, Retry};
+/// # use lightning::offers::flow::AnOffersMessageFlow;
+/// # use lightning::offers::parse::Bolt12SemanticError;
+/// #
+/// # fn example<T: AnOffersMessageFlow>(
+/// #     offers_flow: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
+/// #     max_total_routing_fee_msat: Option<u64>
+/// # ) -> Result<(), Bolt12SemanticError> {
+/// # let offers_flow = offers_flow.get_omf();
+/// # let payment_id = PaymentId([42; 32]);
+/// # let refund = offers_flow
+///     .create_refund_builder(
+///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
+///     )?
+/// # ;
+/// # // Needed for compiling for c_bindings
+/// # let builder: lightning::offers::refund::RefundBuilder<_> = refund.into();
+/// # let refund = builder
+///     .description("coffee".to_string())
+///     .payer_note("refund for order 1234".to_string())
+///     .build()?;
+/// let bech32_refund = refund.to_string();
+///
+/// // First the payment will be waiting on an invoice
+/// let expected_payment_id = payment_id;
+/// assert!(
+///     offers_flow.list_recent_payments().iter().find(|details| matches!(
+///         details,
+///         RecentPaymentDetails::AwaitingInvoice { payment_id: expected_payment_id }
+///     )).is_some()
+/// );
+///
+/// // Once the invoice is received, a payment will be sent
+/// assert!(
+///     offers_flow.list_recent_payments().iter().find(|details| matches!(
+///         details,
+///         RecentPaymentDetails::Pending { payment_id: expected_payment_id, ..  }
+///     )).is_some()
+/// );
+///
+/// // On the event processing thread
+/// offers_flow.process_pending_offers_events(&|event| {
+///     match event {
+///         Event::PaymentSent { payment_id: Some(payment_id), .. } => println!("Paid {}", payment_id),
+///         Event::PaymentFailed { payment_id, .. } => println!("Failed paying {}", payment_id),
+///         // ...
+///     #     _ => {},
+///     }
+///     Ok(())
+/// });
+/// # Ok(())
+/// # }
+/// ```
+///
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, NS: Deref, L: Deref>
 where
     ES::Target: EntropySource,
@@ -216,6 +278,10 @@ where
 
 	pub fn claim_funds(&self, payment_preimage: PaymentPreimage) {
 		self.commons.claim_funds(payment_preimage);
+	}
+
+	pub fn list_recent_payments(&self) -> Vec<RecentPaymentDetails> {
+		self.commons.list_recent_payments()
 	}
 }
 
