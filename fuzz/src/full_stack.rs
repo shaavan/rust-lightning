@@ -40,7 +40,8 @@ use lightning::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Listen};
 use lightning::events::Event;
 use lightning::ln::channel_state::ChannelDetails;
 use lightning::ln::channelmanager::{
-	ChainParameters, ChannelManager, InterceptId, PaymentId, RecipientOnionFields, Retry,
+	ChainParameters, ChannelManager, InterceptId, OffersMessageCommons, PaymentId,
+	RecipientOnionFields, Retry,
 };
 use lightning::ln::functional_test_utils::*;
 use lightning::ln::msgs::{self, DecodeError};
