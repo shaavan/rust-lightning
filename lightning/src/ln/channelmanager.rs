@@ -1930,7 +1930,7 @@ where
 /// ```
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::types::payment::PaymentHash;
-/// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry};
+/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry};
 /// # use lightning::routing::router::RouteParameters;
 /// #
 /// # fn example<T: AChannelManager>(
@@ -1982,7 +1982,7 @@ where
 ///
 /// ```
 /// # use lightning::events::{Event, EventsProvider};
-/// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
+/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::offer::Offer;
 /// #
 /// # fn example<T: AChannelManager>(
@@ -2029,67 +2029,6 @@ where
 /// ```
 ///
 /// ## BOLT 12 Refunds
-///
-/// A [`Refund`] is a request for an invoice to be paid. Like *paying* for an [`Offer`], *creating*
-/// a [`Refund`] involves maintaining state since it represents a future outbound payment.
-/// Therefore, use [`create_refund_builder`] when creating one, otherwise [`ChannelManager`] will
-/// refuse to pay any corresponding [`Bolt12Invoice`] that it receives.
-///
-/// ```
-/// # use core::time::Duration;
-/// # use lightning::events::{Event, EventsProvider};
-/// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
-/// # use lightning::offers::parse::Bolt12SemanticError;
-/// #
-/// # fn example<T: AChannelManager>(
-/// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
-/// #     max_total_routing_fee_msat: Option<u64>
-/// # ) -> Result<(), Bolt12SemanticError> {
-/// # let channel_manager = channel_manager.get_cm();
-/// let payment_id = PaymentId([42; 32]);
-/// let refund = channel_manager
-///     .create_refund_builder(
-///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
-///     )?
-/// # ;
-/// # // Needed for compiling for c_bindings
-/// # let builder: lightning::offers::refund::RefundBuilder<_> = refund.into();
-/// # let refund = builder
-///     .description("coffee".to_string())
-///     .payer_note("refund for order 1234".to_string())
-///     .build()?;
-/// let bech32_refund = refund.to_string();
-///
-/// // First the payment will be waiting on an invoice
-/// let expected_payment_id = payment_id;
-/// assert!(
-///     channel_manager.list_recent_payments().iter().find(|details| matches!(
-///         details,
-///         RecentPaymentDetails::AwaitingInvoice { payment_id: expected_payment_id }
-///     )).is_some()
-/// );
-///
-/// // Once the invoice is received, a payment will be sent
-/// assert!(
-///     channel_manager.list_recent_payments().iter().find(|details| matches!(
-///         details,
-///         RecentPaymentDetails::Pending { payment_id: expected_payment_id, ..  }
-///     )).is_some()
-/// );
-///
-/// // On the event processing thread
-/// channel_manager.process_pending_events(&|event| {
-///     match event {
-///         Event::PaymentSent { payment_id: Some(payment_id), .. } => println!("Paid {}", payment_id),
-///         Event::PaymentFailed { payment_id, .. } => println!("Failed paying {}", payment_id),
-///         // ...
-///     #     _ => {},
-///     }
-///     Ok(())
-/// });
-/// # Ok(())
-/// # }
-/// ```
 ///
 /// Use [`request_refund_payment`] to send a [`Bolt12Invoice`] for receiving the refund. Similar to
 /// *creating* an [`Offer`], this is stateless as it represents an inbound payment.
@@ -3545,45 +3484,6 @@ where
 				.collect();
 		}
 		vec![]
-	}
-
-	/// Returns in an undefined order recent payments that -- if not fulfilled -- have yet to find a
-	/// successful path, or have unresolved HTLCs.
-	///
-	/// This can be useful for payments that may have been prepared, but ultimately not sent, as a
-	/// result of a crash. If such a payment exists, is not listed here, and an
-	/// [`Event::PaymentSent`] has not been received, you may consider resending the payment.
-	///
-	/// [`Event::PaymentSent`]: events::Event::PaymentSent
-	pub fn list_recent_payments(&self) -> Vec<RecentPaymentDetails> {
-		self.pending_outbound_payments.pending_outbound_payments.lock().unwrap().iter()
-			.filter_map(|(payment_id, pending_outbound_payment)| match pending_outbound_payment {
-				PendingOutboundPayment::AwaitingInvoice { .. } => {
-					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
-				},
-				// InvoiceReceived is an intermediate state and doesn't need to be exposed
-				PendingOutboundPayment::InvoiceReceived { .. } => {
-					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
-				},
-				PendingOutboundPayment::StaticInvoiceReceived { .. } => {
-					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
-				},
-				PendingOutboundPayment::Retryable { payment_hash, total_msat, .. } => {
-					Some(RecentPaymentDetails::Pending {
-						payment_id: *payment_id,
-						payment_hash: *payment_hash,
-						total_msat: *total_msat,
-					})
-				},
-				PendingOutboundPayment::Abandoned { payment_hash, .. } => {
-					Some(RecentPaymentDetails::Abandoned { payment_id: *payment_id, payment_hash: *payment_hash })
-				},
-				PendingOutboundPayment::Fulfilled { payment_hash, .. } => {
-					Some(RecentPaymentDetails::Fulfilled { payment_id: *payment_id, payment_hash: *payment_hash })
-				},
-				PendingOutboundPayment::Legacy { .. } => None
-			})
-			.collect()
 	}
 
 	fn close_channel_internal(&self, channel_id: &ChannelId, counterparty_node_id: &PublicKey, target_feerate_sats_per_1000_weight: Option<u32>, override_shutdown_script: Option<ShutdownScript>) -> Result<(), APIError> {
@@ -9395,6 +9295,16 @@ pub trait OffersMessageCommons {
 
 	/// Add new awaiting invoice
 	fn add_new_awaiting_invoice(&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>) -> Result<(), ()>;
+
+	/// Returns in an undefined order recent payments that -- if not fulfilled -- have yet to find a
+	/// successful path, or have unresolved HTLCs.
+	///
+	/// This can be useful for payments that may have been prepared, but ultimately not sent, as a
+	/// result of a crash. If such a payment exists, is not listed here, and an
+	/// [`Event::PaymentSent`] has not been received, you may consider resending the payment.
+	///
+	/// [`Event::PaymentSent`]: events::Event::PaymentSent
+	fn list_recent_payments(&self) -> Vec<RecentPaymentDetails>;
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9572,6 +9482,37 @@ where
 		self.pending_outbound_payments.add_new_awaiting_invoice (
 			payment_id, expiration, retry_strategy, max_total_routing_fee_msat, retryable_invoice_request,
 		)
+	}
+
+	fn list_recent_payments(&self) -> Vec<RecentPaymentDetails> {
+		self.pending_outbound_payments.pending_outbound_payments.lock().unwrap().iter()
+			.filter_map(|(payment_id, pending_outbound_payment)| match pending_outbound_payment {
+				PendingOutboundPayment::AwaitingInvoice { .. } => {
+					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
+				},
+				// InvoiceReceived is an intermediate state and doesn't need to be exposed
+				PendingOutboundPayment::InvoiceReceived { .. } => {
+					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
+				},
+				PendingOutboundPayment::StaticInvoiceReceived { .. } => {
+					Some(RecentPaymentDetails::AwaitingInvoice { payment_id: *payment_id })
+				},
+				PendingOutboundPayment::Retryable { payment_hash, total_msat, .. } => {
+					Some(RecentPaymentDetails::Pending {
+						payment_id: *payment_id,
+						payment_hash: *payment_hash,
+						total_msat: *total_msat,
+					})
+				},
+				PendingOutboundPayment::Abandoned { payment_hash, .. } => {
+					Some(RecentPaymentDetails::Abandoned { payment_id: *payment_id, payment_hash: *payment_hash })
+				},
+				PendingOutboundPayment::Fulfilled { payment_hash, .. } => {
+					Some(RecentPaymentDetails::Fulfilled { payment_id: *payment_id, payment_hash: *payment_hash })
+				},
+				PendingOutboundPayment::Legacy { .. } => None
+			})
+			.collect()
 	}
 }
 
