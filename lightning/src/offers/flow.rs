@@ -17,9 +17,9 @@ use types::payment::PaymentPreimage;
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::payment::{Bolt12OfferContext, PaymentContext};
 use crate::events::{Event, EventHandler, PaymentFailureReason};
-use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, Verification};
+use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, PaymentId, Verification};
 use crate::ln::inbound_payment;
-use crate::ln::outbound_payment::RetryableInvoiceRequest;
+use crate::ln::outbound_payment::{Retry, RetryableInvoiceRequest, StaleExpiration};
 use crate::onion_message::messenger::{MessageSendInstructions, Responder, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 
@@ -28,6 +28,7 @@ use crate::offers::invoice_error::InvoiceError;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::refund::RefundBuilder;
 
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::sync::Mutex;
@@ -528,6 +529,84 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	}
 } }
 
+macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
+	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
+	/// [`ChannelManager`] when handling [`Bolt12Invoice`] messages for the refund.
+	///
+	/// # Payment
+	///
+	/// The provided `payment_id` is used to ensure that only one invoice is paid for the refund.
+	/// See [Avoiding Duplicate Payments] for other requirements once the payment has been sent.
+	///
+	/// The builder will have the provided expiration set. Any changes to the expiration on the
+	/// returned builder will not be honored by [`ChannelManager`]. For non-`std`, the highest seen
+	/// block time minus two hours is used for the current time when determining if the refund has
+	/// expired.
+	///
+	/// To revoke the refund, use [`ChannelManager::abandon_payment`] prior to receiving the
+	/// invoice. If abandoned, or an invoice isn't received before expiration, the payment will fail
+	/// with an [`Event::PaymentFailed`].
+	///
+	/// If `max_total_routing_fee_msat` is not specified, The default from
+	/// [`RouteParameters::from_payment_params_and_value`] is applied.
+	///
+	/// # Privacy
+	///
+	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the refund based on the given
+	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
+	/// privacy implications as well as those of the parameterized [`Router`], which implements
+	/// [`MessageRouter`].
+	///
+	/// Also, uses a derived payer id in the refund for payer privacy.
+	///
+	/// # Limitations
+	///
+	/// Requires a direct connection to an introduction node in the responding
+	/// [`Bolt12Invoice::payment_paths`].
+	///
+	/// # Errors
+	///
+	/// Errors if:
+	/// - a duplicate `payment_id` is provided given the caveats in the aforementioned link,
+	/// - `amount_msats` is invalid, or
+	/// - the parameterized [`Router`] is unable to create a blinded path for the refund.
+	///
+	/// [`Refund`]: crate::offers::refund::Refund
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	/// [`Bolt12Invoice::payment_paths`]: crate::offers::invoice::Bolt12Invoice::payment_paths
+	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
+	pub fn create_refund_builder(
+		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
+		retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>
+	) -> Result<$builder, Bolt12SemanticError> {
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
+		let path = $self.commons.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		let builder = RefundBuilder::deriving_signing_pubkey(
+			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
+		)?
+			.chain_hash($self.commons.get_chain_hash())
+			.absolute_expiry(absolute_expiry)
+			.path(path);
+
+		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
+
+		$self.commons.add_new_awaiting_invoice(
+			payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
+		).map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
+
+		Ok(builder.into())
+	}
+} }
+
 impl<ES: Deref, OMC: Deref, NS: Deref, L: Deref> OffersMessageFlow<ES, OMC, NS, L>
 where
     ES::Target: EntropySource,
@@ -539,5 +618,11 @@ where
 	create_offer_builder!(self, OfferBuilder<DerivedMetadata, secp256k1::All>);
 	#[cfg(c_bindings)]
 	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
+
+	#[cfg(not(c_bindings))]
+	create_refund_builder!(self, RefundBuilder<secp256k1::All>);
+
+	#[cfg(c_bindings)]
+	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 }
 
