@@ -22,7 +22,7 @@ use crate::events::bump_transaction::WalletSource;
 use crate::events::{ClosureReason, Event, MessageSendEvent, MessageSendEventsProvider};
 use crate::ln::chan_utils::ClosingTransaction;
 use crate::ln::channel_state::{ChannelDetails, ChannelShutdownState};
-use crate::ln::channelmanager::{PaymentId, RAACommitmentOrder, RecipientOnionFields};
+use crate::ln::channelmanager::{OffersMessageCommons, PaymentId, RAACommitmentOrder, RecipientOnionFields};
 use crate::ln::msgs::ChannelMessageHandler;
 use crate::ln::{functional_test_utils::*, msgs};
 use crate::sign::ecdsa::EcdsaChannelSigner;

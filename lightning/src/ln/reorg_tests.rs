@@ -14,6 +14,7 @@ use crate::chain::channelmonitor::{ANTI_REORG_DELAY, LATENCY_GRACE_PERIOD_BLOCKS
 use crate::chain::transaction::OutPoint;
 use crate::chain::Confirm;
 use crate::events::{Event, MessageSendEventsProvider, ClosureReason, HTLCDestination, MessageSendEvent};
+use crate::ln::channelmanager::OffersMessageCommons;
 use crate::ln::msgs::{ChannelMessageHandler, Init};
 use crate::ln::types::ChannelId;
 use crate::sign::OutputSpender;

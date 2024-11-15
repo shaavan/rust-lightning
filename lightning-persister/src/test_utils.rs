@@ -1,4 +1,5 @@
 use lightning::events::ClosureReason;
+use lightning::ln::channelmanager::OffersMessageCommons;
 use lightning::ln::functional_test_utils::{
 	connect_block, create_announced_chan_between_nodes, create_chanmon_cfgs, create_dummy_block,
 	create_network, create_node_cfgs, create_node_chanmgrs, send_payment,

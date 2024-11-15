@@ -1053,6 +1053,7 @@ mod tests {
 	use super::*;
 	use crate::chain::ChannelMonitorUpdateStatus;
 	use crate::events::{ClosureReason, MessageSendEventsProvider};
+	use crate::ln::channelmanager::OffersMessageCommons;
 	use crate::ln::functional_test_utils::*;
 	use crate::sync::Arc;
 	use crate::util::test_channel_signer::TestChannelSigner;
