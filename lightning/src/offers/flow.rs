@@ -8,9 +8,10 @@
 // licenses.
 
 use core::ops::Deref;
+use core::time::Duration;
 use crate::sync::Arc;
 
-use bitcoin::secp256k1::{self, Secp256k1};
+use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
 
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::payment::{Bolt12OfferContext, PaymentContext};
@@ -24,9 +25,10 @@ use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::{DerivedMetadata, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 
-use crate::sign::{EntropySource, NodeSigner};
+use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::sync::Mutex;
 use crate::util::logger::{Logger, WithContext};
 
@@ -94,6 +96,8 @@ where
 	node_signer: NS,
 	entropy_source: ES,
 
+	our_network_pubkey: PublicKey,
+
 	/// Contains function shared between OffersMessageHandler, and ChannelManager.
 	commons: OMC,
 
@@ -125,6 +129,8 @@ where
 			secp_ctx,
 			inbound_payment_key: expanded_inbound_key,
 
+			our_network_pubkey: node_signer.get_node_id(Recipient::Node).unwrap(),
+
 			commons,
 
 			pending_offers_messages,
@@ -134,6 +140,10 @@ where
 
 			logger,
 		}
+	}
+
+	fn get_our_node_id(&self) -> PublicKey {
+		self.our_network_pubkey
 	}
 }
 
@@ -395,3 +405,68 @@ where
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
 	}
 }
+
+macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
+	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
+	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer. The offer's
+	/// expiration will be `absolute_expiry` if `Some`, otherwise it will not expire.
+	///
+	/// # Privacy
+	///
+	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the offer based on the given
+	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
+	/// privacy implications as well as those of the parameterized [`Router`], which implements
+	/// [`MessageRouter`].
+	///
+	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
+	///
+	/// # Limitations
+	///
+	/// Requires a direct connection to the introduction node in the responding [`InvoiceRequest`]'s
+	/// reply path.
+	///
+	/// # Errors
+	///
+	/// Errors if the parameterized [`Router`] is unable to create a blinded path for the offer.
+	///
+	/// [`Offer`]: crate::offers::offer::Offer
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	pub fn create_offer_builder(
+		&$self, absolute_expiry: Option<Duration>
+	) -> Result<$builder, Bolt12SemanticError> {
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = OffersContext::InvoiceRequest { nonce };
+		let path = $self.commons.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+			.and_then(|paths| paths.into_iter().next().ok_or(()))
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.commons.get_chain_hash())
+			.path(path);
+
+		let builder = match absolute_expiry {
+			None => builder,
+			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
+		};
+
+		Ok(builder.into())
+	}
+} }
+
+impl<ES: Deref, OMC: Deref, NS: Deref, L: Deref> OffersMessageFlow<ES, OMC, NS, L>
+where
+    ES::Target: EntropySource,
+    OMC::Target: OffersMessageCommons,
+    NS::Target: NodeSigner,
+    L::Target: Logger,
+{
+	#[cfg(not(c_bindings))]
+	create_offer_builder!(self, OfferBuilder<DerivedMetadata, secp256k1::All>);
+	#[cfg(c_bindings)]
+	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
+}
+
