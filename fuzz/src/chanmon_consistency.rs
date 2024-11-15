@@ -47,8 +47,8 @@ use lightning::events::MessageSendEventsProvider;
 use lightning::ln::channel::FEE_SPIKE_BUFFER_FEE_INCREASE_MULTIPLE;
 use lightning::ln::channel_state::ChannelDetails;
 use lightning::ln::channelmanager::{
-	ChainParameters, ChannelManager, ChannelManagerReadArgs, PaymentId, PaymentSendFailure,
-	RecipientOnionFields,
+	ChainParameters, ChannelManager, ChannelManagerReadArgs, OffersMessageCommons, PaymentId,
+	PaymentSendFailure, RecipientOnionFields,
 };
 use lightning::ln::functional_test_utils::*;
 use lightning::ln::msgs::{
