@@ -54,6 +54,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use {
 	crate::ln::channelmanager::{SimpleArcChannelManager, SimpleRefChannelManager},
 	crate::ln::peer_handler::IgnoringMessageHandler,
+	crate::offers::flow::OffersMessageFlow,
 	crate::sign::KeysManager,
 	crate::sync::Arc,
 };
@@ -2105,7 +2106,7 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 	Arc<L>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
-	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<OffersMessageFlow<Arc<KeysManager>, Arc<SimpleArcChannelManager<M, T, F, L>>, Arc<L>>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	IgnoringMessageHandler,
@@ -2126,7 +2127,7 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 	Arc<L>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
-	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<OffersMessageFlow<Arc<KeysManager>, Arc<SimpleArcChannelManager<M, T, F, L>>, Arc<L>>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	IgnoringMessageHandler,
 	IgnoringMessageHandler,
