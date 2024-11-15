@@ -41,6 +41,7 @@ const METHOD_TYPE_OFFSET: usize = 5;
 /// [`NodeSigner::get_inbound_payment_key_material`].
 ///
 /// [`NodeSigner::get_inbound_payment_key_material`]: crate::sign::NodeSigner::get_inbound_payment_key_material
+#[derive(Clone, Copy)]
 pub struct ExpandedKey {
 	/// The key used to encrypt the bytes containing the payment metadata (i.e. the amount and
 	/// expiry, included for payment verification on decryption).
