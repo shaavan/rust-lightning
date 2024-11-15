@@ -67,7 +67,7 @@ use crate::ln::wire::Encode;
 use crate::offers::invoice::{Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, InvoiceBuilder};
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferBuilder};
+use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::signer;
@@ -94,7 +94,6 @@ use crate::onion_message::dns_resolution::{DNSResolverMessage, DNSResolverMessag
 
 #[cfg(not(c_bindings))]
 use {
-	crate::offers::offer::DerivedMetadata,
 	crate::onion_message::messenger::DefaultMessageRouter,
 	crate::routing::router::DefaultRouter,
 	crate::routing::gossip::NetworkGraph,
@@ -1894,7 +1893,7 @@ where
 ///
 /// ```
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::{AChannelManager, Bolt11InvoiceParameters};
+/// # use lightning::ln::channelmanager::{AChannelManager, Bolt11InvoiceParameters, OffersMessageCommons};
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) {
 /// # let channel_manager = channel_manager.get_cm();
@@ -1995,56 +1994,6 @@ where
 /// ```
 ///
 /// ## BOLT 12 Offers
-///
-/// The [`offers`] module is useful for creating BOLT 12 offers. An [`Offer`] is a precursor to a
-/// [`Bolt12Invoice`], which must first be requested by the payer. The interchange of these messages
-/// as defined in the specification is handled by [`ChannelManager`]. However, this only works with
-/// an [`Offer`] created using a builder returned by [`create_offer_builder`]. With this approach,
-/// BOLT 12 offers and invoices are stateless just as BOLT 11 invoices are.
-///
-/// ```
-/// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::AChannelManager;
-/// # use lightning::offers::parse::Bolt12SemanticError;
-/// #
-/// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
-/// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
-/// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
-/// # ;
-/// # // Needed for compiling for c_bindings
-/// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
-/// # let offer = builder
-///     .description("coffee".to_string())
-///     .amount_msats(10_000_000)
-///     .build()?;
-/// let bech32_offer = offer.to_string();
-///
-/// // On the event processing thread
-/// channel_manager.process_pending_events(&|event| {
-///     match event {
-///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
-///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(payment_preimage), .. } => {
-///                 println!("Claiming payment {}", payment_hash);
-///                 channel_manager.claim_funds(payment_preimage);
-///             },
-///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: None, .. } => {
-///                 println!("Unknown payment hash: {}", payment_hash);
-///             }
-/// #           _ => {},
-///         },
-///         Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
-///             println!("Claimed {} msats", amount_msat);
-///         },
-///         // ...
-///     #     _ => {},
-///     }
-///     Ok(())
-/// });
-/// # Ok(())
-/// # }
-/// ```
 ///
 /// Use [`pay_for_offer`] to initiated payment, which sends an [`InvoiceRequest`] for an [`Offer`]
 /// and pays the [`Bolt12Invoice`] response.
@@ -2165,7 +2114,7 @@ where
 ///
 /// ```
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::AChannelManager;
+/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons};
 /// # use lightning::offers::refund::Refund;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T, refund: &Refund) {
@@ -2284,7 +2233,6 @@ where
 /// [`claim_funds`]: Self::claim_funds
 /// [`send_payment`]: Self::send_payment
 /// [`offers`]: crate::offers
-/// [`create_offer_builder`]: Self::create_offer_builder
 /// [`pay_for_offer`]: Self::pay_for_offer
 /// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 /// [`create_refund_builder`]: Self::create_refund_builder
@@ -2786,10 +2734,12 @@ const MAX_NO_CHANNEL_PEERS: usize = 250;
 /// The maximum expiration from the current time where an [`Offer`] or [`Refund`] is considered
 /// short-lived, while anything with a greater expiration is considered long-lived.
 ///
-/// Using [`ChannelManager::create_offer_builder`] or [`ChannelManager::create_refund_builder`],
+/// Using [`OffersMessageFlow::create_offer_builder`] or [`ChannelManager::create_refund_builder`],
 /// will included a [`BlindedMessagePath`] created using:
 /// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
 /// - [`MessageRouter::create_blinded_paths`] when long-lived.
+///
+/// [`OffersMessageFlow::create_offer_builder`]: crate::offers::flow::OffersMessageFlow::create_offer_builder
 ///
 /// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
 /// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
@@ -6575,12 +6525,12 @@ where
 	/// along the path (including in our own channel on which we received it).
 	///
 	/// Note that in some cases around unclean shutdown, it is possible the payment may have
-	/// already been claimed by you via [`ChannelManager::claim_funds`] prior to you seeing (a
+	/// already been claimed by you via [`OffersMessageCommons::claim_funds`] prior to you seeing (a
 	/// second copy of) the [`events::Event::PaymentClaimable`] event. Alternatively, the payment
 	/// may have already been failed automatically by LDK if it was nearing its expiration time.
 	///
 	/// While LDK will never claim a payment automatically on your behalf (i.e. without you calling
-	/// [`ChannelManager::claim_funds`]), you should still monitor for
+	/// [`OffersMessageCommons::claim_funds`]), you should still monitor for
 	/// [`events::Event::PaymentClaimed`] events even for payments you intend to fail, especially on
 	/// startup during which time claims that were in-progress at shutdown may be replayed.
 	pub fn fail_htlc_backwards(&self, payment_hash: &PaymentHash) {
@@ -6790,34 +6740,6 @@ where
 			},
 		}
 		push_forward_event
-	}
-
-	/// Provides a payment preimage in response to [`Event::PaymentClaimable`], generating any
-	/// [`MessageSendEvent`]s needed to claim the payment.
-	///
-	/// This method is guaranteed to ensure the payment has been claimed but only if the current
-	/// height is strictly below [`Event::PaymentClaimable::claim_deadline`]. To avoid race
-	/// conditions, you should wait for an [`Event::PaymentClaimed`] before considering the payment
-	/// successful. It will generally be available in the next [`process_pending_events`] call.
-	///
-	/// Note that if you did not set an `amount_msat` when calling [`create_inbound_payment`] or
-	/// [`create_inbound_payment_for_hash`] you must check that the amount in the `PaymentClaimable`
-	/// event matches your expectation. If you fail to do so and call this method, you may provide
-	/// the sender "proof-of-payment" when they did not fulfill the full expected payment.
-	///
-	/// This function will fail the payment if it has custom TLVs with even type numbers, as we
-	/// will assume they are unknown. If you intend to accept even custom TLVs, you should use
-	/// [`claim_funds_with_known_custom_tlvs`].
-	///
-	/// [`Event::PaymentClaimable`]: crate::events::Event::PaymentClaimable
-	/// [`Event::PaymentClaimable::claim_deadline`]: crate::events::Event::PaymentClaimable::claim_deadline
-	/// [`Event::PaymentClaimed`]: crate::events::Event::PaymentClaimed
-	/// [`process_pending_events`]: EventsProvider::process_pending_events
-	/// [`create_inbound_payment`]: Self::create_inbound_payment
-	/// [`create_inbound_payment_for_hash`]: ChannelManager::create_inbound_payment_for_hash
-	/// [`claim_funds_with_known_custom_tlvs`]: ChannelManager::claim_funds_with_known_custom_tlvs
-	pub fn claim_funds(&self, payment_preimage: PaymentPreimage) {
-		self.claim_payment_internal(payment_preimage, false);
 	}
 
 	/// This is a variant of [`claim_funds`] that allows accepting a payment with custom TLVs with
@@ -9386,57 +9308,6 @@ impl Default for Bolt11InvoiceParameters {
 	}
 }
 
-macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
-	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
-	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer. The offer's
-	/// expiration will be `absolute_expiry` if `Some`, otherwise it will not expire.
-	///
-	/// # Privacy
-	///
-	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the offer based on the given
-	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
-	/// privacy implications as well as those of the parameterized [`Router`], which implements
-	/// [`MessageRouter`].
-	///
-	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
-	///
-	/// # Limitations
-	///
-	/// Requires a direct connection to the introduction node in the responding [`InvoiceRequest`]'s
-	/// reply path.
-	///
-	/// # Errors
-	///
-	/// Errors if the parameterized [`Router`] is unable to create a blinded path for the offer.
-	///
-	/// [`Offer`]: crate::offers::offer::Offer
-	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
-	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
-	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
-
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
-		};
-
-		Ok(builder.into())
-	}
-} }
-
 macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
 	/// [`ChannelManager`] when handling [`Bolt12Invoice`] messages for the refund.
@@ -9599,6 +9470,51 @@ pub trait OffersMessageCommons {
 
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
+
+	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
+	/// the path's intended lifetime.
+	///
+	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
+	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
+	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
+	fn create_blinded_paths_using_absolute_expiry(
+		&self, context: OffersContext, absolute_expiry: Option<Duration>,
+	) -> Result<Vec<BlindedMessagePath>, ()>;
+
+	/// Get the [`ChainHash`] of the chain
+	fn get_chain_hash(&self) -> ChainHash;
+
+	/// Processes events that must be periodically handled.
+	///
+	/// An [`EventHandler`] may safely call back to the provider in order to handle an event.
+	/// However, it must not call [`Writeable::write`] as doing so would result in a deadlock.
+	fn process_pending_offers_events<H: Deref>(&self, handler: H) where H::Target: EventHandler;
+
+	/// Provides a payment preimage in response to [`Event::PaymentClaimable`], generating any
+	/// [`MessageSendEvent`]s needed to claim the payment.
+	///
+	/// This method is guaranteed to ensure the payment has been claimed but only if the current
+	/// height is strictly below [`Event::PaymentClaimable::claim_deadline`]. To avoid race
+	/// conditions, you should wait for an [`Event::PaymentClaimed`] before considering the payment
+	/// successful. It will generally be available in the next [`process_pending_events`] call.
+	///
+	/// Note that if you did not set an `amount_msat` when calling [`create_inbound_payment`] or
+	/// [`create_inbound_payment_for_hash`] you must check that the amount in the `PaymentClaimable`
+	/// event matches your expectation. If you fail to do so and call this method, you may provide
+	/// the sender "proof-of-payment" when they did not fulfill the full expected payment.
+	///
+	/// This function will fail the payment if it has custom TLVs with even type numbers, as we
+	/// will assume they are unknown. If you intend to accept even custom TLVs, you should use
+	/// [`claim_funds_with_known_custom_tlvs`].
+	///
+	/// [`Event::PaymentClaimable`]: crate::events::Event::PaymentClaimable
+	/// [`Event::PaymentClaimable::claim_deadline`]: crate::events::Event::PaymentClaimable::claim_deadline
+	/// [`Event::PaymentClaimed`]: crate::events::Event::PaymentClaimed
+	/// [`process_pending_events`]: EventsProvider::process_pending_events
+	/// [`create_inbound_payment`]: ChannelManager::create_inbound_payment
+	/// [`create_inbound_payment_for_hash`]: ChannelManager::create_inbound_payment_for_hash
+	/// [`claim_funds_with_known_custom_tlvs`]: ChannelManager::claim_funds_with_known_custom_tlvs
+	fn claim_funds(&self, payment_preimage: PaymentPreimage);
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9749,6 +9665,31 @@ where
 	fn get_current_blocktime(&self) -> Duration {
 		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
 	}
+
+	fn create_blinded_paths_using_absolute_expiry(
+		&self, context: OffersContext, absolute_expiry: Option<Duration>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		let now = self.duration_since_epoch();
+		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
+
+		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
+			self.create_compact_blinded_paths(context)
+		} else {
+			self.create_blinded_paths(MessageContext::Offers(context))
+		}
+	}
+
+	fn get_chain_hash(&self) -> ChainHash {
+		self.chain_hash
+	}
+
+	fn process_pending_offers_events<H: Deref>(&self, handler: H) where H::Target: EventHandler {
+		self.process_pending_events(handler);
+	}
+
+	fn claim_funds(&self, payment_preimage: PaymentPreimage) {
+		self.claim_payment_internal(payment_preimage, false);
+	}
 }
 
 /// Defines the maximum number of [`OffersMessage`] including different reply paths to be sent
@@ -9771,12 +9712,8 @@ where
 	L::Target: Logger,
 {
 	#[cfg(not(c_bindings))]
-	create_offer_builder!(self, OfferBuilder<DerivedMetadata, secp256k1::All>);
-	#[cfg(not(c_bindings))]
 	create_refund_builder!(self, RefundBuilder<secp256k1::All>);
 
-	#[cfg(c_bindings)]
-	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
@@ -10126,25 +10063,6 @@ where
 	/// [`create_inbound_payment`]: Self::create_inbound_payment
 	pub fn get_payment_preimage(&self, payment_hash: PaymentHash, payment_secret: PaymentSecret) -> Result<PaymentPreimage, APIError> {
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
-	}
-
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
 	}
 
 	pub(super) fn duration_since_epoch(&self) -> Duration {
@@ -13689,7 +13607,7 @@ mod tests {
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
 	use crate::ln::types::ChannelId;
 	use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
-	use crate::ln::channelmanager::{create_recv_pending_htlc_info, HTLCForwardInfo, inbound_payment, PaymentId, PaymentSendFailure, RecipientOnionFields, InterceptId};
+	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, OffersMessageCommons, PaymentId, PaymentSendFailure, RecipientOnionFields};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{self, ErrorAction};
 	use crate::ln::msgs::ChannelMessageHandler;
@@ -15121,7 +15039,7 @@ pub mod bench {
 	use crate::chain::chainmonitor::{ChainMonitor, Persist};
 	use crate::sign::{KeysManager, InMemorySigner};
 	use crate::events::{Event, MessageSendEvent, MessageSendEventsProvider};
-	use crate::ln::channelmanager::{BestBlock, ChainParameters, ChannelManager, PaymentHash, PaymentPreimage, PaymentId, RecipientOnionFields, Retry};
+	use crate::ln::channelmanager::{BestBlock, ChainParameters, ChannelManager, OffersMessageCommons, PaymentHash, PaymentPreimage, PaymentId, RecipientOnionFields, Retry};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{ChannelMessageHandler, Init};
 	use crate::routing::gossip::NetworkGraph;

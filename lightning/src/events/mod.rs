@@ -89,11 +89,11 @@ pub enum PaymentPurpose {
 	Bolt11InvoicePayment {
 		/// The preimage to the payment_hash, if the payment hash (and secret) were fetched via
 		/// [`OffersMessageCommons::create_inbound_payment`]. When handling [`Event::PaymentClaimable`],
-		/// this can be passed directly to [`ChannelManager::claim_funds`] to claim the payment. No
+		/// this can be passed directly to [`OffersMessageCommons::claim_funds`] to claim the payment. No
 		/// action is needed when seen in [`Event::PaymentClaimed`].
 		///
 		/// [`OffersMessageCommons::create_inbound_payment`]: crate::ln::channelmanager::OffersMessageCommons::create_inbound_payment
-		/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+		/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 		payment_preimage: Option<PaymentPreimage>,
 		/// The "payment secret". This authenticates the sender to the recipient, preventing a
 		/// number of deanonymization attacks during the routing process.
@@ -112,10 +112,10 @@ pub enum PaymentPurpose {
 	/// [`Offer`]: crate::offers::offer::Offer
 	Bolt12OfferPayment {
 		/// The preimage to the payment hash. When handling [`Event::PaymentClaimable`], this can be
-		/// passed directly to [`ChannelManager::claim_funds`], if provided. No action is needed
+		/// passed directly to [`OffersMessageCommons::claim_funds`], if provided. No action is needed
 		/// when seen in [`Event::PaymentClaimed`].
 		///
-		/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+		/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 		payment_preimage: Option<PaymentPreimage>,
 		/// The secret used to authenticate the sender to the recipient, preventing a number of
 		/// de-anonymization attacks while routing a payment.
@@ -138,10 +138,10 @@ pub enum PaymentPurpose {
 	/// [`Refund`]: crate::offers::refund::Refund
 	Bolt12RefundPayment {
 		/// The preimage to the payment hash. When handling [`Event::PaymentClaimable`], this can be
-		/// passed directly to [`ChannelManager::claim_funds`], if provided. No action is needed
+		/// passed directly to [`OffersMessageCommons::claim_funds`], if provided. No action is needed
 		/// when seen in [`Event::PaymentClaimed`].
 		///
-		/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+		/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 		payment_preimage: Option<PaymentPreimage>,
 		/// The secret used to authenticate the sender to the recipient, preventing a number of
 		/// de-anonymization attacks while routing a payment.
@@ -678,7 +678,7 @@ pub enum Event {
 		former_temporary_channel_id: ChannelId,
 	},
 	/// Indicates that we've been offered a payment and it needs to be claimed via calling
-	/// [`ChannelManager::claim_funds`] with the preimage given in [`PaymentPurpose`].
+	/// [`OffersMessageCommons::claim_funds`] with the preimage given in [`PaymentPurpose`].
 	///
 	/// Note that if the preimage is not known, you should call
 	/// [`ChannelManager::fail_htlc_backwards`] or [`ChannelManager::fail_htlc_backwards_with_reason`]
@@ -689,9 +689,9 @@ pub enum Event {
 	/// [`FailureCode::InvalidOnionPayload`] if you fail to understand and handle the contents, or
 	/// [`ChannelManager::claim_funds_with_known_custom_tlvs`] upon successful handling.
 	/// If you don't intend to check for custom TLVs, you can simply use
-	/// [`ChannelManager::claim_funds`], which will automatically fail back even custom TLVs.
+	/// [`OffersMessageCommons::claim_funds`], which will automatically fail back even custom TLVs.
 	///
-	/// If you fail to call [`ChannelManager::claim_funds`],
+	/// If you fail to call [`OffersMessageCommons::claim_funds`],
 	/// [`ChannelManager::claim_funds_with_known_custom_tlvs`],
 	/// [`ChannelManager::fail_htlc_backwards`], or
 	/// [`ChannelManager::fail_htlc_backwards_with_reason`] within the HTLC's timeout, the HTLC will
@@ -710,7 +710,7 @@ pub enum Event {
 	/// This event will eventually be replayed after failures-to-handle (i.e., the event handler
 	/// returning `Err(ReplayEvent ())`) and will be persisted across restarts.
 	///
-	/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+	/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 	/// [`ChannelManager::claim_funds_with_known_custom_tlvs`]: crate::ln::channelmanager::ChannelManager::claim_funds_with_known_custom_tlvs
 	/// [`FailureCode::InvalidOnionPayload`]: crate::ln::channelmanager::FailureCode::InvalidOnionPayload
 	/// [`ChannelManager::fail_htlc_backwards`]: crate::ln::channelmanager::ChannelManager::fail_htlc_backwards
@@ -760,10 +760,10 @@ pub enum Event {
 		/// The block height at which this payment will be failed back and will no longer be
 		/// eligible for claiming.
 		///
-		/// Prior to this height, a call to [`ChannelManager::claim_funds`] is guaranteed to
+		/// Prior to this height, a call to [`OffersMessageCommons::claim_funds`] is guaranteed to
 		/// succeed, however you should wait for [`Event::PaymentClaimed`] to be sure.
 		///
-		/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+		/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 		claim_deadline: Option<u32>,
 		/// A unique ID describing this payment (derived from the list of HTLCs in the payment).
 		///
@@ -776,22 +776,22 @@ pub enum Event {
 	},
 	/// Indicates a payment has been claimed and we've received money!
 	///
-	/// This most likely occurs when [`ChannelManager::claim_funds`] has been called in response
+	/// This most likely occurs when [`OffersMessageCommons::claim_funds`] has been called in response
 	/// to an [`Event::PaymentClaimable`]. However, if we previously crashed during a
-	/// [`ChannelManager::claim_funds`] call you may see this event without a corresponding
+	/// [`OffersMessageCommons::claim_funds`] call you may see this event without a corresponding
 	/// [`Event::PaymentClaimable`] event.
 	///
 	/// # Note
 	/// LDK will not stop an inbound payment from being paid multiple times, so multiple
 	/// `PaymentClaimable` events may be generated for the same payment. If you then call
-	/// [`ChannelManager::claim_funds`] twice for the same [`Event::PaymentClaimable`] you may get
+	/// [`OffersMessageCommons::claim_funds`] twice for the same [`Event::PaymentClaimable`] you may get
 	/// multiple `PaymentClaimed` events.
 	///
 	/// # Failure Behavior and Persistence
 	/// This event will eventually be replayed after failures-to-handle (i.e., the event handler
 	/// returning `Err(ReplayEvent ())`) and will be persisted across restarts.
 	///
-	/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
+	/// [`OffersMessageCommons::claim_funds`]: crate::ln::channelmanager::OffersMessageCommons::claim_funds
 	PaymentClaimed {
 		/// The node that received the payment.
 		/// This is useful to identify payments which were received via [phantom nodes].

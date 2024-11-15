@@ -921,6 +921,7 @@ impl<ChannelSigner: EcdsaChannelSigner, C: Deref, T: Deref, F: Deref, L: Deref, 
 
 #[cfg(test)]
 mod tests {
+	use crate::ln::channelmanager::OffersMessageCommons;
 	use crate::{check_added_monitors, check_closed_event};
 	use crate::{expect_payment_path_successful, get_event_msg};
 	use crate::{get_htlc_update_msgs, get_revoke_commit_msgs};
