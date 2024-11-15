@@ -67,7 +67,7 @@ use crate::ln::wire::Encode;
 use crate::offers::invoice::{Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, InvoiceBuilder};
 use crate::offers::invoice_request::{DerivedPayerSigningPubkey, InvoiceRequest, InvoiceRequestBuilder};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferBuilder};
+use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::signer;
@@ -88,7 +88,6 @@ use crate::util::errors::APIError;
 
 #[cfg(not(c_bindings))]
 use {
-	crate::offers::offer::DerivedMetadata,
 	crate::onion_message::messenger::DefaultMessageRouter,
 	crate::routing::router::DefaultRouter,
 	crate::routing::gossip::NetworkGraph,
@@ -9351,57 +9350,6 @@ impl Default for Bolt11InvoiceParameters {
 	}
 }
 
-macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
-	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
-	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer. The offer's
-	/// expiration will be `absolute_expiry` if `Some`, otherwise it will not expire.
-	///
-	/// # Privacy
-	///
-	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the offer based on the given
-	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
-	/// privacy implications as well as those of the parameterized [`Router`], which implements
-	/// [`MessageRouter`].
-	///
-	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
-	///
-	/// # Limitations
-	///
-	/// Requires a direct connection to the introduction node in the responding [`InvoiceRequest`]'s
-	/// reply path.
-	///
-	/// # Errors
-	///
-	/// Errors if the parameterized [`Router`] is unable to create a blinded path for the offer.
-	///
-	/// [`Offer`]: crate::offers::offer::Offer
-	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
-	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
-	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
-
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
-		};
-
-		Ok(builder.into())
-	}
-} }
-
 macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
 	/// [`ChannelManager`] when handling [`Bolt12Invoice`] messages for the refund.
@@ -9559,6 +9507,19 @@ pub trait OffersMessageCommons {
 		invoice_request: InvoiceRequest,
 		reply_paths: Vec<BlindedMessagePath>,
 	) -> Result<(), Bolt12SemanticError>;
+
+	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
+	/// the path's intended lifetime.
+	///
+	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
+	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
+	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
+	fn create_blinded_paths_using_absolute_expiry(
+		&self, context: OffersContext, absolute_expiry: Option<Duration>,
+	) -> Result<Vec<BlindedMessagePath>, ()>;
+
+	/// Get the [`ChainHash`] of the chain
+	fn get_chain_hash(&self) -> ChainHash;
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9705,6 +9666,23 @@ where
 
 		Ok(())
 	}
+
+	fn create_blinded_paths_using_absolute_expiry(
+		&self, context: OffersContext, absolute_expiry: Option<Duration>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		let now = self.duration_since_epoch();
+		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
+
+		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
+			self.create_compact_blinded_paths(context)
+		} else {
+			self.create_blinded_paths(MessageContext::Offers(context))
+		}
+	}
+
+	fn get_chain_hash(&self) -> ChainHash {
+		self.chain_hash
+	}
 }
 
 /// Defines the maximum number of [`OffersMessage`] including different reply paths to be sent
@@ -9727,12 +9705,8 @@ where
 	L::Target: Logger,
 {
 	#[cfg(not(c_bindings))]
-	create_offer_builder!(self, OfferBuilder<DerivedMetadata, secp256k1::All>);
-	#[cfg(not(c_bindings))]
 	create_refund_builder!(self, RefundBuilder<secp256k1::All>);
 
-	#[cfg(c_bindings)]
-	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
 
@@ -10001,25 +9975,6 @@ where
 	/// [`create_inbound_payment`]: Self::create_inbound_payment
 	pub fn get_payment_preimage(&self, payment_hash: PaymentHash, payment_secret: PaymentSecret) -> Result<PaymentPreimage, APIError> {
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
-	}
-
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
 	}
 
 	pub(super) fn duration_since_epoch(&self) -> Duration {
