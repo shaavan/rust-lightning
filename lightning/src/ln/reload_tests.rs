@@ -15,7 +15,7 @@ use crate::chain::channelmonitor::{CLOSED_CHANNEL_UPDATE_ID, ChannelMonitor};
 use crate::sign::EntropySource;
 use crate::chain::transaction::OutPoint;
 use crate::events::{ClosureReason, Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider};
-use crate::ln::channelmanager::{ChannelManager, ChannelManagerReadArgs, PaymentId, RecipientOnionFields};
+use crate::ln::channelmanager::{ChannelManager, ChannelManagerReadArgs, OffersMessageCommons, PaymentId, RecipientOnionFields};
 use crate::ln::msgs;
 use crate::ln::types::ChannelId;
 use crate::ln::msgs::{ChannelMessageHandler, RoutingMessageHandler, ErrorAction};

@@ -16,7 +16,7 @@ use crate::blinded_path::payment::{BlindedPaymentPath, PaymentForwardNode, Forwa
 use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, PaymentFailureReason};
 use crate::ln::types::ChannelId;
 use crate::types::payment::{PaymentHash, PaymentSecret};
-use crate::ln::channelmanager;
+use crate::ln::channelmanager::{self, OffersMessageCommons};
 use crate::ln::channelmanager::{HTLCFailureMsg, PaymentId, RecipientOnionFields};
 use crate::types::features::{BlindedHopFeatures, ChannelFeatures, NodeFeatures};
 use crate::ln::functional_test_utils::*;
