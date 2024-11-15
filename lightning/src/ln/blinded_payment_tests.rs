@@ -17,7 +17,7 @@ use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsP
 use crate::ln::types::ChannelId;
 use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::ln::channelmanager;
-use crate::ln::channelmanager::{HTLCFailureMsg, PaymentId, RecipientOnionFields};
+use crate::ln::channelmanager::{HTLCFailureMsg, OffersMessageCommons, PaymentId, RecipientOnionFields};
 use crate::types::features::{BlindedHopFeatures, ChannelFeatures, NodeFeatures};
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs;
@@ -34,6 +34,7 @@ use crate::util::config::UserConfig;
 use crate::util::ser::WithoutLength;
 use crate::util::test_utils;
 use lightning_invoice::RawBolt11Invoice;
+
 #[cfg(async_payments)] use {
 	crate::ln::inbound_payment,
 	crate::types::payment::PaymentPreimage,

@@ -414,6 +414,7 @@ mod tests {
 	use lightning::chain::ChannelMonitorUpdateStatus;
 	use lightning::check_closed_event;
 	use lightning::events::{ClosureReason, MessageSendEventsProvider};
+	use lightning::ln::channelmanager::OffersMessageCommons;
 	use lightning::ln::functional_test_utils::*;
 	use lightning::util::persist::read_channel_monitors;
 	use lightning::util::test_utils;
@@ -482,6 +483,7 @@ mod tests {
 	#[cfg(not(target_os = "windows"))]
 	#[test]
 	fn test_readonly_dir_perm_failure() {
+
 		let store = FilesystemStore::new("test_readonly_dir_perm_failure".into());
 		fs::create_dir_all(&store.get_data_dir()).unwrap();
 
