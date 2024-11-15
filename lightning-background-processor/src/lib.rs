@@ -1077,7 +1077,7 @@ mod tests {
 	};
 	use lightning::ln::channelmanager;
 	use lightning::ln::channelmanager::{
-		ChainParameters, PaymentId, BREAKDOWN_TIMEOUT, MIN_CLTV_EXPIRY_DELTA,
+		ChainParameters, OffersMessageCommons, PaymentId, BREAKDOWN_TIMEOUT, MIN_CLTV_EXPIRY_DELTA,
 	};
 	use lightning::ln::functional_test_utils::*;
 	use lightning::ln::msgs::{ChannelMessageHandler, Init};
