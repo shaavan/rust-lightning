@@ -14,10 +14,11 @@ use core::time::Duration;
 use crate::sync::Arc;
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
+use types::payment::PaymentPreimage;
 
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::payment::{Bolt12OfferContext, PaymentContext};
-use crate::events::{Event, PaymentFailureReason};
+use crate::events::{Event, EventHandler, PaymentFailureReason};
 use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, Verification};
 use crate::ln::inbound_payment;
 use crate::ln::outbound_payment::RetryableInvoiceRequest;
@@ -85,7 +86,60 @@ where
 	fn get_omf(&self) -> &OffersMessageFlow<ES, OMC, NS, L> { self }
 }
 
-/// TODO
+/// ## BOLT 12 Offers
+///
+/// The [`offers`] module is useful for creating BOLT 12 offers. An [`Offer`] is a precursor to a
+/// [`Bolt12Invoice`], which must first be requested by the payer. The interchange of these messages
+/// as defined in the specification is handled by [`ChannelManager`] and its implementation of
+/// [`OffersMessageHandler`]. However, this only works with an [`Offer`] created using a builder
+/// returned by [`create_offer_builder`]. With this approach, BOLT 12 offers and invoices are
+/// stateless just as BOLT 11 invoices are.
+///
+/// ```
+/// # use lightning::events::{Event, PaymentPurpose};
+/// # use lightning::offers::flow::AnOffersMessageFlow;
+/// # use lightning::offers::parse::Bolt12SemanticError;
+///
+/// #
+/// # fn example<T: AnOffersMessageFlow>(offers_flow: T) -> Result<(), Bolt12SemanticError> {
+/// # let offers_flow = offers_flow.get_omf();
+/// # let absolute_expiry = None;
+/// # let offer = offers_flow
+///     .create_offer_builder(absolute_expiry)?
+/// # ;
+/// # // Needed for compiling for c_bindings
+/// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
+/// # let offer = builder
+///     .description("coffee".to_string())
+///     .amount_msats(10_000_000)
+///     .build()?;
+/// let bech32_offer = offer.to_string();
+///
+/// // On the event processing thread
+/// offers_flow.process_pending_offers_events(&|event| {
+///     match event {
+///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
+///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(payment_preimage), .. } => {
+///                 println!("Claiming payment {}", payment_hash);
+///                 offers_flow.claim_funds(payment_preimage);
+///             },
+///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: None, .. } => {
+///                 println!("Unknown payment hash: {}", payment_hash);
+///             }
+/// #           _ => {},
+///         },
+///         Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
+///             println!("Claimed {} msats", amount_msat);
+///         },
+///         // ...
+///     #     _ => {},
+///     }
+///     Ok(())
+/// });
+/// # Ok(())
+/// # }
+/// ```
+///
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, NS: Deref, L: Deref>
 where
     ES::Target: EntropySource,
@@ -150,6 +204,27 @@ where
 
 	fn get_our_node_id(&self) -> PublicKey {
 		self.our_network_pubkey
+	}
+}
+
+impl<ES: Deref, OMC: Deref, NS: Deref, L: Deref> OffersMessageFlow<ES, OMC, NS, L>
+where
+    ES::Target: EntropySource,
+    OMC::Target: OffersMessageCommons,
+    NS::Target: NodeSigner,
+    L::Target: Logger,
+{
+	/// Processes events that must be periodically handled.
+	pub fn process_pending_offers_events<H: Deref>(&self, handler: H) where H::Target: EventHandler {
+		self.commons.process_pending_offers_events(handler);
+	}
+
+	/// Provides a payment preimage in response to [`Event::PaymentClaimable`], generating any
+	/// [`MessageSendEvent`]s needed to claim the payment.
+	///
+	/// [`MessageSendEvent`]: crate::events::MessageSendEvent
+	pub fn claim_funds(&self, payment_preimage: PaymentPreimage) {
+		self.commons.claim_funds(payment_preimage);
 	}
 }
 

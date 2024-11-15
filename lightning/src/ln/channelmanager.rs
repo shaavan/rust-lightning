@@ -1875,7 +1875,7 @@ where
 ///
 /// ```
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::{AChannelManager, Bolt11InvoiceParameters};
+/// # use lightning::ln::channelmanager::{AChannelManager, Bolt11InvoiceParameters, OffersMessageCommons};
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) {
 /// # let channel_manager = channel_manager.get_cm();
@@ -1976,57 +1976,6 @@ where
 /// ```
 ///
 /// ## BOLT 12 Offers
-///
-/// The [`offers`] module is useful for creating BOLT 12 offers. An [`Offer`] is a precursor to a
-/// [`Bolt12Invoice`], which must first be requested by the payer. The interchange of these messages
-/// as defined in the specification is handled by [`ChannelManager`] and its implementation of
-/// [`OffersMessageHandler`]. However, this only works with an [`Offer`] created using a builder
-/// returned by [`create_offer_builder`]. With this approach, BOLT 12 offers and invoices are
-/// stateless just as BOLT 11 invoices are.
-///
-/// ```
-/// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::AChannelManager;
-/// # use lightning::offers::parse::Bolt12SemanticError;
-/// #
-/// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
-/// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
-/// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
-/// # ;
-/// # // Needed for compiling for c_bindings
-/// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
-/// # let offer = builder
-///     .description("coffee".to_string())
-///     .amount_msats(10_000_000)
-///     .build()?;
-/// let bech32_offer = offer.to_string();
-///
-/// // On the event processing thread
-/// channel_manager.process_pending_events(&|event| {
-///     match event {
-///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
-///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(payment_preimage), .. } => {
-///                 println!("Claiming payment {}", payment_hash);
-///                 channel_manager.claim_funds(payment_preimage);
-///             },
-///             PaymentPurpose::Bolt12OfferPayment { payment_preimage: None, .. } => {
-///                 println!("Unknown payment hash: {}", payment_hash);
-///             }
-/// #           _ => {},
-///         },
-///         Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
-///             println!("Claimed {} msats", amount_msat);
-///         },
-///         // ...
-///     #     _ => {},
-///     }
-///     Ok(())
-/// });
-/// # Ok(())
-/// # }
-/// ```
 ///
 /// Use [`pay_for_offer`] to initiated payment, which sends an [`InvoiceRequest`] for an [`Offer`]
 /// and pays the [`Bolt12Invoice`] response.
@@ -2147,7 +2096,7 @@ where
 ///
 /// ```
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::AChannelManager;
+/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons};
 /// # use lightning::offers::refund::Refund;
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T, refund: &Refund) {
@@ -6715,34 +6664,6 @@ where
 		push_forward_event
 	}
 
-	/// Provides a payment preimage in response to [`Event::PaymentClaimable`], generating any
-	/// [`MessageSendEvent`]s needed to claim the payment.
-	///
-	/// This method is guaranteed to ensure the payment has been claimed but only if the current
-	/// height is strictly below [`Event::PaymentClaimable::claim_deadline`]. To avoid race
-	/// conditions, you should wait for an [`Event::PaymentClaimed`] before considering the payment
-	/// successful. It will generally be available in the next [`process_pending_events`] call.
-	///
-	/// Note that if you did not set an `amount_msat` when calling [`create_inbound_payment`] or
-	/// [`create_inbound_payment_for_hash`] you must check that the amount in the `PaymentClaimable`
-	/// event matches your expectation. If you fail to do so and call this method, you may provide
-	/// the sender "proof-of-payment" when they did not fulfill the full expected payment.
-	///
-	/// This function will fail the payment if it has custom TLVs with even type numbers, as we
-	/// will assume they are unknown. If you intend to accept even custom TLVs, you should use
-	/// [`claim_funds_with_known_custom_tlvs`].
-	///
-	/// [`Event::PaymentClaimable`]: crate::events::Event::PaymentClaimable
-	/// [`Event::PaymentClaimable::claim_deadline`]: crate::events::Event::PaymentClaimable::claim_deadline
-	/// [`Event::PaymentClaimed`]: crate::events::Event::PaymentClaimed
-	/// [`process_pending_events`]: EventsProvider::process_pending_events
-	/// [`create_inbound_payment`]: Self::create_inbound_payment
-	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
-	/// [`claim_funds_with_known_custom_tlvs`]: Self::claim_funds_with_known_custom_tlvs
-	pub fn claim_funds(&self, payment_preimage: PaymentPreimage) {
-		self.claim_payment_internal(payment_preimage, false);
-	}
-
 	/// This is a variant of [`claim_funds`] that allows accepting a payment with custom TLVs with
 	/// even type numbers.
 	///
@@ -9468,7 +9389,7 @@ pub trait OffersMessageCommons {
 	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
 	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
 		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
-	
+
 	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
 	/// [`Router::create_blinded_payment_paths`].
 	fn create_blinded_payment_paths(
@@ -9520,6 +9441,38 @@ pub trait OffersMessageCommons {
 
 	/// Get the [`ChainHash`] of the chain
 	fn get_chain_hash(&self) -> ChainHash;
+
+	/// Processes events that must be periodically handled.
+	///
+	/// An [`EventHandler`] may safely call back to the provider in order to handle an event.
+	/// However, it must not call [`Writeable::write`] as doing so would result in a deadlock.
+	fn process_pending_offers_events<H: Deref>(&self, handler: H) where H::Target: EventHandler;
+
+	/// Provides a payment preimage in response to [`Event::PaymentClaimable`], generating any
+	/// [`MessageSendEvent`]s needed to claim the payment.
+	///
+	/// This method is guaranteed to ensure the payment has been claimed but only if the current
+	/// height is strictly below [`Event::PaymentClaimable::claim_deadline`]. To avoid race
+	/// conditions, you should wait for an [`Event::PaymentClaimed`] before considering the payment
+	/// successful. It will generally be available in the next [`process_pending_events`] call.
+	///
+	/// Note that if you did not set an `amount_msat` when calling [`create_inbound_payment`] or
+	/// [`create_inbound_payment_for_hash`] you must check that the amount in the `PaymentClaimable`
+	/// event matches your expectation. If you fail to do so and call this method, you may provide
+	/// the sender "proof-of-payment" when they did not fulfill the full expected payment.
+	///
+	/// This function will fail the payment if it has custom TLVs with even type numbers, as we
+	/// will assume they are unknown. If you intend to accept even custom TLVs, you should use
+	/// [`claim_funds_with_known_custom_tlvs`].
+	///
+	/// [`Event::PaymentClaimable`]: crate::events::Event::PaymentClaimable
+	/// [`Event::PaymentClaimable::claim_deadline`]: crate::events::Event::PaymentClaimable::claim_deadline
+	/// [`Event::PaymentClaimed`]: crate::events::Event::PaymentClaimed
+	/// [`process_pending_events`]: EventsProvider::process_pending_events
+	/// [`create_inbound_payment`]: Self::create_inbound_payment
+	/// [`create_inbound_payment_for_hash`]: Self::create_inbound_payment_for_hash
+	/// [`claim_funds_with_known_custom_tlvs`]: Self::claim_funds_with_known_custom_tlvs
+	fn claim_funds(&self, payment_preimage: PaymentPreimage);
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9682,6 +9635,14 @@ where
 
 	fn get_chain_hash(&self) -> ChainHash {
 		self.chain_hash
+	}
+
+	fn process_pending_offers_events<H: Deref>(&self, handler: H) where H::Target: EventHandler {
+		self.process_pending_events(handler);
+	}
+
+	fn claim_funds(&self, payment_preimage: PaymentPreimage) {
+		self.claim_payment_internal(payment_preimage, false);
 	}
 }
 
@@ -13288,7 +13249,7 @@ mod tests {
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
 	use crate::ln::types::ChannelId;
 	use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
-	use crate::ln::channelmanager::{create_recv_pending_htlc_info, HTLCForwardInfo, inbound_payment, PaymentId, PaymentSendFailure, RecipientOnionFields, InterceptId};
+	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, OffersMessageCommons, PaymentId, PaymentSendFailure, RecipientOnionFields};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{self, ErrorAction};
 	use crate::ln::msgs::ChannelMessageHandler;
