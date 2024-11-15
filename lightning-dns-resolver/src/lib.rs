@@ -162,7 +162,7 @@ mod test {
 	use lightning::blinded_path::message::{BlindedMessagePath, MessageContext};
 	use lightning::blinded_path::NodeIdLookUp;
 	use lightning::events::{Event, PaymentPurpose};
-	use lightning::ln::channelmanager::{PaymentId, Retry};
+	use lightning::ln::channelmanager::{OffersMessageCommons, PaymentId, Retry};
 	use lightning::ln::functional_test_utils::*;
 	use lightning::ln::msgs::{ChannelMessageHandler, Init, OnionMessageHandler};
 	use lightning::ln::peer_handler::IgnoringMessageHandler;
@@ -391,7 +391,7 @@ mod test {
 		let name = HumanReadableName::from_encoded("matt@mattcorallo.com").unwrap();
 
 		// When we get the proof back, override its contents to an offer from nodes[1]
-		let bs_offer = nodes[1].node.create_offer_builder(None).unwrap().build().unwrap();
+		let bs_offer = nodes[1].offers_handler.create_offer_builder(None).unwrap().build().unwrap();
 		nodes[0]
 			.node
 			.testing_dnssec_proof_offer_resolution_override
