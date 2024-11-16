@@ -1976,57 +1976,6 @@ where
 ///
 /// ## BOLT 12 Offers
 ///
-/// Use [`pay_for_offer`] to initiated payment, which sends an [`InvoiceRequest`] for an [`Offer`]
-/// and pays the [`Bolt12Invoice`] response.
-///
-/// ```
-/// # use lightning::events::{Event, EventsProvider};
-/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons, PaymentId, RecentPaymentDetails, Retry};
-/// # use lightning::offers::offer::Offer;
-/// #
-/// # fn example<T: AChannelManager>(
-/// #     channel_manager: T, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-/// #     payer_note: Option<String>, retry: Retry, max_total_routing_fee_msat: Option<u64>
-/// # ) {
-/// # let channel_manager = channel_manager.get_cm();
-/// let payment_id = PaymentId([42; 32]);
-/// match channel_manager.pay_for_offer(
-///     offer, quantity, amount_msats, payer_note, payment_id, retry, max_total_routing_fee_msat
-/// ) {
-///     Ok(()) => println!("Requesting invoice for offer"),
-///     Err(e) => println!("Unable to request invoice for offer: {:?}", e),
-/// }
-///
-/// // First the payment will be waiting on an invoice
-/// let expected_payment_id = payment_id;
-/// assert!(
-///     channel_manager.list_recent_payments().iter().find(|details| matches!(
-///         details,
-///         RecentPaymentDetails::AwaitingInvoice { payment_id: expected_payment_id }
-///     )).is_some()
-/// );
-///
-/// // Once the invoice is received, a payment will be sent
-/// assert!(
-///     channel_manager.list_recent_payments().iter().find(|details| matches!(
-///         details,
-///         RecentPaymentDetails::Pending { payment_id: expected_payment_id, ..  }
-///     )).is_some()
-/// );
-///
-/// // On the event processing thread
-/// channel_manager.process_pending_events(&|event| {
-///     match event {
-///         Event::PaymentSent { payment_id: Some(payment_id), .. } => println!("Paid {}", payment_id),
-///         Event::PaymentFailed { payment_id, .. } => println!("Failed paying {}", payment_id),
-///         // ...
-///     #     _ => {},
-///     }
-///     Ok(())
-/// });
-/// # }
-/// ```
-///
 /// ## BOLT 12 Refunds
 ///
 /// Use [`request_refund_payment`] to send a [`Bolt12Invoice`] for receiving the refund. Similar to
