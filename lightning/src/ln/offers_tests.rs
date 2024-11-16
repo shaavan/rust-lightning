@@ -655,7 +655,7 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	connect_peers(alice, charlie);
 
@@ -784,7 +784,7 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(alice_id, &onion_message);
@@ -889,7 +889,7 @@ fn pays_for_refund_without_blinded_paths() {
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(alice_id, &onion_message);
@@ -1044,7 +1044,7 @@ fn send_invoice_for_refund_with_distinct_reply_path() {
 	}
 	expect_recent_payment!(alice, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
-	let _expected_invoice = david.node.request_refund_payment(&refund).unwrap();
+	let _expected_invoice = david.offers_handler.request_refund_payment(&refund).unwrap();
 
 	connect_peers(david, bob);
 
@@ -1324,7 +1324,7 @@ fn creates_refund_with_blinded_path_using_unannounced_introduction_node() {
 	}
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 
@@ -1608,7 +1608,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	// Send the invoice directly to David instead of using a blinded path.
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	connect_peers(david, alice);
 	match &mut alice.node.pending_offers_messages.lock().unwrap().first_mut().unwrap().1 {
@@ -1640,7 +1640,7 @@ fn fails_authentication_when_handling_invoice_for_refund() {
 		assert_eq!(path.introduction_node(), &IntroductionNode::NodeId(charlie_id));
 	}
 
-	let expected_invoice = alice.node.request_refund_payment(&refund).unwrap();
+	let expected_invoice = alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	match &mut alice.node.pending_offers_messages.lock().unwrap().first_mut().unwrap().1 {
 		MessageSendInstructions::WithSpecifiedReplyPath { destination, .. } =>
@@ -1773,7 +1773,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 		.unwrap()
 		.build().unwrap();
 
-	match alice.node.request_refund_payment(&refund) {
+	match alice.offers_handler.request_refund_payment(&refund) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::MissingPaths),
 	}
@@ -1782,7 +1782,7 @@ fn fails_creating_refund_or_sending_invoice_without_connected_peers() {
 	args.send_channel_ready = (true, true);
 	reconnect_nodes(args);
 
-	assert!(alice.node.request_refund_payment(&refund).is_ok());
+	assert!(alice.offers_handler.request_refund_payment(&refund).is_ok());
 }
 
 /// Fails creating an invoice request when the offer contains an unsupported chain.
@@ -1832,7 +1832,7 @@ fn fails_sending_invoice_with_unsupported_chain_for_refund() {
 		.chain(Network::Signet)
 		.build().unwrap();
 
-	match alice.node.request_refund_payment(&refund) {
+	match alice.offers_handler.request_refund_payment(&refund) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedChain),
 	}
@@ -2055,7 +2055,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_refund() {
 		.unwrap()
 		.build().unwrap();
 
-	match alice.node.request_refund_payment(&refund) {
+	match alice.offers_handler.request_refund_payment(&refund) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::MissingPaths),
 	}
@@ -2106,7 +2106,7 @@ fn fails_paying_invoice_more_than_once() {
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	// Alice sends the first invoice
-	alice.node.request_refund_payment(&refund).unwrap();
+	alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	connect_peers(alice, charlie);
 
@@ -2126,7 +2126,7 @@ fn fails_paying_invoice_more_than_once() {
 	disconnect_peers(alice, &[charlie]);
 
 	// Alice sends the second invoice
-	alice.node.request_refund_payment(&refund).unwrap();
+	alice.offers_handler.request_refund_payment(&refund).unwrap();
 
 	connect_peers(alice, charlie);
 	connect_peers(david, bob);
