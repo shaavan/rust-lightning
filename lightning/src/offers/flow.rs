@@ -258,7 +258,56 @@ where
 /// });
 /// # }
 /// ```
-/// 
+///
+/// ## BOLT 12 Refunds
+///
+/// Use [`request_refund_payment`] to send a [`Bolt12Invoice`] for receiving the refund. Similar to
+/// *creating* an [`Offer`], this is stateless as it represents an inbound payment.
+///
+/// ```
+/// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
+/// # use lightning::ln::channelmanager::OffersMessageCommons;
+/// # use lightning::offers::flow::AnOffersMessageFlow;
+/// # use lightning::offers::refund::Refund;
+/// #
+/// # fn example<T: AnOffersMessageFlow>(offers_flow: T, refund: &Refund) {
+/// # let offers_flow = offers_flow.get_omf();
+/// let known_payment_hash = match offers_flow.request_refund_payment(refund) {
+///     Ok(invoice) => {
+///         let payment_hash = invoice.payment_hash();
+///         println!("Requesting refund payment {}", payment_hash);
+///         payment_hash
+///     },
+///     Err(e) => panic!("Unable to request payment for refund: {:?}", e),
+/// };
+///
+/// // On the event processing thread
+/// offers_flow.process_pending_offers_events(&|event| {
+///     match event {
+///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
+///             PaymentPurpose::Bolt12RefundPayment { payment_preimage: Some(payment_preimage), .. } => {
+///                 assert_eq!(payment_hash, known_payment_hash);
+///                 println!("Claiming payment {}", payment_hash);
+///                 offers_flow.claim_funds(payment_preimage);
+///             },
+///             PaymentPurpose::Bolt12RefundPayment { payment_preimage: None, .. } => {
+///                 println!("Unknown payment hash: {}", payment_hash);
+///             },
+///             // ...
+/// #           _ => {},
+///     },
+///     Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
+///         assert_eq!(payment_hash, known_payment_hash);
+///         println!("Claimed {} msats", amount_msat);
+///     },
+///     // ...
+/// #     _ => {},
+///     }
+///     Ok(())
+/// });
+/// # }
+/// ```
+///
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, NS: Deref, L: Deref>
 where
     ES::Target: EntropySource,
