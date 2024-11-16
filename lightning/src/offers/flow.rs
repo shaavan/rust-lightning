@@ -202,6 +202,58 @@ where
 /// # }
 /// ```
 ///
+/// Use [`pay_for_offer`] to initiated payment, which sends an [`InvoiceRequest`] for an [`Offer`]
+/// and pays the [`Bolt12Invoice`] response.
+///
+/// ```
+/// # use lightning::events::{Event, EventsProvider};
+/// # use lightning::ln::channelmanager::{OffersMessageCommons, PaymentId, RecentPaymentDetails, Retry};
+/// # use lightning::offers::flow::AnOffersMessageFlow;
+/// # use lightning::offers::offer::Offer;
+/// #
+/// # fn example<T: AnOffersMessageFlow>(
+/// #     offers_flow: T, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
+/// #     payer_note: Option<String>, retry: Retry, max_total_routing_fee_msat: Option<u64>
+/// # ) {
+/// # let offers_flow = offers_flow.get_omf();
+/// let payment_id = PaymentId([42; 32]);
+/// match offers_flow.pay_for_offer(
+///     offer, quantity, amount_msats, payer_note, payment_id, retry, max_total_routing_fee_msat
+/// ) {
+///     Ok(()) => println!("Requesting invoice for offer"),
+///     Err(e) => println!("Unable to request invoice for offer: {:?}", e),
+/// }
+///
+/// // First the payment will be waiting on an invoice
+/// let expected_payment_id = payment_id;
+/// assert!(
+///     offers_flow.list_recent_payments().iter().find(|details| matches!(
+///         details,
+///         RecentPaymentDetails::AwaitingInvoice { payment_id: expected_payment_id }
+///     )).is_some()
+/// );
+///
+/// // Once the invoice is received, a payment will be sent
+/// assert!(
+///     offers_flow.list_recent_payments().iter().find(|details| matches!(
+///         details,
+///         RecentPaymentDetails::Pending { payment_id: expected_payment_id, ..  }
+///     )).is_some()
+/// );
+///
+/// // On the event processing thread
+/// offers_flow.process_pending_offers_events(&|event| {
+///     match event {
+///         Event::PaymentSent { payment_id: Some(payment_id), .. } => println!("Paid {}", payment_id),
+///         Event::PaymentFailed { payment_id, .. } => println!("Failed paying {}", payment_id),
+///         // ...
+///     #     _ => {},
+///     }
+///     Ok(())
+/// });
+/// # }
+/// ```
+/// 
 pub struct OffersMessageFlow<ES: Deref, OMC: Deref, NS: Deref, L: Deref>
 where
     ES::Target: EntropySource,
