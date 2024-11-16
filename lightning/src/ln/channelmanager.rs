@@ -65,9 +65,8 @@ use crate::ln::outbound_payment;
 use crate::ln::outbound_payment::{OutboundPayments, PendingOutboundPayment, RetryableInvoiceRequest, SendAlongPathArgs, StaleExpiration};
 use crate::ln::wire::Encode;
 use crate::offers::invoice::{Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, InvoiceBuilder};
-use crate::offers::invoice_request::{DerivedPayerSigningPubkey, InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::signer;
@@ -9535,112 +9534,6 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
-	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
-	/// [`Bolt12Invoice`] once it is received.
-	///
-	/// Uses [`InvoiceRequestBuilder`] such that the [`InvoiceRequest`] it builds is recognized by
-	/// the [`ChannelManager`] when handling a [`Bolt12Invoice`] message in response to the request.
-	/// The optional parameters are used in the builder, if `Some`:
-	/// - `quantity` for [`InvoiceRequest::quantity`] which must be set if
-	///   [`Offer::expects_quantity`] is `true`.
-	/// - `amount_msats` if overpaying what is required for the given `quantity` is desired, and
-	/// - `payer_note` for [`InvoiceRequest::payer_note`].
-	///
-	/// If `max_total_routing_fee_msat` is not specified, The default from
-	/// [`RouteParameters::from_payment_params_and_value`] is applied.
-	///
-	/// # Payment
-	///
-	/// The provided `payment_id` is used to ensure that only one invoice is paid for the request
-	/// when received. See [Avoiding Duplicate Payments] for other requirements once the payment has
-	/// been sent.
-	///
-	/// To revoke the request, use [`ChannelManager::abandon_payment`] prior to receiving the
-	/// invoice. If abandoned, or an invoice isn't received in a reasonable amount of time, the
-	/// payment will fail with an [`Event::PaymentFailed`].
-	///
-	/// # Privacy
-	///
-	/// For payer privacy, uses a derived payer id and uses [`MessageRouter::create_blinded_paths`]
-	/// to construct a [`BlindedMessagePath`] for the reply path. For further privacy implications, see the
-	/// docs of the parameterized [`Router`], which implements [`MessageRouter`].
-	///
-	/// # Limitations
-	///
-	/// Requires a direct connection to an introduction node in [`Offer::paths`] or to
-	/// [`Offer::issuer_signing_pubkey`], if empty. A similar restriction applies to the responding
-	/// [`Bolt12Invoice::payment_paths`].
-	///
-	/// # Errors
-	///
-	/// Errors if:
-	/// - a duplicate `payment_id` is provided given the caveats in the aforementioned link,
-	/// - the provided parameters are invalid for the offer,
-	/// - the offer is for an unsupported chain, or
-	/// - the parameterized [`Router`] is unable to create a blinded reply path for the invoice
-	///   request.
-	///
-	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
-	/// [`InvoiceRequest::quantity`]: crate::offers::invoice_request::InvoiceRequest::quantity
-	/// [`InvoiceRequest::payer_note`]: crate::offers::invoice_request::InvoiceRequest::payer_note
-	/// [`InvoiceRequestBuilder`]: crate::offers::invoice_request::InvoiceRequestBuilder
-	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	/// [`Bolt12Invoice::payment_paths`]: crate::offers::invoice::Bolt12Invoice::payment_paths
-	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
-	pub fn pay_for_offer(
-		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-		payer_note: Option<String>, payment_id: PaymentId, retry_strategy: Retry,
-		max_total_routing_fee_msat: Option<u64>
-	) -> Result<(), Bolt12SemanticError> {
-		let expanded_key = &self.inbound_payment_key;
-		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let builder: InvoiceRequestBuilder<DerivedPayerSigningPubkey, secp256k1::All> = offer
-			.request_invoice_deriving_signing_pubkey(expanded_key, nonce, secp_ctx, payment_id)?
-			.into();
-		let builder = builder.chain_hash(self.chain_hash)?;
-
-		let builder = match quantity {
-			None => builder,
-			Some(quantity) => builder.quantity(quantity)?,
-		};
-		let builder = match amount_msats {
-			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
-		};
-		let builder = match payer_note {
-			None => builder,
-			Some(payer_note) => builder.payer_note(payer_note),
-		};
-		let invoice_request = builder.build_and_sign()?;
-
-		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
-		let context = MessageContext::Offers(
-			OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) }
-		);
-		let reply_paths = self.create_blinded_paths(context)
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-
-		let expiration = StaleExpiration::TimerTicks(1);
-		let retryable_invoice_request = RetryableInvoiceRequest {
-			invoice_request: invoice_request.clone(),
-			nonce,
-		};
-		self.pending_outbound_payments
-			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, max_total_routing_fee_msat,
-				Some(retryable_invoice_request)
-			)
-			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
-
-		self.enqueue_invoice_request(invoice_request, reply_paths)
-	}
-
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
 	/// message.
 	///
