@@ -1968,56 +1968,6 @@ where
 /// # }
 /// ```
 ///
-/// ## BOLT 12 Offers
-///
-/// ## BOLT 12 Refunds
-///
-/// Use [`request_refund_payment`] to send a [`Bolt12Invoice`] for receiving the refund. Similar to
-/// *creating* an [`Offer`], this is stateless as it represents an inbound payment.
-///
-/// ```
-/// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
-/// # use lightning::ln::channelmanager::{AChannelManager, OffersMessageCommons};
-/// # use lightning::offers::refund::Refund;
-/// #
-/// # fn example<T: AChannelManager>(channel_manager: T, refund: &Refund) {
-/// # let channel_manager = channel_manager.get_cm();
-/// let known_payment_hash = match channel_manager.request_refund_payment(refund) {
-///     Ok(invoice) => {
-///         let payment_hash = invoice.payment_hash();
-///         println!("Requesting refund payment {}", payment_hash);
-///         payment_hash
-///     },
-///     Err(e) => panic!("Unable to request payment for refund: {:?}", e),
-/// };
-///
-/// // On the event processing thread
-/// channel_manager.process_pending_events(&|event| {
-///     match event {
-///         Event::PaymentClaimable { payment_hash, purpose, .. } => match purpose {
-///             PaymentPurpose::Bolt12RefundPayment { payment_preimage: Some(payment_preimage), .. } => {
-///                 assert_eq!(payment_hash, known_payment_hash);
-///                 println!("Claiming payment {}", payment_hash);
-///                 channel_manager.claim_funds(payment_preimage);
-///             },
-///             PaymentPurpose::Bolt12RefundPayment { payment_preimage: None, .. } => {
-///                 println!("Unknown payment hash: {}", payment_hash);
-///             },
-///             // ...
-/// #           _ => {},
-///     },
-///     Event::PaymentClaimed { payment_hash, amount_msat, .. } => {
-///         assert_eq!(payment_hash, known_payment_hash);
-///         println!("Claimed {} msats", amount_msat);
-///     },
-///     // ...
-/// #     _ => {},
-///     }
-///     Ok(())
-/// });
-/// # }
-/// ```
-///
 /// # Persistence
 ///
 /// Implements [`Writeable`] to write out all channel state to disk. Implies [`peer_disconnected`] for
