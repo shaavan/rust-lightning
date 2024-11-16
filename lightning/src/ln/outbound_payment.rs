@@ -138,7 +138,7 @@ pub(crate) enum PendingOutboundPayment {
 pub struct RetryableInvoiceRequest {
 	pub(crate) invoice_request: InvoiceRequest,
 	pub(crate) nonce: Nonce,
-	pub(super) needs_retry: bool,
+	pub(crate) needs_retry: bool,
 }
 
 impl_writeable_tlv_based!(RetryableInvoiceRequest, {
