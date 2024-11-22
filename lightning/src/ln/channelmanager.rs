@@ -118,7 +118,7 @@ use core::{cmp, mem};
 use core::borrow::Borrow;
 use core::cell::RefCell;
 use crate::io::Read;
-use crate::sync::{Arc, Mutex, RwLock, RwLockReadGuard, FairRwLock, LockTestExt, LockHeldState};
+use crate::sync::{Arc, FairRwLock, LockHeldState, LockTestExt, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use core::time::Duration;
 use core::ops::Deref;
@@ -2560,9 +2560,9 @@ where
 	needs_persist_flag: AtomicBool,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
-	pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
+	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
-	pub(crate) pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
+	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
 	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
@@ -3440,7 +3440,7 @@ where
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Arc::new(Mutex::new(Vec::new())),
+			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
@@ -9524,7 +9524,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 /// Functions commonly shared in usage between [`ChannelManager`] & `OffersMessageFlow`
 pub trait OffersMessageCommons {
 	/// Get pending offers messages
-	fn get_pending_offers_messages(&self) -> Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>;
+	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>>;
 
 	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
 	/// to pay us.
@@ -9600,6 +9600,8 @@ pub trait OffersMessageCommons {
 
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
+
+
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9614,8 +9616,8 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-	fn get_pending_offers_messages(&self) -> Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>> {
-        self.pending_offers_messages.clone()
+	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>> {
+        self.pending_offers_messages.lock().expect("Mutex is locked by other thread.")
     }
 
 	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
@@ -13757,7 +13759,7 @@ where
 
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Arc::new(Mutex::new(Vec::new())),
+			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			pending_broadcast_messages: Mutex::new(Vec::new()),
