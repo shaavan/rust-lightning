@@ -18,7 +18,6 @@ use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::blinded_path::payment::{Bolt12OfferContext, PaymentContext};
 use crate::events::{Event, PaymentFailureReason};
 use crate::ln::channelmanager::{Bolt12PaymentError, OffersMessageCommons, Verification};
-use crate::ln::inbound_payment;
 use crate::ln::outbound_payment::RetryableInvoiceRequest;
 use crate::onion_message::messenger::{MessageSendInstructions, Responder, ResponseInstruction};
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
@@ -31,21 +30,18 @@ use crate::offers::invoice_error::InvoiceError;
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
 
-use crate::sign::{EntropySource, NodeSigner};
+use crate::sign::EntropySource;
 use crate::util::logger::{Logger, WithContext};
 
 /// TODO
-pub struct OffersMessageFlow<ES: Deref, OMC: Deref, NS: Deref, L: Deref>
+pub struct OffersMessageFlow<ES: Deref, OMC: Deref, L: Deref>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
-	NS::Target: NodeSigner,
 	L::Target: Logger,
 {
 	secp_ctx: Secp256k1<secp256k1::All>,
-	inbound_payment_key: inbound_payment::ExpandedKey,
 
-	node_signer: NS,
 	entropy_source: ES,
 
 	/// Contains function shared between OffersMessageHandler, and ChannelManager.
@@ -56,48 +52,38 @@ where
 	pub logger: L,
 }
 
-impl<ES: Deref, OMC: Deref, NS: Deref, L: Deref> OffersMessageFlow<ES, OMC, NS, L>
+impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageFlow<ES, OMC, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
-	NS::Target: NodeSigner,
 	L::Target: Logger,
 {
 	/// Creates a new [`OffersMessageFlow`]
-	pub fn new(entropy_source: ES, commons: OMC, node_signer: NS, logger: L) -> Self {
+	pub fn new(entropy_source: ES, commons: OMC, logger: L) -> Self {
 		let mut secp_ctx = Secp256k1::new();
 		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
 
-		let inbound_pmt_key_material = node_signer.get_inbound_payment_key_material();
-		let expanded_inbound_key = inbound_payment::ExpandedKey::new(&inbound_pmt_key_material);
-
 		Self {
 			secp_ctx,
-			inbound_payment_key: expanded_inbound_key,
-
 			commons,
-
-			node_signer,
 			entropy_source,
-
 			logger,
 		}
 	}
 }
 
-impl<ES: Deref, OMC: Deref, NS: Deref, L: Deref> OffersMessageHandler
-	for OffersMessageFlow<ES, OMC, NS, L>
+impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageHandler
+	for OffersMessageFlow<ES, OMC, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
-	NS::Target: NodeSigner,
 	L::Target: Logger,
 {
 	fn handle_message(
 		&self, message: OffersMessage, context: Option<OffersContext>, responder: Option<Responder>,
 	) -> Option<(OffersMessage, ResponseInstruction)> {
 		let secp_ctx = &self.secp_ctx;
-		let expanded_key = &self.inbound_payment_key;
+		let expanded_key = self.commons.get_expanded_key();
 
 		macro_rules! handle_pay_invoice_res {
 			($res: expr, $invoice: expr, $logger: expr) => {{
@@ -242,7 +228,7 @@ where
 							let mut invoice = invoice;
 							invoice
 								.sign(|invoice: &UnsignedBolt12Invoice| {
-									self.node_signer.sign_bolt12_invoice(invoice)
+									self.commons.sign_bolt12_invoice(invoice)
 								})
 								.map_err(InvoiceError::from)
 						})
@@ -348,7 +334,7 @@ where
 			self.commons.release_invoice_requests_awaiting_invoice()
 		{
 			let RetryableInvoiceRequest { invoice_request, nonce } = retryable_invoice_request;
-			let hmac = payment_id.hmac_for_offer_payment(nonce, &self.inbound_payment_key);
+			let hmac = payment_id.hmac_for_offer_payment(nonce, self.commons.get_expanded_key());
 			let context = MessageContext::Offers(OffersContext::OutboundPayment {
 				payment_id,
 				nonce,
