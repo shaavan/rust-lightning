@@ -28,7 +28,7 @@ use bitcoin::hashes::hmac::Hmac;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hash_types::{BlockHash, Txid};
 
-use bitcoin::secp256k1::{SecretKey,PublicKey};
+use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
@@ -7286,11 +7286,6 @@ where
 		}
 	}
 
-	/// Gets the node_id held by this ChannelManager
-	pub fn get_our_node_id(&self) -> PublicKey {
-		self.our_network_pubkey.clone()
-	}
-
 	fn handle_monitor_update_completion_actions<I: IntoIterator<Item=MonitorUpdateCompletionAction>>(&self, actions: I) {
 		debug_assert_ne!(self.pending_events.held_by_thread(), LockHeldState::HeldByThread);
 		debug_assert_ne!(self.claimable_payments.held_by_thread(), LockHeldState::HeldByThread);
@@ -9526,6 +9521,27 @@ pub trait OffersMessageCommons {
 	/// Get pending offers messages
 	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>>;
 
+	/// Gets the node_id held by this ChannelManager
+	fn get_our_node_id(&self) -> PublicKey;
+
+	/// Gets the expanded key
+	fn get_expanded_key(&self) -> &inbound_payment::ExpandedKey;
+
+	/// Signs the [`TaggedHash`] of a BOLT 12 invoice.
+	///
+	/// May be called by a function passed to [`UnsignedBolt12Invoice::sign`] where `invoice` is the
+	/// callee.
+	///
+	/// Implementors may check that the `invoice` is expected rather than blindly signing the tagged
+	/// hash. An `Ok` result should sign `invoice.tagged_hash().as_digest()` with the node's signing
+	/// key or an ephemeral key to preserve privacy, whichever is associated with
+	/// [`UnsignedBolt12Invoice::signing_pubkey`].
+	///
+	/// [`TaggedHash`]: crate::offers::merkle::TaggedHash
+	fn sign_bolt12_invoice(
+		&self, invoice: &UnsignedBolt12Invoice,
+	) -> Result<schnorr::Signature, ()>;
+
 	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
 	/// to pay us.
 	///
@@ -9619,6 +9635,20 @@ where
 	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>> {
         self.pending_offers_messages.lock().expect("Mutex is locked by other thread.")
     }
+
+	fn get_our_node_id(&self) -> PublicKey {
+		self.our_network_pubkey.clone()
+	}
+
+	fn get_expanded_key(&self) -> &inbound_payment::ExpandedKey {
+		&self.inbound_payment_key
+	}
+
+	fn sign_bolt12_invoice(
+		&self, invoice: &UnsignedBolt12Invoice,
+	) -> Result<schnorr::Signature, ()> {
+		self.node_signer.sign_bolt12_invoice(invoice)
+	}
 
 	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
 		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
@@ -13957,7 +13987,7 @@ mod tests {
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
 	use crate::ln::types::ChannelId;
 	use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
-	use crate::ln::channelmanager::{create_recv_pending_htlc_info, HTLCForwardInfo, inbound_payment, PaymentId, PaymentSendFailure, RecipientOnionFields, InterceptId};
+	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, OffersMessageCommons, PaymentId, PaymentSendFailure, RecipientOnionFields};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{self, ErrorAction};
 	use crate::ln::msgs::ChannelMessageHandler;
