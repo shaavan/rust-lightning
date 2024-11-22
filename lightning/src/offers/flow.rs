@@ -9,7 +9,6 @@
 
 //! Data structures and encoding for dealing with OffersMessage
 
-use crate::sync::Arc;
 use alloc::vec::Vec;
 use core::ops::Deref;
 
@@ -33,7 +32,6 @@ use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
 
 use crate::sign::{EntropySource, NodeSigner};
-use crate::sync::Mutex;
 use crate::util::logger::{Logger, WithContext};
 
 /// TODO
@@ -52,11 +50,6 @@ where
 
 	/// Contains function shared between OffersMessageHandler, and ChannelManager.
 	commons: OMC,
-
-	#[cfg(not(any(test, feature = "_test_utils")))]
-	pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
-	#[cfg(any(test, feature = "_test_utils"))]
-	pub(crate) pending_offers_messages: Arc<Mutex<Vec<(OffersMessage, MessageSendInstructions)>>>,
 
 	/// The Logger for use in the OffersMessageFlow and which may be used to log
 	/// information during deserialization.
@@ -78,15 +71,11 @@ where
 		let inbound_pmt_key_material = node_signer.get_inbound_payment_key_material();
 		let expanded_inbound_key = inbound_payment::ExpandedKey::new(&inbound_pmt_key_material);
 
-		let pending_offers_messages = commons.get_pending_offers_messages();
-
 		Self {
 			secp_ctx,
 			inbound_payment_key: expanded_inbound_key,
 
 			commons,
-
-			pending_offers_messages,
 
 			node_signer,
 			entropy_source,
@@ -391,6 +380,6 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
+		core::mem::take(&mut self.commons.get_pending_offers_messages())
 	}
 }
