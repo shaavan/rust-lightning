@@ -471,9 +471,9 @@ pub enum RetryableSendFailure {
 	/// [`Event::PaymentSent`]: crate::events::Event::PaymentSent
 	/// [`Event::PaymentFailed`]: crate::events::Event::PaymentFailed
 	DuplicatePayment,
-	/// The [`RecipientOnionFields::payment_metadata`], [`RecipientOnionFields::custom_tlvs`], or
-	/// [`BlindedPaymentPath`]s provided are too large and caused us to exceed the maximum onion
-	/// packet size of 1300 bytes.
+	/// The [`RecipientOnionFields::payment_metadata`], [`RecipientOnionFields::sender_custom_tlvs`],
+	/// [`RecipientOnionFields::user_custom_tlvs`] or [`BlindedPaymentPath`]s provided are too large
+	/// and caused us to exceed the maximum onion packet size of 1300 bytes.
 	///
 	/// [`BlindedPaymentPath`]: crate::blinded_path::payment::BlindedPaymentPath
 	OnionPacketSizeExceeded,
@@ -614,9 +614,9 @@ pub struct RecipientOnionFields {
 	/// [`Self::payment_secret`] and while nearly all lightning senders support secrets, metadata
 	/// may not be supported as universally.
 	pub payment_metadata: Option<Vec<u8>>,
-	/// See [`Self::custom_tlvs`] for more info.
+	/// See [`Self::sender_custom_tlvs`] for more info.
 	pub(super) sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-	/// Custom Tlvs sent by user to themself.
+	/// See [`Self::user_custom_tlvs`] for more info.
 	pub(super) user_custom_tlvs: Vec<u8>
 }
 
@@ -647,15 +647,15 @@ impl RecipientOnionFields {
 		Self { payment_secret: None, payment_metadata: None, sender_custom_tlvs: Vec::new(), user_custom_tlvs: Vec::new() }
 	}
 
-	/// Creates a new [`RecipientOnionFields`] from an existing one, adding custom TLVs. Each
-	/// TLV is provided as a `(u64, Vec<u8>)` for the type number and serialized value
+	/// Creates a new [`RecipientOnionFields`] from an existing one, adding sender custom TLVs.
+	/// Each TLV is provided as a `(u64, Vec<u8>)` for the type number and serialized value
 	/// respectively. TLV type numbers must be unique and within the range
 	/// reserved for custom types, i.e. >= 2^16, otherwise this method will return `Err(())`.
 	///
 	/// This method will also error for types in the experimental range which have been
 	/// standardized within the protocol, which only includes 5482373484 (keysend) for now.
 	///
-	/// See [`Self::custom_tlvs`] for more info.
+	/// See [`Self::sender_custom_tlvs`] for more info.
 	pub fn with_sender_custom_tlvs(mut self, mut sender_custom_tlvs: Vec<(u64, Vec<u8>)>) -> Result<Self, ()> {
 		sender_custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
 		let mut prev_type = None;
@@ -674,34 +674,70 @@ impl RecipientOnionFields {
 		Ok(self)
 	}
 
-	/// Gets the custom TLVs that will be sent or have been received.
+	/// Creates a new [`RecipientOnionFields`] from an existing one, adding user custom TLVs.
 	///
-	/// Custom TLVs allow sending extra application-specific data with a payment. They provide
-	/// additional flexibility on top of payment metadata, as while other implementations may
-	/// require `payment_metadata` to reflect metadata provided in an invoice, custom TLVs
-	/// do not have this restriction.
+	/// See [`Self::user_custom_tlvs`] for more info.
+	pub fn with_user_custom_tlvs(mut self, custom_tlvs: Vec<u8>) -> Self {
+		self.user_custom_tlvs = custom_tlvs;
+		self
+	}
+
+	/// Gets the sender custom TLVs that will be sent or have been received.
+	///
+	/// Sender custom TLVs allow sending extra application-specific data with a payment.
+	/// They provide additional flexibility on top of payment metadata, as while other
+	/// implementations may require `payment_metadata` to reflect metadata provided in
+	/// an invoice, custom TLVs do not have this restriction.
 	///
 	/// Note that if this field is non-empty, it will contain strictly increasing TLVs, each
 	/// represented by a `(u64, Vec<u8>)` for its type number and serialized value respectively.
-	/// This is validated when setting this field using [`Self::with_custom_tlvs`].
+	/// This is validated when setting this field using [`Self::with_sender_custom_tlvs`].
 	#[cfg(not(c_bindings))]
 	pub fn sender_custom_tlvs(&self) -> &Vec<(u64, Vec<u8>)> {
 		&self.sender_custom_tlvs
 	}
 
-	/// Gets the custom TLVs that will be sent or have been received.
+	/// Gets the sender custom TLVs that will be sent or have been received.
 	///
-	/// Custom TLVs allow sending extra application-specific data with a payment. They provide
-	/// additional flexibility on top of payment metadata, as while other implementations may
-	/// require `payment_metadata` to reflect metadata provided in an invoice, custom TLVs
-	/// do not have this restriction.
+	/// Sender custom TLVs allow sending extra application-specific data with a payment.
+	/// They provide additional flexibility on top of payment metadata, as while other
+	/// implementations may require `payment_metadata` to reflect metadata provided in
+	/// an invoice, custom TLVs do not have this restriction.
 	///
 	/// Note that if this field is non-empty, it will contain strictly increasing TLVs, each
 	/// represented by a `(u64, Vec<u8>)` for its type number and serialized value respectively.
-	/// This is validated when setting this field using [`Self::with_custom_tlvs`].
+	/// This is validated when setting this field using [`Self::with_sender_custom_tlvs`].
 	#[cfg(c_bindings)]
 	pub fn sender_custom_tlvs(&self) -> Vec<(u64, Vec<u8>)> {
 		self.sender_custom_tlvs.clone()
+	}
+
+	/// Gets the user custom TLVs that will be sent or have been received.
+	///
+	/// User custom TLVs allow receiving back extra application-specific
+	/// data that was set by the receiver in the Blinded Path used by the sender
+	/// to reach them.
+	///
+	/// This provides additional flexibility to users by enabling them to include
+	/// extra data they want to receive back, which can be used for authentication
+	/// or other purposes.
+	#[cfg(not(c_bindings))]
+	pub fn user_custom_tlvs(&self) -> &Vec<u8> {
+		&self.user_custom_tlvs
+	}
+
+	/// Gets the user custom TLVs that will be sent or have been received.
+	///
+	/// User custom TLVs allow receiving back extra application-specific
+	/// data that was set by the receiver in the Blinded Path used by the sender
+	/// to reach them.
+	///
+	/// This provides additional flexibility to users by enabling them to include
+	/// extra data they want to receive back, which can be used for authentication
+	/// or other purposes.
+	#[cfg(c_bindings)]
+	pub fn user_custom_tlvs(&self) -> Vec<u8> {
+		self.user_custom_tlvs.clone()
 	}
 
 	/// When we have received some HTLC(s) towards an MPP payment, as we receive further HTLC(s) we
