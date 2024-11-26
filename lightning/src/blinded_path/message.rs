@@ -243,7 +243,15 @@ pub(crate) struct ReceiveTlvs {
 	/// the right context.
 	pub context: Option<MessageContext>,
 
-	/// Custom Tlvs. A user can use this to send custom tlvs information back to themself.
+	/// Custom TLVs set by the user. If `custom_tlvs` is `Some`, it will be returned when the
+	/// blinded path is used.
+	///
+	/// This field allows encoding custom data intended to be retrieved when the blinded path is used.
+	///
+	/// ## Note on Forward Compatibility:
+	/// Users can encode any kind of data into the `Vec<u8>`. However, they must ensure that the
+	/// data is structured in a forward-compatible manner to prevent data loss or misinterpretation
+	/// during future upgrades.
 	pub custom_tlvs: Option<Vec<u8>>,
 }
 
