@@ -194,9 +194,13 @@ pub enum PendingHTLCRouting {
 		///
 		/// For HTLCs received by LDK, this will ultimately be exposed in
 		/// [`Event::PaymentClaimable::onion_fields`] as
-		/// [`RecipientOnionFields::custom_tlvs`].
+		/// [`RecipientOnionFields::sender_custom_tlvs`].
 		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-		/// Custom TLVs which were set by us through the reply path
+		/// Custom TLVs set by the receiver in the blinded path used to reach them.
+		///
+		/// For HTLCs received by LDK, this will be exposed in
+		/// [`Event::PaymentClaimable::onion_fields`] as
+		/// [`RecipientOnionFields::user_custom_tlvs`].
 		user_custom_tlvs: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
@@ -226,9 +230,12 @@ pub enum PendingHTLCRouting {
 		/// Custom TLVs which were set by the sender.
 		///
 		/// For HTLCs received by LDK, these will ultimately bubble back up as
-		/// [`RecipientOnionFields::custom_tlvs`].
+		/// [`RecipientOnionFields::sender_custom_tlvs`].
 		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-		/// Custom TLVs which were set by us through the reply path
+		/// Custom TLVs set by the receiver in the blinded path used to reach them.
+		///
+		/// For HTLCs received by LDK, these will ultimately bubble back up as
+		/// [`RecipientOnionFields::user_custom_tlvs`].
 		user_custom_tlvs: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
