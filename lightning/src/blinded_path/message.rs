@@ -236,14 +236,22 @@ pub(crate) struct ForwardTlvs {
 	pub(crate) next_blinding_override: Option<PublicKey>,
 }
 
-/// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
+/// Similar to Forward Tlvs, but these TLVs are for the final node.
 pub(crate) struct ReceiveTlvs {
 	/// If `context` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
 	pub context: Option<MessageContext>,
 
-	/// Custom Tlvs. A user can use this to send custom tlvs information back to themself.
+	/// Custom TLVs set by the user. If `custom_tlvs` is `Some`, it will be returned when the
+	/// blinded path is used.
+	///
+	/// This field allows encoding custom data intended to be retrieved when the blinded path is used.
+	///
+	/// ## Note on Forward Compatibility:
+	/// Users can encode any kind of data into the `Vec<u8>`. However, they must ensure that the
+	/// data is structured in a forward-compatible manner to prevent data loss or misinterpretation
+	/// during future upgrades.
 	pub custom_tlvs: Option<Vec<u8>>,
 }
 
