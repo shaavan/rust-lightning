@@ -33,9 +33,9 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, OffersContext};
+use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, MessageForwardNode};
 use crate::blinded_path::NodeIdLookUp;
-use crate::blinded_path::message::{BlindedMessagePath, MessageForwardNode};
+use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentConstraints, PaymentContext, UnauthenticatedReceiveTlvs};
 use crate::chain;
 use crate::chain::{Confirm, ChannelMonitorUpdateStatus, Watch, BestBlock};
@@ -47,7 +47,6 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
-use crate::offers::offer::Offer;
 use crate::offers::flow::OffersMessageCommons;
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelError, ChannelUpdateStatus, FundedChannel, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, ReconnectionMsg, InboundV1Channel, WithChannelContext};
@@ -68,12 +67,11 @@ use crate::ln::outbound_payment;
 use crate::ln::outbound_payment::{OutboundPayments, PendingOutboundPayment, RetryableInvoiceRequest, SendAlongPathArgs, StaleExpiration};
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice::UnsignedBolt12Invoice;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::signer;
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, Responder, ResponseInstruction};
 use crate::onion_message::offers::OffersMessage;
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
@@ -461,11 +459,15 @@ impl Ord for ClaimableHTLC {
 pub trait Verification {
 	/// Constructs an HMAC to include in [`OffersContext`] for the data along with the given
 	/// [`Nonce`].
+	/// 
+	/// [`OffersContext`]: crate::blinded_path::message::OffersContext
 	fn hmac_for_offer_payment(
 		&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Hmac<Sha256>;
 
 	/// Authenticates the data using an HMAC and a [`Nonce`] taken from an [`OffersContext`].
+	/// 
+	/// [`OffersContext`]: crate::blinded_path::message::OffersContext
 	fn verify_for_offer_payment(
 		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Result<(), ()>;
@@ -474,6 +476,8 @@ pub trait Verification {
 impl Verification for PaymentHash {
 	/// Constructs an HMAC to include in [`OffersContext::InboundPayment`] for the payment hash
 	/// along with the given [`Nonce`].
+	/// 
+	/// [`OffersContext::InboundPayment`]: crate::blinded_path::message::OffersContext::InboundPayment
 	fn hmac_for_offer_payment(
 		&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Hmac<Sha256> {
@@ -482,6 +486,8 @@ impl Verification for PaymentHash {
 
 	/// Authenticates the payment id using an HMAC and a [`Nonce`] taken from an
 	/// [`OffersContext::InboundPayment`].
+	/// 
+	/// [`OffersContext::InboundPayment`]: crate::blinded_path::message::OffersContext::InboundPayment
 	fn verify_for_offer_payment(
 		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Result<(), ()> {
@@ -536,6 +542,8 @@ impl PaymentId {
 impl Verification for PaymentId {
 	/// Constructs an HMAC to include in [`OffersContext::OutboundPayment`] for the payment id
 	/// along with the given [`Nonce`].
+	/// 
+	/// [`OffersContext::OutboundPayment`]: crate::blinded_path::message::OffersContext::OutboundPayment
 	fn hmac_for_offer_payment(
 		&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Hmac<Sha256> {
@@ -544,6 +552,8 @@ impl Verification for PaymentId {
 
 	/// Authenticates the payment id using an HMAC and a [`Nonce`] taken from an
 	/// [`OffersContext::OutboundPayment`].
+	/// 
+	/// [`OffersContext::OutboundPayment`]: crate::blinded_path::message::OffersContext::OutboundPayment
 	fn verify_for_offer_payment(
 		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
 	) -> Result<(), ()> {
@@ -2632,26 +2642,6 @@ const MAX_UNFUNDED_CHANNEL_PEERS: usize = 50;
 /// The maximum number of peers which we do not have a (funded) channel with. Once we reach this
 /// many peers we reject new (inbound) connections.
 const MAX_NO_CHANNEL_PEERS: usize = 250;
-
-/// The maximum expiration from the current time where an [`Offer`] or [`Refund`] is considered
-/// short-lived, while anything with a greater expiration is considered long-lived.
-///
-/// Using [`OffersMessageFlow::create_offer_builder`] or [`OffersMessageFlow::create_refund_builder`],
-/// will included a [`BlindedMessagePath`] created using:
-/// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
-/// - [`MessageRouter::create_blinded_paths`] when long-lived.
-///
-/// [`OffersMessageFlow::create_offer_builder`]: crate::offers::flow::OffersMessageFlow::create_offer_builder
-/// [`OffersMessageFlow::create_refund_builder`]: crate::offers::flow::OffersMessageFlow::create_refund_builder
-///
-///
-/// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
-/// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
-/// become invalid over time as channels are closed. Thus, they are only suitable for short-term use.
-///
-/// [`Offer`]: crate::offers::offer
-/// [`Refund`]: crate::offers::refund
-pub const MAX_SHORT_LIVED_RELATIVE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// Used by [`ChannelManager::list_recent_payments`] to express the status of recent payments.
 /// These include payments that have yet to find a successful path, or have unresolved HTLCs.
@@ -9515,6 +9505,23 @@ where
 		self.create_blinded_payment_paths(amount_msats, payment_secret, payment_context, relative_expiry_time)
 	}
 
+	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
+		self.per_peer_state.read().unwrap()
+			.iter()
+			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
+			.filter(|(_, peer)| peer.is_connected)
+			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
+			.map(|(node_id, peer)| MessageForwardNode {
+				node_id: *node_id,
+				short_channel_id: peer.channel_by_id
+					.iter()
+					.filter(|(_, channel)| channel.context().is_usable())
+					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+			})
+			.collect::<Vec<_>>()
+	}
+
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
 		self.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
 	}
@@ -9546,12 +9553,6 @@ where
 		self.initiate_async_payment(invoice, payment_id)
 	}
 
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-	}
-
 	fn get_chain_hash(&self) -> ChainHash {
 		self.chain_hash
 	}
@@ -9573,14 +9574,6 @@ where
 		max_total_routing_fee_msat: Option<u64>, amount_msats: u64,
 	) -> Result<(), ()> {
 		self.pending_outbound_payments.add_new_awaiting_offer(payment_id, expiration, retry_strategy, max_total_routing_fee_msat, amount_msats)
-	}
-
-	fn pay_for_offer_intern<CPP: FnOnce(&InvoiceRequest, Nonce) -> Result<(), Bolt12SemanticError>>(
-		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-		payer_note: Option<String>, payment_id: PaymentId,
-		human_readable_name: Option<HumanReadableName>, create_pending_payment: CPP,
-	) -> Result<(), Bolt12SemanticError> {
-		self.pay_for_offer_intern(offer, quantity, amount_msats, payer_note, payment_id, human_readable_name, create_pending_payment)
 	}
 
 	#[cfg(feature = "dnssec")]
@@ -9614,54 +9607,6 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-	/// Internal pay_for_offer
-	pub fn pay_for_offer_intern<CPP: FnOnce(&InvoiceRequest, Nonce) -> Result<(), Bolt12SemanticError>>(
-		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-		payer_note: Option<String>, payment_id: PaymentId,
-		human_readable_name: Option<HumanReadableName>, create_pending_payment: CPP,
-	) -> Result<(), Bolt12SemanticError> {
-		let expanded_key = &self.inbound_payment_key;
-		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let builder: InvoiceRequestBuilder<secp256k1::All> = offer
-			.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?
-			.into();
-		let builder = builder.chain_hash(self.chain_hash)?;
-
-		let builder = match quantity {
-			None => builder,
-			Some(quantity) => builder.quantity(quantity)?,
-		};
-		let builder = match amount_msats {
-			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
-		};
-		let builder = match payer_note {
-			None => builder,
-			Some(payer_note) => builder.payer_note(payer_note),
-		};
-		let builder = match human_readable_name {
-			None => builder,
-			Some(hrn) => builder.sourced_from_human_readable_name(hrn),
-		};
-		let invoice_request = builder.build_and_sign()?;
-
-		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
-		let context = MessageContext::Offers(
-			OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) }
-		);
-		let reply_paths = self.create_blinded_paths(context)
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-
-		create_pending_payment(&invoice_request, nonce)?;
-
-		self.enqueue_invoice_request(invoice_request, reply_paths)
-	}
-
 	fn enqueue_invoice_request(
 		&self,
 		invoice_request: InvoiceRequest,
@@ -9695,6 +9640,19 @@ where
 			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
 		}
 		Ok(())
+	}
+
+	#[cfg(async_payments)]
+	pub(super) fn duration_since_epoch(&self) -> Duration {
+		#[cfg(not(feature = "std"))]
+		let now = Duration::from_secs(
+			self.highest_seen_timestamp.load(Ordering::Acquire) as u64
+		);
+		#[cfg(feature = "std")]
+		let now = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+		    .expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+		now
 	}
 
 	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
@@ -9795,37 +9753,6 @@ where
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
 	}
 
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	pub fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
-	}
-
-	pub(super) fn duration_since_epoch(&self) -> Duration {
-		#[cfg(not(feature = "std"))]
-		let now = Duration::from_secs(
-			self.highest_seen_timestamp.load(Ordering::Acquire) as u64
-		);
-		#[cfg(feature = "std")]
-		let now = std::time::SystemTime::now()
-			.duration_since(std::time::SystemTime::UNIX_EPOCH)
-			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
-
-		now
-	}
-
 	/// Creates a collection of blinded paths by delegating to
 	/// [`MessageRouter::create_blinded_paths`].
 	///
@@ -9833,7 +9760,6 @@ where
 	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
-
 		let peers = self.per_peer_state.read().unwrap()
 			.iter()
 			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
@@ -9841,37 +9767,8 @@ where
 			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
 			.map(|(node_id, _)| *node_id)
 			.collect::<Vec<_>>();
-
 		self.message_router
 			.create_blinded_paths(recipient, context, peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, peer)| MessageForwardNode {
-				node_id: *node_id,
-				short_channel_id: peer.channel_by_id
-					.iter()
-					.filter(|(_, channel)| channel.context().is_usable())
-					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
-					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
-			})
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -9884,7 +9781,6 @@ where
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
 		let secp_ctx = &self.secp_ctx;
-
 		let first_hops = self.list_usable_channels();
 		let payee_node_id = self.get_our_node_id();
 
@@ -9905,7 +9801,6 @@ where
 		};
 		let nonce = Nonce::from_entropy_source(entropy);
 		let payee_tlvs = payee_tlvs.authenticate(nonce, expanded_key);
-
 		self.router.create_blinded_payment_paths(
 			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
 		)
@@ -12161,6 +12056,7 @@ where
 	/// The [`MessageRouter`] used for constructing [`BlindedMessagePath`]s for [`Offer`]s,
 	/// [`Refund`]s, and any reply paths.
 	///
+	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
 	/// [`Offer`]: crate::offers::offer
 	/// [`Refund`]: crate::offers::refund
 	pub message_router: MR,
