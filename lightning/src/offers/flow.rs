@@ -419,6 +419,9 @@ where
 	#[cfg(any(test, feature = "_test_utils"))]
 	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 
+	#[cfg(feature = "dnssec")]
+	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
 	#[cfg(feature = "_test_utils")]
 	/// In testing, it is useful be able to forge a name -> offer mapping so that we can pay an
 	/// offer generated in the test.
@@ -453,6 +456,10 @@ where
 			message_router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+
+			#[cfg(feature = "dnssec")]
+			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
 			logger,
@@ -1367,7 +1374,7 @@ where
 			.flat_map(|destination| reply_paths.iter().map(move |path| (path, destination)))
 			.take(OFFERS_MESSAGE_REQUEST_LIMIT);
 		for (reply_path, destination) in message_params {
-			self.commons.get_pending_dns_onion_messages().push((
+			self.pending_dns_onion_messages.lock().unwrap().push((
 				DNSResolverMessage::DNSSECQuery(onion_message.clone()),
 				MessageSendInstructions::WithSpecifiedReplyPath {
 					destination: destination.clone(),
@@ -1447,6 +1454,6 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.commons.get_pending_dns_onion_messages())
+		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
 	}
 }
