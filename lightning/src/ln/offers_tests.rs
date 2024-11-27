@@ -1201,9 +1201,9 @@ fn pays_bolt12_invoice_asynchronously() {
 		assert_eq!(path.introduction_node(), &IntroductionNode::NodeId(alice_id));
 	}
 
-	assert!(bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()).is_ok());
+	assert!(bob.offers_handler.send_payment_for_bolt12_invoice(&invoice, context.as_ref()).is_ok());
 	assert_eq!(
-		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		bob.offers_handler.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
 		Err(Bolt12PaymentError::DuplicateInvoice),
 	);
 
@@ -1214,7 +1214,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 
 	assert_eq!(
-		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		bob.offers_handler.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
 		Err(Bolt12PaymentError::DuplicateInvoice),
 	);
 
@@ -1223,7 +1223,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	}
 
 	assert_eq!(
-		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		bob.offers_handler.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
 		Err(Bolt12PaymentError::UnexpectedInvoice),
 	);
 }
