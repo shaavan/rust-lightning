@@ -859,14 +859,14 @@ pub struct UserConfig {
 	///
 	/// When set to `true`, [`Event::InvoiceReceived`] will be generated for each received
 	/// [`Bolt12Invoice`] instead of being automatically paid after verification. Use
-	/// [`ChannelManager::send_payment_for_bolt12_invoice`] to pay the invoice or
+	/// [`OffersMessageFlow::send_payment_for_bolt12_invoice`] to pay the invoice or
 	/// [`ChannelManager::abandon_payment`] to abandon the associated payment.
 	///
 	/// Default value: `false`
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	/// [`Event::InvoiceReceived`]: crate::events::Event::InvoiceReceived
-	/// [`ChannelManager::send_payment_for_bolt12_invoice`]: crate::ln::channelmanager::ChannelManager::send_payment_for_bolt12_invoice
+	/// [`OffersMessageFlow::send_payment_for_bolt12_invoice`]: crate::offers::flow::OffersMessageFlow::send_payment_for_bolt12_invoice
 	/// [`ChannelManager::abandon_payment`]: crate::ln::channelmanager::ChannelManager::abandon_payment
 	pub manually_handle_bolt12_invoices: bool,
 }
