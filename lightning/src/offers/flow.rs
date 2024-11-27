@@ -34,6 +34,7 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_error::InvoiceError;
+use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
@@ -376,6 +377,63 @@ where
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
 			logger,
 		}
+	}
+}
+
+impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageFlow<ES, OMC, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	L::Target: Logger,
+{
+	fn pay_for_offer_intern<
+		CPP: FnOnce(&InvoiceRequest, Nonce) -> Result<(), Bolt12SemanticError>,
+	>(
+		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
+		payer_note: Option<String>, payment_id: PaymentId,
+		human_readable_name: Option<HumanReadableName>, create_pending_payment: CPP,
+	) -> Result<(), Bolt12SemanticError> {
+		let expanded_key = self.commons.get_expanded_key();
+		let entropy = &*self.entropy_source;
+		let secp_ctx = &self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let builder: InvoiceRequestBuilder<secp256k1::All> =
+			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?.into();
+		let builder = builder.chain_hash(self.commons.get_chain_hash())?;
+
+		let builder = match quantity {
+			None => builder,
+			Some(quantity) => builder.quantity(quantity)?,
+		};
+		let builder = match amount_msats {
+			None => builder,
+			Some(amount_msats) => builder.amount_msats(amount_msats)?,
+		};
+		let builder = match payer_note {
+			None => builder,
+			Some(payer_note) => builder.payer_note(payer_note),
+		};
+		let builder = match human_readable_name {
+			None => builder,
+			Some(hrn) => builder.sourced_from_human_readable_name(hrn),
+		};
+		let invoice_request = builder.build_and_sign()?;
+
+		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
+		let context = MessageContext::Offers(OffersContext::OutboundPayment {
+			payment_id,
+			nonce,
+			hmac: Some(hmac),
+		});
+		let reply_paths = self
+			.commons
+			.create_blinded_paths(context)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		create_pending_payment(&invoice_request, nonce)?;
+
+		self.commons.enqueue_invoice_request(invoice_request, reply_paths)
 	}
 }
 
@@ -896,7 +954,7 @@ where
 		payer_note: Option<String>, payment_id: PaymentId, retry_strategy: Retry,
 		max_total_routing_fee_msat: Option<u64>,
 	) -> Result<(), Bolt12SemanticError> {
-		self.commons.pay_for_offer_intern(
+		self.pay_for_offer_intern(
 			offer,
 			quantity,
 			amount_msats,
@@ -1146,7 +1204,7 @@ where
 				}
 				if let Ok(amt_msats) = self.commons.amt_msats_for_payment_awaiting_offer(payment_id)
 				{
-					let offer_pay_res = self.commons.pay_for_offer_intern(
+					let offer_pay_res = self.pay_for_offer_intern(
 						&offer,
 						None,
 						Some(amt_msats),
