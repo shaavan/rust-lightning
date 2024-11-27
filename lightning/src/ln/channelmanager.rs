@@ -33,7 +33,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, MessageForwardNode, OffersContext};
+use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, MessageForwardNode};
 use crate::blinded_path::NodeIdLookUp;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentConstraints, PaymentContext, ReceiveTlvs};
@@ -4368,35 +4368,6 @@ where
 	#[cfg(test)]
 	pub(crate) fn test_set_payment_metadata(&self, payment_id: PaymentId, new_payment_metadata: Option<Vec<u8>>) {
 		self.pending_outbound_payments.test_set_payment_metadata(payment_id, new_payment_metadata);
-	}
-
-	/// Pays the [`Bolt12Invoice`] associated with the `payment_id` encoded in its `payer_metadata`.
-	///
-	/// The invoice's `payer_metadata` is used to authenticate that the invoice was indeed requested
-	/// before attempting a payment. [`Bolt12PaymentError::UnexpectedInvoice`] is returned if this
-	/// fails or if the encoded `payment_id` is not recognized. The latter may happen once the
-	/// payment is no longer tracked because the payment was attempted after:
-	/// - an invoice for the `payment_id` was already paid,
-	/// - one full [timer tick] has elapsed since initially requesting the invoice when paying an
-	///   offer, or
-	/// - the refund corresponding to the invoice has already expired.
-	///
-	/// To retry the payment, request another invoice using a new `payment_id`.
-	///
-	/// Attempting to pay the same invoice twice while the first payment is still pending will
-	/// result in a [`Bolt12PaymentError::DuplicateInvoice`].
-	///
-	/// Otherwise, either [`Event::PaymentSent`] or [`Event::PaymentFailed`] are used to indicate
-	/// whether or not the payment was successful.
-	///
-	/// [timer tick]: Self::timer_tick_occurred
-	pub fn send_payment_for_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<(), Bolt12PaymentError> {
-		match self.verify_bolt12_invoice(invoice, context) {
-			Ok(payment_id) => self.send_payment_for_verified_bolt12_invoice(invoice, payment_id),
-			Err(()) => Err(Bolt12PaymentError::UnexpectedInvoice),
-		}
 	}
 
 	#[cfg(async_payments)]
@@ -9196,15 +9167,10 @@ pub trait OffersMessageCommons {
 	/// Get the vector of peers that can be used for a blinded path
 	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode>;
 
-	/// Verify bolt12 invoice
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()>;
-
 	/// Gets the current configuration applied to all new channels.
 	fn get_current_default_configuration(&self) -> &UserConfig;
 
-	/// Send payment for verified bolt12 invoice
+	/// Send Payment for verified BOLT12 Invoice
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
 
 	/// Add new pending event
@@ -9324,31 +9290,15 @@ where
 			.collect::<Vec<_>>()
 	}
 
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()> {
-		let secp_ctx = &self.secp_ctx;
-		let expanded_key = &self.inbound_payment_key;
-
-		match context {
-			None if invoice.is_for_refund_without_paths() => {
-				invoice.verify_using_metadata(expanded_key, secp_ctx)
-			},
-			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
-				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
-			},
-			_ => Err(()),
-		}
-	}
-
 	fn get_current_default_configuration(&self) -> &UserConfig {
 		&self.default_configuration
 	}
 
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
 		let best_block_height = self.best_block.read().unwrap().height;
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let features = self.bolt12_invoice_features();
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
 		self.pending_outbound_payments
 			.send_payment_for_bolt12_invoice(
 				invoice, payment_id, &self.router, self.list_usable_channels(), features,
