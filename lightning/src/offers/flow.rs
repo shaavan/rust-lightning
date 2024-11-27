@@ -10,6 +10,7 @@
 //! Provides data structures and functions for creating and managing Offers messages,
 //! facilitating communication, and handling Bolt12 invoice payments.
 
+use crate::prelude::*;
 use alloc::vec::Vec;
 use core::ops::Deref;
 use core::time::Duration;
@@ -40,6 +41,7 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 
 use crate::sign::EntropySource;
+use crate::sync::Mutex;
 use crate::util::logger::{Logger, WithContext};
 
 #[cfg(c_bindings)]
@@ -49,7 +51,12 @@ use {
 };
 
 #[cfg(feature = "dnssec")]
-use crate::onion_message::dns_resolution::{DNSResolverMessage, HumanReadableName};
+use {
+	crate::blinded_path::message::DNSResolverContext,
+	crate::onion_message::dns_resolution::{
+		DNSResolverMessage, DNSResolverMessageHandler, DNSSECProof, DNSSECQuery, HumanReadableName,
+	},
+};
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
 ///
@@ -393,6 +400,14 @@ where
 	/// Contains functions shared between OffersMessageHandler and ChannelManager.
 	commons: OMC,
 
+	#[cfg(feature = "_test_utils")]
+	/// In testing, it is useful be able to forge a name -> offer mapping so that we can pay an
+	/// offer generated in the test.
+	///
+	/// This allows for doing so, validating proofs as normal, but, if they pass, replacing the
+	/// offer they resolve to to the given one.
+	pub testing_dnssec_proof_offer_resolution_override: Mutex<HashMap<HumanReadableName, Offer>>,
+
 	/// The Logger for use in the OffersMessageFlow and which may be used to log
 	/// information during deserialization.
 	pub logger: L,
@@ -409,7 +424,14 @@ where
 		let mut secp_ctx = Secp256k1::new();
 		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
 
-		Self { secp_ctx, commons, entropy_source, logger }
+		Self {
+			secp_ctx,
+			commons,
+			entropy_source,
+			#[cfg(feature = "_test_utils")]
+			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
+			logger,
+		}
 	}
 }
 
@@ -1147,5 +1169,75 @@ where
 			));
 		}
 		Ok(())
+	}
+}
+
+#[cfg(feature = "dnssec")]
+impl<ES: Deref, OMC: Deref, L: Deref> DNSResolverMessageHandler for OffersMessageFlow<ES, OMC, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	L::Target: Logger,
+{
+	fn handle_dnssec_query(
+		&self, _message: DNSSECQuery, _responder: Option<Responder>,
+	) -> Option<(DNSResolverMessage, ResponseInstruction)> {
+		None
+	}
+
+	fn handle_dnssec_proof(&self, message: DNSSECProof, context: DNSResolverContext) {
+		let offer_opt =
+			self.commons.get_hrn_resolver().handle_dnssec_proof_for_offer(message, context);
+		#[cfg_attr(not(feature = "_test_utils"), allow(unused_mut))]
+		if let Some((completed_requests, mut offer)) = offer_opt {
+			for (name, payment_id) in completed_requests {
+				#[cfg(feature = "_test_utils")]
+				if let Some(replacement_offer) = self
+					.testing_dnssec_proof_offer_resolution_override
+					.lock()
+					.unwrap()
+					.remove(&name)
+				{
+					// If we have multiple pending requests we may end up over-using the override
+					// offer, but tests can deal with that.
+					offer = replacement_offer;
+				}
+				if let Ok(amt_msats) = self.commons.amt_msats_for_payment_awaiting_offer(payment_id)
+				{
+					let offer_pay_res = self.commons.pay_for_offer_intern(
+						&offer,
+						None,
+						Some(amt_msats),
+						None,
+						payment_id,
+						Some(name),
+						|invoice_request, nonce| {
+							let retryable_invoice_request = RetryableInvoiceRequest {
+								invoice_request: invoice_request.clone(),
+								nonce,
+							};
+							self.commons
+								.received_offer(payment_id, Some(retryable_invoice_request))
+								.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)
+						},
+					);
+					if offer_pay_res.is_err() {
+						// The offer we tried to pay is the canonical current offer for the name we
+						// wanted to pay. If we can't pay it, there's no way to recover so fail the
+						// payment.
+						// Note that the PaymentFailureReason should be ignored for an
+						// AwaitingInvoice payment.
+						self.commons.abandon_payment_with_reason(
+							payment_id,
+							PaymentFailureReason::RouteNotFound,
+						);
+					}
+				}
+			}
+		}
+	}
+
+	fn release_pending_messages(&self) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
+		core::mem::take(&mut self.commons.get_pending_dns_onion_messages())
 	}
 }
