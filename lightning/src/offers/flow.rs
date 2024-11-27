@@ -357,6 +357,11 @@ where
 
 	message_router: MR,
 
+	#[cfg(not(any(test, feature = "_test_utils")))]
+	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+	#[cfg(any(test, feature = "_test_utils"))]
+	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+
 	#[cfg(feature = "_test_utils")]
 	/// In testing, it is useful be able to forge a name -> offer mapping so that we can pay an
 	/// offer generated in the test.
@@ -384,9 +389,13 @@ where
 
 		Self {
 			secp_ctx,
-			commons,
-			message_router,
 			entropy_source,
+
+			commons,
+
+			message_router,
+
+			pending_offers_messages: Mutex::new(Vec::new()),
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
 			logger,
@@ -467,6 +476,42 @@ where
 			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
+
+	fn enqueue_invoice_request(
+		&self,
+		invoice_request: InvoiceRequest,
+		reply_paths: Vec<BlindedMessagePath>,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		if !invoice_request.paths().is_empty() {
+			reply_paths
+				.iter()
+				.flat_map(|reply_path| invoice_request.paths().iter().map(move |path| (path, reply_path)))
+				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
+				.for_each(|(path, reply_path)| {
+					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+						destination: Destination::BlindedPath(path.clone()),
+						reply_path: reply_path.clone(),
+					};
+					let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+					pending_offers_messages.push((message, instructions));
+				});
+		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
+			for reply_path in reply_paths {
+				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+					destination: Destination::Node(node_id),
+					reply_path,
+				};
+				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+				pending_offers_messages.push((message, instructions));
+			}
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
+		}
+
+		Ok(())
+	}
 }
 
 impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
@@ -523,7 +568,7 @@ where
 
 		create_pending_payment(&invoice_request, nonce)?;
 
-		self.commons.enqueue_invoice_request(invoice_request, reply_paths)
+		self.enqueue_invoice_request(invoice_request, reply_paths)
 	}
 }
 
@@ -797,7 +842,7 @@ where
 			});
 			match self.commons.create_blinded_paths(context) {
 				Ok(reply_paths) => {
-					match self.commons.enqueue_invoice_request(invoice_request, reply_paths) {
+					match self.enqueue_invoice_request(invoice_request, reply_paths) {
 						Ok(_) => {},
 						Err(_) => {
 							log_warn!(
@@ -821,7 +866,7 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.commons.get_pending_offers_messages())
+		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
 	}
 }
 
@@ -1153,7 +1198,7 @@ where
 					.create_blinded_paths(context)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				let mut pending_offers_messages = self.commons.get_pending_offers_messages();
+				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 				if refund.paths().is_empty() {
 					for reply_path in reply_paths {
 						let instructions = MessageSendInstructions::WithSpecifiedReplyPath {

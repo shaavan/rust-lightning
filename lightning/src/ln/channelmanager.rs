@@ -66,15 +66,12 @@ use crate::ln::outbound_payment::{OutboundPayments, PendingOutboundPayment, Retr
 use crate::ln::wire::Encode;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice::UnsignedBolt12Invoice;
-use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::signer;
 #[cfg(async_payments)]
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, Responder, ResponseInstruction};
-use crate::onion_message::offers::OffersMessage;
+use crate::onion_message::messenger::{DefaultMessageRouter, MessageRouter, MessageSendInstructions, Responder, ResponseInstruction};
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
 use crate::util::config::{UserConfig, ChannelConfig, ChannelConfigUpdate};
@@ -2086,8 +2083,6 @@ where
 //
 // Lock order tree:
 //
-// `pending_offers_messages`
-//
 // `pending_async_payments_messages`
 //
 // `total_consistency_lock`
@@ -2336,10 +2331,6 @@ where
 	event_persist_notifier: Notifier,
 	needs_persist_flag: AtomicBool,
 
-	#[cfg(not(any(test, feature = "_test_utils")))]
-	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
-	#[cfg(any(test, feature = "_test_utils"))]
-	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
 	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
@@ -3198,7 +3189,6 @@ where
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
@@ -9144,9 +9134,6 @@ impl Default for Bolt11InvoiceParameters {
 /// 
 /// [`OffersMessageFlow`]: crate::offers::flow::OffersMessageFlow
 pub trait OffersMessageCommons {
-	/// Get pending offers messages
-	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>>;
-
 	/// Get pending DNS onion messages
 	fn get_pending_dns_onion_messages(&self) -> MutexGuard<'_, Vec<(DNSResolverMessage, MessageSendInstructions)>>;
 
@@ -9242,13 +9229,6 @@ pub trait OffersMessageCommons {
 	/// Errors if the `MessageRouter` errors.
 	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
 
-	/// Enqueue invoice request
-	fn enqueue_invoice_request(
-		&self,
-		invoice_request: InvoiceRequest,
-		reply_paths: Vec<BlindedMessagePath>,
-	) -> Result<(), Bolt12SemanticError>;
-
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
 
@@ -9287,10 +9267,6 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>> {
-        self.pending_offers_messages.lock().expect("Mutex is locked by other thread.")
-    }
-
 	fn get_pending_dns_onion_messages(&self) -> MutexGuard<'_, Vec<(DNSResolverMessage, MessageSendInstructions)>> {
 		self.pending_dns_onion_messages.lock().expect("Mutex is locked by other thread.")
 	}
@@ -9421,42 +9397,6 @@ where
 		self.message_router
 			.create_blinded_paths(recipient, context, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	fn enqueue_invoice_request(
-		&self,
-		invoice_request: InvoiceRequest,
-		reply_paths: Vec<BlindedMessagePath>,
-	) -> Result<(), Bolt12SemanticError> {
-		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if !invoice_request.paths().is_empty() {
-			reply_paths
-				.iter()
-				.flat_map(|reply_path| invoice_request.paths().iter().map(move |path| (path, reply_path)))
-				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
-				.for_each(|(path, reply_path)| {
-					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-						destination: Destination::BlindedPath(path.clone()),
-						reply_path: reply_path.clone(),
-					};
-					let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-					pending_offers_messages.push((message, instructions));
-				});
-		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
-			for reply_path in reply_paths {
-				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: Destination::Node(node_id),
-					reply_path,
-				};
-				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-				pending_offers_messages.push((message, instructions));
-			}
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
-		}
-
-		Ok(())
 	}
 
 	fn get_current_blocktime(&self) -> Duration {
@@ -12818,7 +12758,6 @@ where
 
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			pending_broadcast_messages: Mutex::new(Vec::new()),
