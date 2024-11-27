@@ -33,9 +33,9 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, OffersContext};
+use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, MessageForwardNode, OffersContext};
 use crate::blinded_path::NodeIdLookUp;
-use crate::blinded_path::message::{BlindedMessagePath, MessageForwardNode};
+use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentConstraints, PaymentContext, ReceiveTlvs};
 use crate::chain;
 use crate::chain::{Confirm, ChannelMonitorUpdateStatus, Watch, BestBlock};
@@ -2587,26 +2587,6 @@ const MAX_UNFUNDED_CHANNEL_PEERS: usize = 50;
 /// The maximum number of peers which we do not have a (funded) channel with. Once we reach this
 /// many peers we reject new (inbound) connections.
 const MAX_NO_CHANNEL_PEERS: usize = 250;
-
-/// The maximum expiration from the current time where an [`Offer`] or [`Refund`] is considered
-/// short-lived, while anything with a greater expiration is considered long-lived.
-///
-/// Using [`OffersMessageFlow::create_offer_builder`] or [`OffersMessageFlow::create_refund_builder`],
-/// will included a [`BlindedMessagePath`] created using:
-/// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
-/// - [`MessageRouter::create_blinded_paths`] when long-lived.
-///
-/// [`OffersMessageFlow::create_offer_builder`]: crate::offers::flow::OffersMessageFlow::create_offer_builder
-/// [`OffersMessageFlow::create_refund_builder`]: crate::offers::flow::OffersMessageFlow::create_refund_builder
-///
-///
-/// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
-/// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
-/// become invalid over time as channels are closed. Thus, they are only suitable for short-term use.
-///
-/// [`Offer`]: crate::offers::offer
-/// [`Refund`]: crate::offers::refund
-pub const MAX_SHORT_LIVED_RELATIVE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// Used by [`ChannelManager::list_recent_payments`] to express the status of recent payments.
 /// These include payments that have yet to find a successful path, or have unresolved HTLCs.
@@ -9566,6 +9546,9 @@ pub trait OffersMessageCommons {
 		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
 	) -> Result<Vec<BlindedPaymentPath>, ()>;
 
+	/// Get the vector of peers that can be used for a blinded path
+	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode>;
+
 	/// Verify bolt12 invoice
 	fn verify_bolt12_invoice(
 		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
@@ -9601,16 +9584,6 @@ pub trait OffersMessageCommons {
 
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
-
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()>;
 
 	/// Get the [`ChainHash`] of the chain
 	fn get_chain_hash(&self) -> ChainHash;
@@ -9703,6 +9676,23 @@ where
 		self.router.create_blinded_payment_paths(
 			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
 		)
+	}
+
+	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
+		self.per_peer_state.read().unwrap()
+			.iter()
+			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
+			.filter(|(_, peer)| peer.is_connected)
+			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
+			.map(|(node_id, peer)| MessageForwardNode {
+				node_id: *node_id,
+				short_channel_id: peer.channel_by_id
+					.iter()
+					.filter(|(_, channel)| channel.context().is_usable())
+					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+			})
+			.collect::<Vec<_>>()
 	}
 
 	fn verify_bolt12_invoice(
@@ -9807,19 +9797,6 @@ where
 
 	fn get_current_blocktime(&self) -> Duration {
 		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
-	}
-
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
 	}
 
 	fn get_chain_hash(&self) -> ChainHash {
@@ -9933,47 +9910,6 @@ where
 	/// [`create_inbound_payment`]: Self::create_inbound_payment
 	pub fn get_payment_preimage(&self, payment_hash: PaymentHash, payment_secret: PaymentSecret) -> Result<PaymentPreimage, APIError> {
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
-	}
-
-	pub(super) fn duration_since_epoch(&self) -> Duration {
-		#[cfg(not(feature = "std"))]
-		let now = Duration::from_secs(
-			self.highest_seen_timestamp.load(Ordering::Acquire) as u64
-		);
-		#[cfg(feature = "std")]
-		let now = std::time::SystemTime::now()
-			.duration_since(std::time::SystemTime::UNIX_EPOCH)
-			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
-
-		now
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, peer)| MessageForwardNode {
-				node_id: *node_id,
-				short_channel_id: peer.channel_by_id
-					.iter()
-					.filter(|(_, channel)| channel.context().is_usable())
-					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
-					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
-			})
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
 	/// Gets a fake short channel id for use in receiving [phantom node payments]. These fake scids
