@@ -2291,6 +2291,7 @@ where L::Target: Logger {
 	// at least a minimal contribution to the recommended value yet-to-be-fulfilled.
 	// This requirement is currently set to be 1/max_path_count of the payment
 	// value to ensure we only ever return routes that do not violate this limit.
+	#[allow(clippy::manual_div_ceil)]
 	let minimal_value_contribution_msat: u64 = if allow_mpp {
 		(final_value_msat + (payment_params.max_path_count as u64 - 1)) / payment_params.max_path_count as u64
 	} else {
