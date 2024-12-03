@@ -33,7 +33,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, OffersContext};
+use crate::blinded_path::message::{self, AsyncPaymentsContext, MessageContext, OffersContext};
 use crate::blinded_path::NodeIdLookUp;
 use crate::blinded_path::message::{BlindedMessagePath, MessageForwardNode};
 use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, ReceiveTlvs};
@@ -10452,8 +10452,13 @@ where
 			.map(|(node_id, _)| *node_id)
 			.collect::<Vec<_>>();
 
+		let receive_tlvs = message::ReceiveTlvs {
+			context: Some(context),
+			custom_data: None,
+		};
+
 		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
+			.create_blinded_paths(recipient, receive_tlvs, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -10480,8 +10485,13 @@ where
 			})
 			.collect::<Vec<_>>();
 
+		let receive_tlvs = message::ReceiveTlvs {
+			context: Some(MessageContext::Offers(context)),
+			custom_data: None,
+		};
+
 		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.create_compact_blinded_paths(recipient, receive_tlvs, peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
@@ -11952,7 +11962,7 @@ where
 	L::Target: Logger,
 {
 	fn handle_message(
-		&self, message: OffersMessage, context: Option<OffersContext>, responder: Option<Responder>,
+		&self, message: OffersMessage, context: Option<OffersContext>, custom_data: Option<Vec<u8>>, responder: Option<Responder>,
 	) -> Option<(OffersMessage, ResponseInstruction)> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
@@ -12095,7 +12105,7 @@ where
 						let nonce = Nonce::from_entropy_source(&*self.entropy_source);
 						let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
 						let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash, nonce, hmac });
-						Some((OffersMessage::Invoice(invoice), responder.respond_with_reply_path(context)))
+						Some((OffersMessage::Invoice(invoice), responder.respond_with_reply_path(context, custom_data)))
 					},
 					Err(error) => Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
 				}
