@@ -3709,7 +3709,7 @@ fn do_test_custom_tlvs(spontaneous: bool, even_tlvs: bool, known_tlvs: bool) {
 		payment_secret: if spontaneous { None } else { Some(our_payment_secret) },
 		payment_metadata: None,
 		sender_custom_tlvs: sender_custom_tlvs.clone(),
-		user_custom_tlvs: vec![],
+		user_custom_data: vec![],
 	};
 	if spontaneous {
 		nodes[0].node.send_spontaneous_payment(&route, Some(our_payment_preimage), onion_fields, payment_id).unwrap();
@@ -3847,7 +3847,7 @@ fn test_retry_custom_tlvs() {
 #[test]
 fn test_custom_tlvs_consistency() {
 	let even_type_1 = 1 << 16;
-	// (1 << 16) + 1 = 66537 is used by user_custom_tlvs.
+	// (1 << 16) + 1 = 66537 is used by user_custom_data.
 	let odd_type_1	= (1 << 16)+ 3;
 	let even_type_2 = (1 << 16) + 2;
 	let odd_type_2	= (1 << 16) + 5;
@@ -3913,7 +3913,7 @@ fn do_test_custom_tlvs_consistency(first_tlvs: Vec<(u64, Vec<u8>)>, second_tlvs:
 		payment_secret: Some(our_payment_secret),
 		payment_metadata: None,
 		sender_custom_tlvs: first_tlvs,
-		user_custom_tlvs: vec![],
+		user_custom_data: vec![],
 	};
 	let session_privs = nodes[0].node.test_add_new_pending_payment(our_payment_hash,
 			onion_fields.clone(), payment_id, &route).unwrap();
@@ -3936,7 +3936,7 @@ fn do_test_custom_tlvs_consistency(first_tlvs: Vec<(u64, Vec<u8>)>, second_tlvs:
 		payment_secret: Some(our_payment_secret),
 		payment_metadata: None,
 		sender_custom_tlvs: second_tlvs,
-		user_custom_tlvs: vec![],
+		user_custom_data: vec![],
 	};
 	nodes[0].node.test_send_payment_along_path(&route.paths[1], &our_payment_hash,
 		onion_fields.clone(), amt_msat, cur_height, payment_id, &None, session_privs[1]).unwrap();
@@ -4042,7 +4042,7 @@ fn do_test_payment_metadata_consistency(do_reload: bool, do_modify: bool) {
 
 	// Send the MPP payment, delivering the updated commitment state to nodes[1].
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields {
-			payment_secret: Some(payment_secret), payment_metadata: Some(payment_metadata), sender_custom_tlvs: vec![], user_custom_tlvs: vec![],
+			payment_secret: Some(payment_secret), payment_metadata: Some(payment_metadata), sender_custom_tlvs: vec![], user_custom_data: vec![],
 		}, payment_id, route_params.clone(), Retry::Attempts(1)).unwrap();
 	check_added_monitors!(nodes[0], 2);
 
