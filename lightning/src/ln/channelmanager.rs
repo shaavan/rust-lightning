@@ -47,6 +47,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
+use crate::offers::flow::OffersMessageCommons;
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelPhase, ChannelError, ChannelUpdateStatus, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext, InboundV2Channel, InteractivelyFunded as _};
 use crate::ln::channel_state::ChannelDetails;
@@ -9834,96 +9835,6 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		Ok(builder.into())
 	}
 } }
-
-/// Functions commonly shared in usage between [`ChannelManager`] & `OffersMessageFlow`
-pub trait OffersMessageCommons {
-	/// Get pending offers messages
-	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>>;
-
-	/// Signs the [`TaggedHash`] of a BOLT 12 invoice.
-	///
-	/// May be called by a function passed to [`UnsignedBolt12Invoice::sign`] where `invoice` is the
-	/// callee.
-	///
-	/// Implementors may check that the `invoice` is expected rather than blindly signing the tagged
-	/// hash. An `Ok` result should sign `invoice.tagged_hash().as_digest()` with the node's signing
-	/// key or an ephemeral key to preserve privacy, whichever is associated with
-	/// [`UnsignedBolt12Invoice::signing_pubkey`].
-	///
-	/// [`TaggedHash`]: crate::offers::merkle::TaggedHash
-	fn sign_bolt12_invoice(
-		&self, invoice: &UnsignedBolt12Invoice,
-	) -> Result<schnorr::Signature, ()>;
-
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
-	/// [`PaymentClaimable`]: events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment_for_hash
-	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
-
-	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
-	/// [`Router::create_blinded_payment_paths`].
-	fn create_blinded_payment_paths(
-		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
-	) -> Result<Vec<BlindedPaymentPath>, ()>;
-
-	/// Verify bolt12 invoice
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()>;
-
-	/// Send payment for verified bolt12 invoice
-	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
-
-	/// Abandon Payment with Reason
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
-
-	/// Release invoice requests awaiting invoice
-	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)>;
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
-
-	/// Enqueue invoice request
-	fn enqueue_invoice_request(
-		&self,
-		invoice_request: InvoiceRequest,
-		reply_paths: Vec<BlindedMessagePath>,
-	) -> Result<(), Bolt12SemanticError>;
-
-	/// Get the current time determined by highest seen timestamp
-	fn get_current_blocktime(&self) -> Duration;
-}
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
 where
