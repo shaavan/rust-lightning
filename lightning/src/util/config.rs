@@ -855,20 +855,6 @@ pub struct UserConfig {
 	///
 	/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
 	pub accept_mpp_keysend: bool,
-	/// If this is set to `true`, the user needs to manually pay [`Bolt12Invoice`]s when received.
-	///
-	/// When set to `true`, [`Event::InvoiceReceived`] will be generated for each received
-	/// [`Bolt12Invoice`] instead of being automatically paid after verification. Use
-	/// [`ChannelManager::send_payment_for_bolt12_invoice`] to pay the invoice or
-	/// [`ChannelManager::abandon_payment`] to abandon the associated payment.
-	///
-	/// Default value: `false`
-	///
-	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	/// [`Event::InvoiceReceived`]: crate::events::Event::InvoiceReceived
-	/// [`ChannelManager::send_payment_for_bolt12_invoice`]: crate::ln::channelmanager::ChannelManager::send_payment_for_bolt12_invoice
-	/// [`ChannelManager::abandon_payment`]: crate::ln::channelmanager::ChannelManager::abandon_payment
-	pub manually_handle_bolt12_invoices: bool,
 }
 
 impl Default for UserConfig {
@@ -882,7 +868,6 @@ impl Default for UserConfig {
 			manually_accept_inbound_channels: false,
 			accept_intercept_htlcs: false,
 			accept_mpp_keysend: false,
-			manually_handle_bolt12_invoices: false,
 		}
 	}
 }
@@ -902,7 +887,6 @@ impl Readable for UserConfig {
 			manually_accept_inbound_channels: Readable::read(reader)?,
 			accept_intercept_htlcs: Readable::read(reader)?,
 			accept_mpp_keysend: Readable::read(reader)?,
-			manually_handle_bolt12_invoices: Readable::read(reader)?,
 		})
 	}
 }
