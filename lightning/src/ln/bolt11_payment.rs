@@ -87,8 +87,8 @@ fn params_from_invoice(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::ln::channelmanager::OffersMessageCommons;
-	use crate::routing::router::Payee;
+	use crate::offers::flow::OffersMessageCommons;
+use crate::routing::router::Payee;
 	use crate::types::payment::PaymentSecret;
 	use bitcoin::hashes::sha256::Hash as Sha256;
 	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};

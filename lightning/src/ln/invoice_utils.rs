@@ -711,10 +711,11 @@ mod test {
 	use bitcoin::hashes::{Hash, sha256};
 	use bitcoin::hashes::sha256::Hash as Sha256;
 	use bitcoin::network::Network;
-	use crate::sign::PhantomKeysManager;
+	use crate::offers::flow::OffersMessageCommons;
+use crate::sign::PhantomKeysManager;
 	use crate::events::{MessageSendEvent, MessageSendEventsProvider};
 	use crate::types::payment::{PaymentHash, PaymentPreimage};
-	use crate::ln::channelmanager::{Bolt11InvoiceParameters, OffersMessageCommons, PaymentId, PhantomRouteHints, RecipientOnionFields, Retry, MIN_FINAL_CLTV_EXPIRY_DELTA};
+	use crate::ln::channelmanager::{Bolt11InvoiceParameters, PaymentId, PhantomRouteHints, RecipientOnionFields, Retry, MIN_FINAL_CLTV_EXPIRY_DELTA};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::ChannelMessageHandler;
 	use crate::routing::router::{PaymentParameters, RouteParameters};
