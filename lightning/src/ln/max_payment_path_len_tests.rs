@@ -16,7 +16,7 @@ use crate::blinded_path::payment::{BlindedPayInfo, BlindedPaymentPath, PaymentCo
 use crate::events::{Event, MessageSendEventsProvider};
 use crate::types::payment::PaymentSecret;
 use crate::ln::blinded_payment_tests::get_blinded_route_parameters;
-use crate::ln::channelmanager::{OffersMessageCommons, PaymentId};
+use crate::ln::channelmanager::PaymentId;
 use crate::types::features::BlindedHopFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs;

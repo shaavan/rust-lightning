@@ -927,7 +927,6 @@ mod tests {
 	use crate::chain::{ChannelMonitorUpdateStatus, Watch};
 	use crate::chain::channelmonitor::ANTI_REORG_DELAY;
 	use crate::events::{ClosureReason, Event, MessageSendEvent, MessageSendEventsProvider};
-	use crate::ln::channelmanager::OffersMessageCommons;
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::ChannelMessageHandler;
 

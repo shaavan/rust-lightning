@@ -2686,7 +2686,7 @@ impl ReadOnlyNetworkGraph<'_> {
 pub(crate) mod tests {
 	use crate::events::{MessageSendEvent, MessageSendEventsProvider};
 	use crate::ln::chan_utils::make_funding_redeemscript;
-	use crate::ln::channelmanager::{self, OffersMessageCommons};
+	use crate::ln::channelmanager;
 	use crate::ln::msgs::SocketAddress;
 	use crate::ln::msgs::{
 		ChannelAnnouncement, ChannelUpdate, NodeAnnouncement, QueryChannelRange,
