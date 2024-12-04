@@ -89,7 +89,7 @@ pub enum PaymentPurpose {
 		/// this can be passed directly to [`ChannelManager::claim_funds`] to claim the payment. No
 		/// action is needed when seen in [`Event::PaymentClaimed`].
 		///
-		/// [`OffersMessageCommons::create_inbound_payment`]: crate::ln::channelmanager::OffersMessageCommons::create_inbound_payment
+		/// [`OffersMessageCommons::create_inbound_payment`]: crate::offers::flow::OffersMessageCommons::create_inbound_payment
 		/// [`ChannelManager::claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
 		payment_preimage: Option<PaymentPreimage>,
 		/// The "payment secret". This authenticates the sender to the recipient, preventing a
@@ -100,7 +100,7 @@ pub enum PaymentPurpose {
 		/// [`ChannelManager::create_inbound_payment_for_hash`].
 		///
 		/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
-		/// [`OffersMessageCommons::create_inbound_payment`]: crate::ln::channelmanager::OffersMessageCommons::create_inbound_payment
+		/// [`OffersMessageCommons::create_inbound_payment`]: crate::offers::flow::OffersMessageCommons::create_inbound_payment
 		/// [`ChannelManager::create_inbound_payment_for_hash`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment_for_hash
 		payment_secret: PaymentSecret,
 	},
