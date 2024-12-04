@@ -47,8 +47,8 @@ use lightning::events::MessageSendEventsProvider;
 use lightning::ln::channel::FEE_SPIKE_BUFFER_FEE_INCREASE_MULTIPLE;
 use lightning::ln::channel_state::ChannelDetails;
 use lightning::ln::channelmanager::{
-	ChainParameters, ChannelManager, ChannelManagerReadArgs, OffersMessageCommons, PaymentId,
-	PaymentSendFailure, RecipientOnionFields,
+	ChainParameters, ChannelManager, ChannelManagerReadArgs, PaymentId, PaymentSendFailure,
+	RecipientOnionFields,
 };
 use lightning::ln::functional_test_utils::*;
 use lightning::ln::msgs::{
@@ -56,6 +56,7 @@ use lightning::ln::msgs::{
 };
 use lightning::ln::script::ShutdownScript;
 use lightning::ln::types::ChannelId;
+use lightning::offers::flow::OffersMessageCommons;
 use lightning::offers::invoice::UnsignedBolt12Invoice;
 use lightning::onion_message::messenger::{Destination, MessageRouter, OnionMessagePath};
 use lightning::routing::router::{InFlightHtlcs, Path, Route, RouteHop, RouteParameters, Router};
