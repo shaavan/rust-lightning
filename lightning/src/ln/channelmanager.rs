@@ -12064,14 +12064,6 @@ where
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
 
-				if self.default_configuration.manually_handle_bolt12_invoices {
-					let event = Event::InvoiceReceived {
-						payment_id, invoice, context, responder,
-					};
-					self.pending_events.lock().unwrap().push_back((event, None));
-					return None;
-				}
-
 				let res = self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
 			},
