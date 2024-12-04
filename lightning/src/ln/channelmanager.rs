@@ -1126,17 +1126,14 @@ impl_writeable_tlv_based_enum_upgradable!(MonitorUpdateCompletionAction,
 /// These actions ensure that the channel state changes associated with an event are properly
 /// persisted and handled to maintain consistency and safety.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum EventCompletionAction {
+pub(crate) enum EventCompletionAction {
 	/// Indicates that an `RAA` (RevokeAndACK) channel monitor update should be released.
 	/// This is typically used to ensure that changes associated with the counterparty's
 	/// revoked commitment state are correctly applied to the channel monitor only after
 	/// the user has processed the event.
 	ReleaseRAAChannelMonitorUpdate {
-		/// The public key of the counterparty node associated with the channel.
 		counterparty_node_id: PublicKey,
-		/// The outpoint identifying the funding transaction for the channel.
 		channel_funding_outpoint: OutPoint,
-		/// The unique identifier for the channel.
 		channel_id: ChannelId,
 	},
 }
@@ -3476,6 +3473,11 @@ where
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
 		}
+	}
+
+	/// Gets the current configuration applied to all new channels.
+	pub fn get_current_default_configuration(&self) -> &UserConfig {
+		&self.default_configuration
 	}
 
 	#[cfg(test)]
@@ -9898,14 +9900,8 @@ pub trait OffersMessageCommons {
 		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
 	) -> Result<PaymentId, ()>;
 
-	/// Gets the current configuration applied to all new channels.
-	fn get_current_default_configuration(&self) -> &UserConfig;
-
 	/// Send payment for verified bolt12 invoice
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError>;
-
-	/// Add new pending event
-	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>));
 
 	/// Abandon Payment with Reason
 	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
@@ -10008,10 +10004,6 @@ where
 		}
 	}
 
-	fn get_current_default_configuration(&self) -> &UserConfig {
-		&self.default_configuration
-	}
-
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
 		let best_block_height = self.best_block.read().unwrap().height;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -10023,10 +10015,6 @@ where
 				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
 				|args| self.send_payment_along_path(args)
 			)
-	}
-
-	fn add_new_pending_event(&self, event: (events::Event, Option<EventCompletionAction>)) {
-		self.pending_events.lock().unwrap().push_back(event);
 	}
 
 	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
