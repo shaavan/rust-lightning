@@ -162,7 +162,7 @@ mod test {
 	use lightning::blinded_path::message::{BlindedMessagePath, MessageContext};
 	use lightning::blinded_path::NodeIdLookUp;
 	use lightning::events::{Event, PaymentPurpose};
-	use lightning::ln::channelmanager::{OffersMessageCommons, PaymentId, Retry};
+	use lightning::ln::channelmanager::{PaymentId, Retry};
 	use lightning::ln::functional_test_utils::*;
 	use lightning::ln::msgs::{ChannelMessageHandler, Init, OnionMessageHandler};
 	use lightning::ln::peer_handler::IgnoringMessageHandler;

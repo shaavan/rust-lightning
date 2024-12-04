@@ -7244,6 +7244,11 @@ where
 		}
 	}
 
+	/// Gets the node_id held by this ChannelManager
+	pub fn get_our_node_id(&self) -> PublicKey {
+		self.our_network_pubkey
+	}
+
 	fn handle_monitor_update_completion_actions<I: IntoIterator<Item=MonitorUpdateCompletionAction>>(&self, actions: I) {
 		debug_assert_ne!(self.pending_events.held_by_thread(), LockHeldState::HeldByThread);
 		debug_assert_ne!(self.claimable_payments.held_by_thread(), LockHeldState::HeldByThread);
@@ -9835,12 +9840,6 @@ pub trait OffersMessageCommons {
 	/// Get pending offers messages
 	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>>;
 
-	/// Gets the node_id held by this ChannelManager
-	fn get_our_node_id(&self) -> PublicKey;
-
-	/// Gets the expanded key
-	fn get_expanded_key(&self) -> &inbound_payment::ExpandedKey;
-
 	/// Signs the [`TaggedHash`] of a BOLT 12 invoice.
 	///
 	/// May be called by a function passed to [`UnsignedBolt12Invoice::sign`] where `invoice` is the
@@ -9924,8 +9923,6 @@ pub trait OffersMessageCommons {
 
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
-
-
 }
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
@@ -9942,14 +9939,6 @@ where
 {
 	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>> {
 		self.pending_offers_messages.lock().expect("Mutex is locked by other thread.")
-	}
-
-	fn get_our_node_id(&self) -> PublicKey {
-		self.our_network_pubkey
-	}
-
-	fn get_expanded_key(&self) -> &inbound_payment::ExpandedKey {
-		&self.inbound_payment_key
 	}
 
 	fn sign_bolt12_invoice(
@@ -14297,7 +14286,7 @@ mod tests {
 	use crate::events::{Event, HTLCDestination, MessageSendEvent, MessageSendEventsProvider, ClosureReason};
 	use crate::ln::types::ChannelId;
 	use crate::types::payment::{PaymentPreimage, PaymentHash, PaymentSecret};
-	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, OffersMessageCommons, PaymentId, PaymentSendFailure, RecipientOnionFields};
+	use crate::ln::channelmanager::{create_recv_pending_htlc_info, inbound_payment, HTLCForwardInfo, InterceptId, PaymentId, PaymentSendFailure, RecipientOnionFields};
 	use crate::ln::functional_test_utils::*;
 	use crate::ln::msgs::{self, ErrorAction};
 	use crate::ln::msgs::ChannelMessageHandler;
