@@ -33,7 +33,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageContext, MessageForwardNode};
+use crate::blinded_path::message::{AsyncPaymentsContext, MessageForwardNode};
 use crate::blinded_path::NodeIdLookUp;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentConstraints, PaymentContext, UnauthenticatedReceiveTlvs};
@@ -9659,10 +9659,6 @@ where
 		self.pending_outbound_payments.release_invoice_requests_awaiting_invoice()
 	}
 
-	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		self.create_blinded_paths(context)
-	}
-
 	fn enqueue_invoice_request(&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedMessagePath>) -> Result<(), Bolt12SemanticError> {
 		self.enqueue_invoice_request(invoice_request, reply_paths)
 	}
@@ -9869,6 +9865,7 @@ where
 	/// [`MessageRouter::create_blinded_paths`].
 	///
 	/// Errors if the `MessageRouter` errors.
+	#[cfg(async_payments)]
 	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
