@@ -646,13 +646,23 @@ where
 		}
 	}
 
-	pub(crate) fn create_blinded_paths<
+	pub(crate) fn create_blinded_paths_internal<
 		T: secp256k1::Signing + secp256k1::Verification
 	>(
-		network_graph: &G, recipient: PublicKey, context: MessageContext,
+		&self, network_graph: &G, recipient: PublicKey, context: MessageContext,
 		peers: Vec<MessageForwardNode>, entropy_source: &ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths_from_iter(network_graph, recipient, context, peers.into_iter(), entropy_source, secp_ctx, false)
+		match self.config {
+			RouterConfig::NormalBlindedPath => {
+				Self::create_blinded_paths_from_iter(network_graph, recipient, context, peers.into_iter(), entropy_source, secp_ctx, false)
+			}
+			RouterConfig::CompactBlindedPath => {
+				Self::create_blinded_paths_from_iter(network_graph, recipient, context, peers.into_iter(), entropy_source, secp_ctx, true)
+			}
+			RouterConfig::NoBlindedPath => {
+				Ok(Vec::new())
+			}
+		}
 	}
 
 	pub(crate) fn create_compact_blinded_paths<
@@ -681,7 +691,7 @@ where
 	>(
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>, secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
+		self.create_blinded_paths_internal(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
 	}
 
 	fn create_compact_blinded_paths<
