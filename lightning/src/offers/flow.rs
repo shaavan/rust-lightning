@@ -692,8 +692,7 @@ where
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
-		let peers =
-			self.commons.get_peer_for_blinded_path().into_iter().map(|node| node.node_id).collect();
+		let peers = self.commons.get_peer_for_blinded_path();
 
 		self.message_router
 			.create_blinded_paths(recipient, context, peers, secp_ctx)
