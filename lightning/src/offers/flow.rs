@@ -370,6 +370,7 @@ where
 /// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
 /// # use lightning::offers::flow::AnOffersMessageFlow;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::AMessageRouter;
 /// #
 /// # fn example<T: AnOffersMessageFlow, U: AChannelManager>(
 /// #     offers_flow: T, channel_manager: U, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
@@ -378,9 +379,10 @@ where
 /// # let offers_flow = offers_flow.get_omf();
 /// # let channel_manager = channel_manager.get_cm();
 /// # let payment_id = PaymentId([42; 32]);
+/// # let router = AMessageRouter {};
 /// # let refund = offers_flow
 ///     .create_refund_builder(
-///         amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
+///         router, amount_msats, absolute_expiry, payment_id, retry, max_total_routing_fee_msat
 ///     )?
 /// # ;
 /// # // Needed for compiling for c_bindings
@@ -1277,33 +1279,59 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// [`Router`]: crate::routing::router::Router
 	/// [`Event::PaymentFailed`]: crate::events::Event::PaymentFailed
 	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
-	pub fn create_refund_builder(
-		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
-		retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>
-	) -> Result<$builder, Bolt12SemanticError> {
+	pub fn create_refund_builder<M: MessageRouter>(
+		&$self,
+		router: M,
+		amount_msats: u64,
+		absolute_expiry: Duration,
+		payment_id: PaymentId,
+		retry_strategy: Retry,
+		max_total_routing_fee_msat: Option<u64>,
+	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
+		let context = MessageContext::Offers(OffersContext::OutboundPayment {
+			payment_id,
+			nonce,
+			hmac: None,
+		});
+
+		let peers = $self.commons.get_peer_for_blinded_path();
+
+		let paths = router.create_blinded_paths(node_id, context, peers, secp_ctx)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		let builder = RefundBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
+		let mut builder = RefundBuilder::deriving_signing_pubkey(
+			node_id,
+			expanded_key,
+			nonce,
+			secp_ctx,
+			amount_msats,
+			payment_id,
 		)?
-			.chain_hash($self.commons.get_chain_hash())
-			.absolute_expiry(absolute_expiry)
-			.path(path);
+		.chain_hash($self.commons.get_chain_hash())
+		.absolute_expiry(absolute_expiry);
+
+		for path in paths {
+			builder = builder.path(path);
+		}
 
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 
-		$self.commons.add_new_awaiting_invoice(
-			payment_id, expiration, retry_strategy, max_total_routing_fee_msat, None
-		).map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
+		$self
+			.commons
+			.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				retry_strategy,
+				max_total_routing_fee_msat,
+				None,
+			)
+			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
 		Ok(builder.into())
 	}
