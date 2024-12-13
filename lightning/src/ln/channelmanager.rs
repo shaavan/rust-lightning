@@ -9790,13 +9790,7 @@ where
 		let recipient = self.get_our_node_id();
 		let secp_ctx = &self.secp_ctx;
 
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| *node_id)
-			.collect::<Vec<_>>();
+		let peers = self.get_peer_for_blinded_path();
 
 		self.message_router
 			.create_blinded_paths(recipient, context, peers, secp_ctx)
