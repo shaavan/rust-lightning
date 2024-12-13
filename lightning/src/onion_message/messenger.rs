@@ -504,6 +504,20 @@ where
 {
 	network_graph: G,
 	entropy_source: ES,
+	config: RouterConfig,
+}
+
+/// Configuration options for generating blinded paths in the [`DefaultMessageRouter`].
+pub(crate) enum RouterConfig {
+    /// Use normal blinded paths with full public keys for intermediate nodes.
+    NormalBlindedPath,
+    
+    /// Use compact blinded paths with short channel IDs (SCIDs) instead of public keys.
+    /// This reduces serialization size, ideal for constrained mediums like QR codes.
+    CompactBlindedPath,
+    
+    /// Disable blinded path generation.
+    NoBlindedPath,
 }
 
 impl<G: Deref<Target=NetworkGraph<L>>, L: Deref, ES: Deref> DefaultMessageRouter<G, L, ES>
@@ -513,8 +527,29 @@ where
 {
 	/// Creates a [`DefaultMessageRouter`] using the given [`NetworkGraph`].
 	pub fn new(network_graph: G, entropy_source: ES) -> Self {
-		Self { network_graph, entropy_source }
+		Self { network_graph, entropy_source, config: RouterConfig::NormalBlindedPath }
 	}
+
+	/// Configures the [`DefaultMessageRouter`] to create compact blinded paths.
+	/// 
+	/// Compact blinded paths use short channel IDs (SCIDs) instead of public keys, reducing serialization 
+	/// size. This is useful for constrained mediums like QR codes. SCIDs are passed via [`MessageForwardNode`].
+	pub fn with_compact_blinded_path(self) -> Self {
+		Self {
+			config: RouterConfig::CompactBlindedPath,
+			..self
+		}
+    }
+	
+	/// Configures the [`DefaultMessageRouter`] to create no blinded paths when generating blinded paths.
+    ///
+    /// When this configuration is used, the router will omit creating blinded paths entirely.
+	pub fn with_no_blinded_path(self) -> Self {
+        Self {
+			config: RouterConfig::NoBlindedPath,
+			..self
+		}
+    }
 
 	fn create_blinded_paths_from_iter<
 		I: ExactSizeIterator<Item = MessageForwardNode>,
