@@ -493,6 +493,7 @@ pub trait MessageRouter {
 /// it will create a one-hop path using the recipient as the introduction node if it is a announced
 /// node. Otherwise, there is no way to find a path to the introduction node in order to send a
 /// message, and thus an `Err` is returned.
+#[derive(Clone)]
 pub struct DefaultMessageRouter<G: Deref<Target=NetworkGraph<L>>, L: Deref, ES: Deref>
 where
 	L::Target: Logger,
@@ -504,14 +505,15 @@ where
 }
 
 /// Configuration options for generating blinded paths in the [`DefaultMessageRouter`].
+#[derive(Clone)]
 pub(crate) enum RouterConfig {
     /// Use normal blinded paths with full public keys for intermediate nodes.
     NormalBlindedPath,
-    
+
     /// Use compact blinded paths with short channel IDs (SCIDs) instead of public keys.
     /// This reduces serialization size, ideal for constrained mediums like QR codes.
     CompactBlindedPath,
-    
+
     /// Disable blinded path generation.
     NoBlindedPath,
 }
@@ -527,14 +529,14 @@ where
 	}
 
 	/// Configures the [`DefaultMessageRouter`] to create compact blinded paths.
-	/// 
-	/// Compact blinded paths use short channel IDs (SCIDs) instead of public keys, reducing serialization 
+	///
+	/// Compact blinded paths use short channel IDs (SCIDs) instead of public keys, reducing serialization
 	/// size. This is useful for constrained mediums like QR codes. SCIDs are passed via [`MessageForwardNode`].
 	pub fn with_compact_blinded_path(mut self) -> Self {
         self.config = RouterConfig::CompactBlindedPath;
         self
     }
-	
+
 	/// Configures the [`DefaultMessageRouter`] to create no blinded paths when generating blinded paths.
     ///
     /// When this configuration is used, the router will omit creating blinded paths entirely.
@@ -702,6 +704,28 @@ where
 		Self::create_compact_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
 	}
 
+}
+
+/// A generic implementation for [`MessageRouter`]
+pub struct AMessageRouter {}
+
+impl MessageRouter for AMessageRouter {
+	fn find_path(
+		&self, _sender: PublicKey, _peers: Vec<PublicKey>, destination: Destination
+	) -> Result<OnionMessagePath, ()> {
+		Ok(OnionMessagePath {
+			intermediate_nodes: vec![],
+			destination,
+			first_node_addresses: None
+		})
+	}
+
+	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<MessageForwardNode>,
+		_secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		unreachable!()
+	}
 }
 
 /// A path for sending an [`OnionMessage`].

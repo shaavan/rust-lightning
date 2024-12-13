@@ -1630,6 +1630,7 @@ mod tests {
 	use crate::offers::test_utils::*;
 	use crate::util::ser::{BigSize, Iterable, Writeable};
 	use crate::util::string::PrintableString;
+	use crate::util::test_utils::FixedEntropy;
 
 	trait ToBytes {
 		fn to_bytes(&self) -> Vec<u8>;

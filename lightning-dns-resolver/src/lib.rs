@@ -170,12 +170,14 @@ mod test {
 	use lightning::ln::peer_handler::IgnoringMessageHandler;
 	use lightning::onion_message::dns_resolution::{HumanReadableName, OMNameResolver};
 	use lightning::onion_message::messenger::{
-		AOnionMessenger, Destination, MessageRouter, OnionMessagePath, OnionMessenger,
+		AOnionMessenger, DefaultMessageRouter, Destination, MessageRouter, OnionMessagePath,
+		OnionMessenger,
 	};
 	use lightning::sign::{KeysManager, NodeSigner, Recipient};
 	use lightning::types::features::InitFeatures;
 	use lightning::types::payment::PaymentHash;
 	use lightning::util::logger::Logger;
+	use lightning::util::test_utils;
 
 	use lightning::{
 		commitment_signed_dance, expect_payment_claimed, expect_pending_htlcs_forwardable,
@@ -392,8 +394,11 @@ mod test {
 
 		let name = HumanReadableName::from_encoded("matt@mattcorallo.com").unwrap();
 
+		let entropy = test_utils::FixedEntropy {};
 		// When we get the proof back, override its contents to an offer from nodes[1]
-		let bs_offer = nodes[1].offers_handler.create_offer_builder(None).unwrap().build().unwrap();
+		let router = DefaultMessageRouter::new(nodes[1].network_graph, entropy);
+		let bs_offer =
+			nodes[1].offers_handler.create_offer_builder(router).unwrap().build().unwrap();
 		nodes[0]
 			.offers_handler
 			.testing_dnssec_proof_offer_resolution_override

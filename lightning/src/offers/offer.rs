@@ -1230,6 +1230,7 @@ mod tests {
 	use crate::offers::test_utils::*;
 	use crate::util::ser::{BigSize, Writeable};
 	use crate::util::string::PrintableString;
+	use crate::util::test_utils::FixedEntropy;
 
 	#[test]
 	fn builds_offer_with_defaults() {
