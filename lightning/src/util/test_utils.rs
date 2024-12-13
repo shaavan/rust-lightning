@@ -280,7 +280,7 @@ pub struct TestMessageRouter<'a> {
 
 impl<'a> TestMessageRouter<'a> {
 	pub fn new(network_graph: Arc<NetworkGraph<&'a TestLogger>>, entropy_source: &'a TestKeysInterface) -> Self {
-		Self { inner: DefaultMessageRouter::new(network_graph, entropy_source) }
+		Self { inner: DefaultMessageRouter::normal_blinded_paths(network_graph, entropy_source) }
 	}
 }
 

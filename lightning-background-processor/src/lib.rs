@@ -1556,7 +1556,7 @@ mod tests {
 				scorer.clone(),
 				Default::default(),
 			));
-			let msg_router = Arc::new(DefaultMessageRouter::new(
+			let msg_router = Arc::new(DefaultMessageRouter::normal_blinded_paths(
 				network_graph.clone(),
 				Arc::clone(&keys_manager),
 			));

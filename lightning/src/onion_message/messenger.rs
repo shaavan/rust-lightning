@@ -504,6 +504,7 @@ where
 {
 	network_graph: G,
 	entropy_source: ES,
+	is_compact: bool,
 }
 
 impl<G: Deref<Target=NetworkGraph<L>>, L: Deref, ES: Deref> DefaultMessageRouter<G, L, ES>
@@ -512,9 +513,17 @@ where
 	ES::Target: EntropySource,
 {
 	/// Creates a [`DefaultMessageRouter`] using the given [`NetworkGraph`].
-	pub fn new(network_graph: G, entropy_source: ES) -> Self {
-		Self { network_graph, entropy_source }
+	pub fn normal_blinded_paths(network_graph: G, entropy_source: ES) -> Self {
+		Self { network_graph, entropy_source, is_compact: false }
 	}
+
+	/// Configures the [`DefaultMessageRouter`] to create compact blinded paths.
+	/// 
+	/// Compact blinded paths use short channel IDs (SCIDs) instead of public keys, reducing serialization 
+	/// size. This is useful for constrained mediums like QR codes. SCIDs are passed via [`MessageForwardNode`].
+	pub fn compact_blinded_paths(network_graph: G, entropy_source: ES) -> Self {
+		Self { network_graph, entropy_source, is_compact: true }
+    }
 
 	fn create_blinded_paths_from_iter<
 		I: ExactSizeIterator<Item = MessageForwardNode>,
@@ -667,7 +676,6 @@ where
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		Self::create_compact_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
 	}
-
 }
 
 /// A path for sending an [`OnionMessage`].
