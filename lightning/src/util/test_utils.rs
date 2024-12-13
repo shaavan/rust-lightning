@@ -69,6 +69,7 @@ use lightning_invoice::RawBolt11Invoice;
 use crate::io;
 use crate::prelude::*;
 use core::cell::RefCell;
+use core::ops::Deref;
 use core::time::Duration;
 use crate::sync::{Mutex, Arc};
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -1577,5 +1578,21 @@ impl WalletSource for TestWalletSource {
 			}
 		}
 		Ok(tx)
+	}
+}
+
+pub struct FixedEntropy;
+
+impl EntropySource for FixedEntropy {
+	fn get_secure_random_bytes(&self) -> [u8; 32] {
+		[42; 32]
+	}
+}
+
+impl Deref for FixedEntropy {
+	type Target = Self;
+
+	fn deref(&self) -> &Self::Target {
+		self
 	}
 }

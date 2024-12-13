@@ -2414,7 +2414,7 @@ mod tests {
 	use crate::sync::{Arc, Mutex, RwLock};
 	use crate::util::errors::APIError;
 	use crate::util::hash_tables::new_hash_map;
-	use crate::util::test_utils;
+	use crate::util::test_utils::{self, FixedEntropy};
 
 	use alloc::collections::VecDeque;
 

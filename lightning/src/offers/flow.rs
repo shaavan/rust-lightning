@@ -313,16 +313,18 @@ where
 /// ```
 /// # use lightning::events::{Event, EventsProvider, PaymentPurpose};
 /// # use lightning::ln::channelmanager::AChannelManager;
+/// # use lightning::routing::gossip::NetworkGraph;
 /// # use lightning::offers::flow::AnOffersMessageFlow;
 /// # use lightning::offers::parse::Bolt12SemanticError;
+/// # use lightning::onion_message::messenger::AMessageRouter;
 ///
 /// #
 /// # fn example<T: AnOffersMessageFlow, U: AChannelManager>(offers_flow: T, channel_manager: U) -> Result<(), Bolt12SemanticError> {
 /// # let offers_flow = offers_flow.get_omf();
 /// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
+/// # let router = AMessageRouter {};
 /// # let offer = offers_flow
-///     .create_offer_builder(absolute_expiry)?
+///     .create_offer_builder(router)?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -1191,28 +1193,34 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`MessageRouter`]: crate::onion_message::messenger::MessageRouter
 	/// [`Offer`]: crate::offers::offer
 	/// [`Router`]: crate::routing::router::Router
-	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
+	pub fn create_offer_builder<M: MessageRouter>(
+		&$self,
+		router: M,
 	) -> Result<$builder, Bolt12SemanticError> {
+		// Extract necessary values from `self`
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
 		let entropy = &*$self.entropy_source;
 		let secp_ctx = &$self.secp_ctx;
 
+		// Generate nonce and context for the offer
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
+		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
+
+		let peers = $self.commons.get_peer_for_blinded_path();
+
+		let paths = router.create_blinded_paths(node_id, context, peers, secp_ctx)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.commons.get_chain_hash())
-			.path(path);
 
-		let builder = match absolute_expiry {
-			None => builder,
-			Some(absolute_expiry) => builder.absolute_expiry(absolute_expiry),
-		};
+		// Initialize the OfferBuilder with the required parameters
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.commons.get_chain_hash());
 
+		for path in paths {
+			builder = builder.path(path)
+		}
+
+		// Return the constructed builder
 		Ok(builder.into())
 	}
 } }
