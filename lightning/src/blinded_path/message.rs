@@ -11,7 +11,6 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
-use crate::offers::invoice_request::InvoiceRequestFields;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -32,6 +31,9 @@ use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::util::scid_utils;
 use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
+
+#[cfg(test)]
+use crate::offers::invoice_request::InvoiceRequestFields;
 
 use core::mem;
 use core::ops::Deref;
@@ -263,7 +265,9 @@ fn test_size_of_tlvs_instances() {
 	test_payment_forward_tlvs(public_key);
 
 	// Testing Payment ReceiveTlvs
-	test_payment_receive_tlvs(public_key)
+	test_payment_receive_tlvs(public_key);
+
+	assert!(false);
 }
 
 #[cfg(test)]
@@ -457,22 +461,26 @@ fn test_payment_forward_tlvs(public_key: PublicKey) {
 #[cfg(test)]
 fn test_payment_receive_tlvs(public_key: PublicKey) {
 	use lightning_invoice::PaymentSecret;
-	use crate::{blinded_path::payment::{self, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints}, offers::offer::OfferId};
+	use crate::{blinded_path::payment::{self, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, UnauthenticatedReceiveTlvs}, offers::{invoice_request::InvoiceRequestFields, offer::OfferId}, onion_message::dns_resolution::HumanReadableName};
 
 	let receive_tlvs_offer = payment::ReceiveTlvs {
-		payment_secret: PaymentSecret([0; 32]),
-		payment_constraints: PaymentConstraints {
-			max_cltv_expiry: 1,
-			htlc_minimum_msat: 1_000_000_000,
+		tlvs: UnauthenticatedReceiveTlvs {
+			payment_secret: PaymentSecret([0; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1,
+				htlc_minimum_msat: 1_000_000_000,
+			},
+			payment_context: payment::PaymentContext::Bolt12Offer(Bolt12OfferContext {
+				offer_id: OfferId([0; 32]),
+				invoice_request: InvoiceRequestFields {
+					payer_signing_pubkey: public_key,
+					quantity: None,
+					payer_note_truncated: None,
+					human_readable_name: HumanReadableName::new("Hello".to_string(), "World".to_string()).ok()
+				}
+			})
 		},
-		payment_context: payment::PaymentContext::Bolt12Offer(Bolt12OfferContext {
-			offer_id: OfferId([0; 32]),
-			invoice_request: InvoiceRequestFields {
-				payer_signing_pubkey: public_key,
-				quantity: None,
-				payer_note_truncated: None
-			}
-		})
+		authentication: (create_hmac(), Nonce([0; 16])),
 	};
 
 	println!(
@@ -481,12 +489,15 @@ fn test_payment_receive_tlvs(public_key: PublicKey) {
     );
 
 	let receive_tlvs_refund = payment::ReceiveTlvs {
-		payment_secret: PaymentSecret([0; 32]),
-		payment_constraints: PaymentConstraints {
-			max_cltv_expiry: 1,
-			htlc_minimum_msat: 1_000_000_000,
+		tlvs: UnauthenticatedReceiveTlvs {
+			payment_secret: PaymentSecret([0; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1,
+				htlc_minimum_msat: 1_000_000_000,
+			},
+			payment_context: payment::PaymentContext::Bolt12Refund(Bolt12RefundContext {})
 		},
-		payment_context: payment::PaymentContext::Bolt12Refund(Bolt12RefundContext {})
+		authentication: (create_hmac(), Nonce([0; 16])),
 	};
 
 	println!(
