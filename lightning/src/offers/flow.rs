@@ -56,6 +56,9 @@ use crate::offers::static_invoice::StaticInvoice;
 #[cfg(not(c_bindings))]
 use crate::offers::offer::DerivedMetadata;
 
+use super::invoice_request::VerifiedInvoiceRequest;
+use super::parse::Bolt12ResponseError;
+
 #[cfg(c_bindings)]
 use {
 	crate::offers::offer::OfferWithDerivedMetadataBuilder,
@@ -838,6 +841,29 @@ where
 			_ => Err(()),
 		}
 	}
+}
+
+/// Trait defining functions to handle bolt12 messages
+pub trait Bolt12MessageHandler {
+	/// Docs
+	fn verify_invoice_request(
+		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
+	) -> Result<VerifiedInvoiceRequest, Bolt12ResponseError>;
+
+	/// Docs
+	fn get_invoice_request_response(
+		&self, invoice_request: VerifiedInvoiceRequest,
+	) -> Result<OffersMessage, Bolt12ResponseError>;
+
+	/// Docs
+	fn verify_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
+	) -> Result<PaymentId, ()>;
+
+	/// Docs
+	fn send_payment_for_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError>;
 }
 
 impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageHandler
