@@ -205,6 +205,15 @@ pub enum Bolt12SemanticError {
 	UnexpectedHumanReadableName,
 }
 
+/// Error when generating response for Bolt12 messages
+#[derive(Debug)]
+pub enum Bolt12ResponseError {
+	/// Error from  BOLT 12 semantic checks.
+	SemanticError(Bolt12SemanticError),
+	/// Error from failed verification of received [`OffersMessage`]
+	VerificationError,
+}
+
 impl From<CheckedHrpstringError> for Bolt12ParseError {
 	fn from(error: CheckedHrpstringError) -> Self {
 		Self::Bech32(error)

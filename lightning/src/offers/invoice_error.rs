@@ -19,6 +19,8 @@ use crate::util::string::UntrustedString;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+use super::parse::Bolt12ResponseError;
+
 /// An error in response to an [`InvoiceRequest`] or an [`Bolt12Invoice`].
 ///
 /// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
@@ -107,6 +109,15 @@ impl Readable for InvoiceError {
 
 impl From<Bolt12SemanticError> for InvoiceError {
 	fn from(error: Bolt12SemanticError) -> Self {
+		InvoiceError {
+			erroneous_field: None,
+			message: UntrustedString(format!("{:?}", error)),
+		}
+	}
+}
+
+impl From<Bolt12ResponseError> for InvoiceError {
+	fn from(error: Bolt12ResponseError) -> Self {
 		InvoiceError {
 			erroneous_field: None,
 			message: UntrustedString(format!("{:?}", error)),
