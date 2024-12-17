@@ -57,7 +57,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
 use crate::offers::nonce::Nonce;
-use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::parse::{Bolt12ResponseError, Bolt12SemanticError};
 use crate::onion_message::messenger::{Destination, PeeledOnion, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::ParsedOnionMessageContents;
@@ -1926,7 +1926,7 @@ fn fails_sending_invoice_without_blinded_payment_paths_for_offer() {
 	david.onion_messenger.handle_onion_message(charlie_id, &onion_message);
 
 	let invoice_error = extract_invoice_error(david, &onion_message);
-	assert_eq!(invoice_error, InvoiceError::from(Bolt12SemanticError::MissingPaths));
+	assert_eq!(invoice_error, InvoiceError::from(Bolt12ResponseError::SemanticError(Bolt12SemanticError::MissingPaths)));
 
 	// Confirm that david drops this failed payment from his pending outbound payments.
 	match get_event!(david, Event::PaymentFailed) {

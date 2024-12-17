@@ -818,31 +818,6 @@ where
 	}
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
-where
-	ES::Target: EntropySource,
-	OMC::Target: OffersMessageCommons,
-	MR::Target: MessageRouter,
-	L::Target: Logger,
-{
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()> {
-		let secp_ctx = &self.secp_ctx;
-		let expanded_key = &self.inbound_payment_key;
-
-		match context {
-			None if invoice.is_for_refund_without_paths() => {
-				invoice.verify_using_metadata(expanded_key, secp_ctx)
-			},
-			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
-				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
-			},
-			_ => Err(()),
-		}
-	}
-}
-
 /// Trait defining functions to handle bolt12 messages
 pub trait Bolt12MessageHandler {
 	/// Docs
@@ -866,6 +841,143 @@ pub trait Bolt12MessageHandler {
 	) -> Result<(), Bolt12PaymentError>;
 }
 
+impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> Bolt12MessageHandler
+	for OffersMessageFlow<ES, OMC, MR, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	fn verify_invoice_request(
+		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
+	) -> Result<VerifiedInvoiceRequest, Bolt12ResponseError> {
+		let secp_ctx = &self.secp_ctx;
+		let expanded_key = &self.inbound_payment_key;
+
+		let nonce = match context {
+			None if invoice_request.metadata().is_some() => None,
+			Some(OffersContext::InvoiceRequest { nonce }) => Some(nonce),
+			_ => return Err(Bolt12ResponseError::VerificationError),
+		};
+
+		let invoice_request = match nonce {
+			Some(nonce) => {
+				match invoice_request.verify_using_recipient_data(nonce, expanded_key, secp_ctx) {
+					Ok(invoice_request) => invoice_request,
+					Err(()) => return Err(Bolt12ResponseError::VerificationError),
+				}
+			},
+			None => match invoice_request.verify_using_metadata(expanded_key, secp_ctx) {
+				Ok(invoice_request) => invoice_request,
+				Err(()) => return Err(Bolt12ResponseError::VerificationError),
+			},
+		};
+
+		Ok(invoice_request)
+	}
+
+	fn get_invoice_request_response(
+		&self, invoice_request: VerifiedInvoiceRequest,
+	) -> Result<OffersMessage, Bolt12ResponseError> {
+		let amount_msats =
+			match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner) {
+				Ok(amount_msats) => amount_msats,
+				Err(error) => return Err(Bolt12ResponseError::SemanticError(error)),
+			};
+
+		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let (payment_hash, payment_secret) =
+			match self.commons.create_inbound_payment(Some(amount_msats), relative_expiry, None) {
+				Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
+				Err(()) => {
+					let error = Bolt12SemanticError::InvalidAmount;
+					return Err(Bolt12ResponseError::SemanticError(error));
+				},
+			};
+
+		let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
+			offer_id: invoice_request.offer_id,
+			invoice_request: invoice_request.fields(),
+		});
+		let payment_paths = match self.commons.create_blinded_payment_paths(
+			amount_msats,
+			payment_secret,
+			payment_context,
+		) {
+			Ok(payment_paths) => payment_paths,
+			Err(()) => {
+				let error = Bolt12SemanticError::MissingPaths;
+				return Err(Bolt12ResponseError::SemanticError(error));
+			},
+		};
+
+		#[cfg(not(feature = "std"))]
+		let created_at = self.commons.get_current_blocktime();
+
+		let response = if invoice_request.keys.is_some() {
+			#[cfg(feature = "std")]
+			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+			#[cfg(not(feature = "std"))]
+			let builder = invoice_request.respond_using_derived_keys_no_std(
+				payment_paths,
+				payment_hash,
+				created_at,
+			);
+			builder
+				.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
+				.and_then(|builder| builder.allow_mpp().build_and_sign(&self.secp_ctx))
+				.map_err(InvoiceError::from)
+		} else {
+			#[cfg(feature = "std")]
+			let builder = invoice_request.respond_with(payment_paths, payment_hash);
+			#[cfg(not(feature = "std"))]
+			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
+			builder
+				.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
+				.and_then(|builder| builder.allow_mpp().build())
+				.map_err(InvoiceError::from)
+				.and_then(|invoice| {
+					#[cfg(c_bindings)]
+					let mut invoice = invoice;
+					invoice
+						.sign(|invoice: &UnsignedBolt12Invoice| {
+							self.commons.sign_bolt12_invoice(invoice)
+						})
+						.map_err(InvoiceError::from)
+				})
+		};
+
+		match response {
+			Ok(invoice) => Ok(OffersMessage::Invoice(invoice)),
+			Err(invoice_error) => Ok(OffersMessage::InvoiceError(invoice_error)),
+		}
+	}
+
+	fn verify_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
+	) -> Result<PaymentId, ()> {
+		let secp_ctx = &self.secp_ctx;
+		let expanded_key = &self.inbound_payment_key;
+
+		match context {
+			None if invoice.is_for_refund_without_paths() => {
+				invoice.verify_using_metadata(expanded_key, secp_ctx)
+			},
+			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
+				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
+			},
+			_ => Err(()),
+		}
+	}
+
+	fn send_payment_for_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError> {
+		self.commons.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
+	}
+}
+
 impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageHandler
 	for OffersMessageFlow<ES, OMC, MR, L>
 where
@@ -877,7 +989,6 @@ where
 	fn handle_message(
 		&self, message: OffersMessage, context: Option<OffersContext>, responder: Option<Responder>,
 	) -> Option<(OffersMessage, ResponseInstruction)> {
-		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
 		macro_rules! handle_pay_invoice_res {
@@ -925,112 +1036,23 @@ where
 					None => return None,
 				};
 
-				let nonce = match context {
-					None if invoice_request.metadata().is_some() => None,
-					Some(OffersContext::InvoiceRequest { nonce }) => Some(nonce),
-					_ => return None,
+				let invoice_request = match self.verify_invoice_request(invoice_request, context) {
+					Ok(invoice_request) => invoice_request,
+					Err(_) => return None,
 				};
 
-				let invoice_request = match nonce {
-					Some(nonce) => match invoice_request.verify_using_recipient_data(
-						nonce,
-						expanded_key,
-						secp_ctx,
-					) {
-						Ok(invoice_request) => invoice_request,
-						Err(()) => return None,
-					},
-					None => match invoice_request.verify_using_metadata(expanded_key, secp_ctx) {
-						Ok(invoice_request) => invoice_request,
-						Err(()) => return None,
-					},
-				};
+				let response = self.get_invoice_request_response(invoice_request);
 
-				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner,
-				) {
-					Ok(amount_msats) => amount_msats,
+				match response {
 					Err(error) => {
 						return Some((
 							OffersMessage::InvoiceError(error.into()),
 							responder.respond(),
-						))
-					},
-				};
-
-				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
-				let (payment_hash, payment_secret) = match self.commons.create_inbound_payment(
-					Some(amount_msats),
-					relative_expiry,
-					None,
-				) {
-					Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
-					Err(()) => {
-						let error = Bolt12SemanticError::InvalidAmount;
-						return Some((
-							OffersMessage::InvoiceError(error.into()),
-							responder.respond(),
 						));
 					},
-				};
 
-				let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
-					offer_id: invoice_request.offer_id,
-					invoice_request: invoice_request.fields(),
-				});
-				let payment_paths = match self.commons.create_blinded_payment_paths(
-					amount_msats,
-					payment_secret,
-					payment_context,
-				) {
-					Ok(payment_paths) => payment_paths,
-					Err(()) => {
-						let error = Bolt12SemanticError::MissingPaths;
-						return Some((
-							OffersMessage::InvoiceError(error.into()),
-							responder.respond(),
-						));
-					},
-				};
-
-				#[cfg(not(feature = "std"))]
-				let created_at = self.commons.get_current_blocktime();
-
-				let response = if invoice_request.keys.is_some() {
-					#[cfg(feature = "std")]
-					let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-					#[cfg(not(feature = "std"))]
-					let builder = invoice_request.respond_using_derived_keys_no_std(
-						payment_paths,
-						payment_hash,
-						created_at,
-					);
-					builder
-						.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
-						.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
-						.map_err(InvoiceError::from)
-				} else {
-					#[cfg(feature = "std")]
-					let builder = invoice_request.respond_with(payment_paths, payment_hash);
-					#[cfg(not(feature = "std"))]
-					let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
-					builder
-						.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
-						.and_then(|builder| builder.allow_mpp().build())
-						.map_err(InvoiceError::from)
-						.and_then(|invoice| {
-							#[cfg(c_bindings)]
-							let mut invoice = invoice;
-							invoice
-								.sign(|invoice: &UnsignedBolt12Invoice| {
-									self.commons.sign_bolt12_invoice(invoice)
-								})
-								.map_err(InvoiceError::from)
-						})
-				};
-
-				match response {
-					Ok(invoice) => {
+					Ok(OffersMessage::Invoice(invoice)) => {
+						let payment_hash = invoice.payment_hash();
 						let nonce = Nonce::from_entropy_source(&*self.entropy_source);
 						let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
 						let context = MessageContext::Offers(OffersContext::InboundPayment {
@@ -1043,8 +1065,14 @@ where
 							responder.respond_with_reply_path(context),
 						))
 					},
-					Err(error) => {
+
+					Ok(OffersMessage::InvoiceError(error)) => {
 						Some((OffersMessage::InvoiceError(error.into()), responder.respond()))
+					},
+
+					Ok(OffersMessage::InvoiceRequest(_)) => {
+						debug_assert!(false, "Shouldn't be possible");
+						return None;
 					},
 				}
 			},
@@ -1057,8 +1085,7 @@ where
 				let logger =
 					WithContext::from(&self.logger, None, None, Some(invoice.payment_hash()));
 
-				let res =
-					self.commons.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
+				let res = self.send_payment_for_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
 			},
 			#[cfg(async_payments)]
