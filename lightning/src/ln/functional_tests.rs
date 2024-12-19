@@ -11250,3 +11250,65 @@ fn test_funding_signed_event() {
 	nodes[1].node.get_and_clear_pending_msg_events();
 }
 
+#[test]
+fn test_proper_error_sending_for_less_fees_case() {
+    // Set up user configuration to manually accept inbound channels
+    let mut manually_accept_conf = UserConfig::default();
+    manually_accept_conf.manually_accept_inbound_channels = true;
+
+    // Create channel monitor configurations and node configurations
+    let chanmon_cfgs = create_chanmon_cfgs(2);
+    let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+
+    // Create channel managers and network nodes
+    let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, Some(manually_accept_conf.clone())]);
+    let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+    // Create a channel with specific parameters
+    let temp_channel_id = nodes[0].node.create_channel(nodes[1].node.get_our_node_id(), 100000, 10001, 42, None, Some(manually_accept_conf)).unwrap();
+    let mut res = get_event_msg!(nodes[0], MessageSendEvent::SendOpenChannel, nodes[1].node.get_our_node_id());
+
+    // Set an extremely high commitment fee rate
+    res.common_fields.commitment_feerate_sat_per_1000_weight = 1_000_000;
+
+    // Handle the open channel message on the second node
+    nodes[1].node.handle_open_channel(nodes[0].node.get_our_node_id(), &res);
+
+    // Assert that `nodes[1]` has no `MessageSendEvent::SendAcceptChannel` in `msg_events` before
+    // accepting the inbound channel request.
+    assert!(nodes[1].node.get_and_clear_pending_msg_events().is_empty());
+
+    // Get and handle pending events
+    let events = nodes[1].node.get_and_clear_pending_events();
+    let accepted_error_msg;
+    match events[0] {
+        Event::OpenChannelRequest { temporary_channel_id, .. } => {
+            // Attempt to accept the inbound channel with insufficient fees
+            let res = nodes[1].node.accept_inbound_channel_from_trusted_peer_0conf(&temporary_channel_id, &nodes[0].node.get_our_node_id(), 23);
+
+            // Check for the expected error message
+            match res {
+                Err(APIError::ChannelUnavailable { err }) => {
+                    assert_eq!(err, "Funding amount (99989 sats) can't even pay fee for initial commitment transaction fee of 1412000 sats.");
+                    accepted_error_msg = err;
+                },
+                _ => panic!("Unexpected result"),
+            }
+        }
+        _ => panic!("Unexpected event"),
+    }
+
+    // Confirm that the error message has been enqueued to be send to the peer
+    let accept_msg_ev = nodes[1].node.get_and_clear_pending_msg_events();
+    assert_eq!(accept_msg_ev.len(), 1);
+
+    // Check the details of the error message
+    match accept_msg_ev[0] {
+        MessageSendEvent::HandleError { action: msgs::ErrorAction::SendErrorMessage { ref msg }, node_id } => {
+            assert_eq!(node_id, nodes[0].node.get_our_node_id());
+            assert_eq!(msg.channel_id, temp_channel_id);
+            assert_eq!(msg.data, accepted_error_msg);
+        },
+        _ => panic!("Unexpected event"),
+    }
+}
