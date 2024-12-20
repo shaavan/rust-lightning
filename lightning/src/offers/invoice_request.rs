@@ -77,10 +77,10 @@ use crate::ln::channelmanager::PaymentId;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
-use crate::offers::invoice::Bolt12Invoice;
+use crate::offers::invoice::{Bolt12Invoice, InvoiceContents};
 use crate::offers::merkle::{SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream, self, SIGNATURE_TLV_RECORD_SIZE};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef};
+use crate::offers::offer::{Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES};
 use crate::offers::parse::{Bolt12ParseError, ParsedMessage, Bolt12SemanticError};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{Metadata, MetadataMaterial};
@@ -485,6 +485,56 @@ pub trait Bolt12Assessor {
 	/// This function is useful when the underlying [`Offer`] specified the amount in currency, and the corresponding
 	/// [`InvoiceRequest`] doesn't specify the amount to be used.
 	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError>;
+}
+
+/// Implements the default version of [`InvoiceRequestAssessor`]
+pub struct DefaultBolt12Assessor {}
+
+impl DefaultBolt12Assessor {
+	fn invoice_request_offer_amount(&self, invoice_request: &InvoiceRequestContents) -> Result<u64, Bolt12ResponseError> {
+		match invoice_request.inner.offer.amount() {
+			Some(Amount::Bitcoin { amount_msats }) => {
+				amount_msats
+					.checked_mul(invoice_request.quantity().unwrap_or(1))
+					.ok_or(Bolt12SemanticError::InvalidAmount)
+			}
+			Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
+			None => Err(Bolt12SemanticError::MissingAmount),
+		}
+		.map_err(Bolt12ResponseError::SemanticError)
+	}
+}
+
+impl Bolt12Assessor for DefaultBolt12Assessor {
+	fn assess_invoice_request_without_amount(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError> {
+		debug_assert!(invoice_request.amount_msats().is_none(), "This function should only be used if the Invoice Request amount is not set.");
+		self.invoice_request_offer_amount(&invoice_request.contents)
+	}
+
+	fn assess_invoice_request_with_amount(&self, invoice_request: &InvoiceRequest) -> Result<(), Bolt12ResponseError> {
+		debug_assert!(invoice_request.amount_msats().is_some(), "This function should only be used if the Invoice Request amount is set.");
+		let offer_amount = self.invoice_request_offer_amount(&invoice_request.contents)?;
+
+		if invoice_request.amount_msats().unwrap() < offer_amount {
+			return Err(Bolt12ResponseError::InsufficientAmount);
+		}
+
+		Ok(())
+	}
+
+	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError> {
+		if let InvoiceContents::ForOffer { invoice_request, .. } = &invoice.contents {
+			if invoice_request.amount_msats().is_none() {
+				let offer_amount = self.invoice_request_offer_amount(&invoice_request)?;
+	
+				if invoice.amount_msats() < offer_amount {
+					return Err(Bolt12ResponseError::InsufficientAmount);
+				}
+			}
+		}
+
+		Ok(())
+	}	
 }
 
 impl UnsignedInvoiceRequest {
