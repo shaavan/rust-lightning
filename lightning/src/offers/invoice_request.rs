@@ -487,7 +487,7 @@ pub trait Bolt12Assessor {
 	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError>;
 }
 
-/// Implements the default version of [`InvoiceRequestAssessor`]
+/// Implements the default version of [`Bolt12Assessor`]
 pub struct DefaultBolt12Assessor {}
 
 impl DefaultBolt12Assessor {
