@@ -87,6 +87,8 @@ use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::util::ser::{CursorReadable, HighZeroBytesDroppedBigSize, Readable, WithoutLength, Writeable, Writer};
 use crate::util::string::{PrintableString, UntrustedString};
 
+use super::parse::Bolt12ResponseError;
+
 #[cfg(not(c_bindings))]
 use {
 	crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder},
@@ -462,6 +464,23 @@ where
 	fn sign(&self, message: &UnsignedInvoiceRequest) -> Result<Signature, ()> {
 		self.sign_invoice_request(message)
 	}
+}
+
+/// A trait to allow users to handle a received [`InvoiceRequest`].
+pub trait InvoiceRequestAssessor {
+    /// Evaluates a received [`InvoiceRequest`] and determines the amount to be used for the corresponding [`Bolt12Invoice`].
+    ///
+    /// This function is particularly useful when the associated offer specifies the amount in a currency denomination. 
+    /// Users can use this to:
+    /// - Verify if the amount in the [`InvoiceRequest`] is sufficient, considering current exchange rates.
+    /// - Provide a custom amount to be used for the [`Bolt12Invoice`] if the [`InvoiceRequest`] does not specify an amount.
+    ///
+    /// # Considerations
+    /// - If the [`InvoiceRequest`] specifies an amount, users must ensure that the amount in the resulting [`Bolt12Invoice`] 
+    ///   matches the amount provided in the [`InvoiceRequest`].
+    ///
+    /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+    fn assess_invoice_request(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError>;
 }
 
 impl UnsignedInvoiceRequest {
