@@ -659,7 +659,7 @@ pub(super) enum InvoiceContents {
 
 /// Invoice-specific fields for an `invoice` message.
 #[derive(Clone, Debug, PartialEq)]
-struct InvoiceFields {
+pub(super) struct InvoiceFields {
 	payment_paths: Vec<BlindedPaymentPath>,
 	created_at: Duration,
 	relative_expiry: Option<Duration>,
