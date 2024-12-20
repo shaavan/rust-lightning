@@ -77,6 +77,7 @@ use crate::ln::channelmanager::PaymentId;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::merkle::{SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream, self, SIGNATURE_TLV_RECORD_SIZE};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef};
@@ -86,6 +87,8 @@ use crate::offers::signer::{Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::util::ser::{CursorReadable, HighZeroBytesDroppedBigSize, Readable, WithoutLength, Writeable, Writer};
 use crate::util::string::{PrintableString, UntrustedString};
+
+use super::parse::Bolt12ResponseError;
 
 #[cfg(not(c_bindings))]
 use {
@@ -462,6 +465,26 @@ where
 	fn sign(&self, message: &UnsignedInvoiceRequest) -> Result<Signature, ()> {
 		self.sign_invoice_request(message)
 	}
+}
+
+/// A trait to allow users to handle a received [`InvoiceRequest`].
+pub trait Bolt12Assessor {
+    /// Evaluates a received [`InvoiceRequest`] and determines the amount to be used for the corresponding [`Bolt12Invoice`].
+    ///
+    /// This function is particularly useful when the associated offer specifies the amount in a currency denomination. 
+    /// Users can use this to provide a custom amount to be used for the [`Bolt12Invoice`] if the [`InvoiceRequest`] does
+	/// not specify an amount.
+    fn assess_invoice_request_without_amount(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError>;
+	/// Evaluates a received [`InvoiceRequest`] and determines if the amount specified is sufficient.
+    ///
+    /// This function is particularly useful when the associated offer specifies the amount in a currency denomination. 
+    /// Users can use this to verify if the amount in the [`InvoiceRequest`] is sufficient, considering current exchange rates.
+	fn assess_invoice_request_with_amount(&self, invoice_request: &InvoiceRequest) -> Result<(), Bolt12ResponseError>;
+	/// Evaluates the recieved [`Bolt12Invoice`].
+	/// 
+	/// This function is useful when the underlying [`Offer`] specified the amount in currency, and the corresponding
+	/// [`InvoiceRequest`] doesn't specify the amount to be used.
+	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError>;
 }
 
 impl UnsignedInvoiceRequest {
