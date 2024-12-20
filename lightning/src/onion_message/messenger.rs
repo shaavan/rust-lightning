@@ -19,6 +19,7 @@ use crate::blinded_path::{IntroductionNode, NodeIdLookUp};
 use crate::blinded_path::message::{BlindedMessagePath, MessageForwardNode, ForwardTlvs, MessageContext, NextMessageHop, ReceiveTlvs};
 use crate::blinded_path::utils;
 use crate::events::{Event, EventHandler, EventsProvider, ReplayEvent};
+use crate::offers::invoice_request::DefaultInvoiceRequestAssessor;
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::types::features::{InitFeatures, NodeFeatures};
 use crate::ln::msgs::{self, OnionMessage, OnionMessageHandler, SocketAddress};
@@ -1865,7 +1866,7 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 	Arc<L>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
-	Arc<OffersMessageFlow<Arc<KeysManager>, Arc<SimpleArcChannelManager<M, T, F, L>>, Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>, Arc<L>>>,
+	Arc<OffersMessageFlow<Arc<KeysManager>, Arc<SimpleArcChannelManager<M, T, F, L>>, Arc<DefaultInvoiceRequestAssessor>, Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>, Arc<L>>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	IgnoringMessageHandler

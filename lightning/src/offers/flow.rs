@@ -33,7 +33,9 @@ use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
 	UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY,
 };
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::invoice_request::{
+	InvoiceRequest, InvoiceRequestAssessor, InvoiceRequestBuilder,
+};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::onion_message::messenger::{
@@ -209,6 +211,11 @@ pub trait AnOffersMessageFlow {
 	/// A type that may be dereferenced to [`Self::OffersMessageCommons`].
 	type OMC: Deref<Target = Self::OffersMessageCommons>;
 
+	/// A type implementing [`InvoiceRequestAssessor`].
+	type InvoiceRequestAssessor: InvoiceRequestAssessor + ?Sized;
+	/// A type that may be dereferenced to [`Self::InvoiceRequestAssessor`].
+	type IRA: Deref<Target = Self::InvoiceRequestAssessor>;
+
 	/// A type implementing [`MessageRouter`].
 	type MessageRouter: MessageRouter + ?Sized;
 	/// A type that may be dereferenced to [`Self::MessageRouter`].
@@ -220,14 +227,15 @@ pub trait AnOffersMessageFlow {
 	type L: Deref<Target = Self::Logger>;
 
 	/// Returns a reference to the actual [`OffersMessageFlow`] object.
-	fn get_omf(&self) -> &OffersMessageFlow<Self::ES, Self::OMC, Self::MR, Self::L>;
+	fn get_omf(&self) -> &OffersMessageFlow<Self::ES, Self::OMC, Self::IRA, Self::MR, Self::L>;
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> AnOffersMessageFlow
-	for OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> AnOffersMessageFlow
+	for OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -237,13 +245,16 @@ where
 	type OffersMessageCommons = OMC::Target;
 	type OMC = OMC;
 
+	type InvoiceRequestAssessor = IRA::Target;
+	type IRA = IRA;
+
 	type MessageRouter = MR::Target;
 	type MR = MR;
 
 	type Logger = L::Target;
 	type L = L;
 
-	fn get_omf(&self) -> &OffersMessageFlow<ES, OMC, MR, L> {
+	fn get_omf(&self) -> &OffersMessageFlow<ES, OMC, IRA, MR, L> {
 		self
 	}
 }
@@ -534,10 +545,11 @@ where
 /// [`offers`]: crate::offers
 /// [`pay_for_offer`]: Self::pay_for_offer
 /// [`request_refund_payment`]: Self::request_refund_payment
-pub struct OffersMessageFlow<ES: Deref, OMC: Deref, MR: Deref, L: Deref>
+pub struct OffersMessageFlow<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -550,6 +562,9 @@ where
 
 	/// Contains functions shared between OffersMessageHandler and ChannelManager.
 	commons: OMC,
+
+	/// Handler for assessing invoice requests.
+	invoice_request_assessor: IRA,
 
 	message_router: MR,
 
@@ -574,17 +589,19 @@ where
 	pub logger: L,
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
 	/// Creates a new [`OffersMessageFlow`]
 	pub fn new(
 		expanded_inbound_key: inbound_payment::ExpandedKey, our_network_pubkey: PublicKey,
-		entropy_source: ES, commons: OMC, message_router: MR, logger: L,
+		entropy_source: ES, commons: OMC, invoice_request_assessor: IRA, message_router: MR,
+		logger: L,
 	) -> Self {
 		let mut secp_ctx = Secp256k1::new();
 		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
@@ -597,6 +614,8 @@ where
 
 			commons,
 
+			invoice_request_assessor,
+
 			message_router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
@@ -606,6 +625,7 @@ where
 
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
+
 			logger,
 		}
 	}
@@ -643,10 +663,11 @@ pub const MAX_SHORT_LIVED_RELATIVE_EXPIRY: Duration = Duration::from_secs(60 * 6
 /// even if multiple invoices are received.
 pub const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -759,10 +780,11 @@ where
 	}
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -815,10 +837,11 @@ where
 	}
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -840,11 +863,12 @@ where
 	}
 }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageHandler
-	for OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageHandler
+	for OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -920,9 +944,10 @@ where
 					},
 				};
 
-				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner,
-				) {
+				let amount_msats = match self
+					.invoice_request_assessor
+					.assess_invoice_request(&invoice_request.inner)
+				{
 					Ok(amount_msats) => amount_msats,
 					Err(error) => {
 						return Some((
@@ -1269,10 +1294,11 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	}
 } }
 
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
@@ -1568,11 +1594,12 @@ where
 }
 
 #[cfg(feature = "dnssec")]
-impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> DNSResolverMessageHandler
-	for OffersMessageFlow<ES, OMC, MR, L>
+impl<ES: Deref, OMC: Deref, IRA: Deref, MR: Deref, L: Deref> DNSResolverMessageHandler
+	for OffersMessageFlow<ES, OMC, IRA, MR, L>
 where
 	ES::Target: EntropySource,
 	OMC::Target: OffersMessageCommons,
+	IRA::Target: InvoiceRequestAssessor,
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
