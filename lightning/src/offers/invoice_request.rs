@@ -564,7 +564,7 @@ impl<T: Bolt12CurrencyAssessor> Bolt12AssessorUtils for T {
 	}
 }
 
-/// Implements the default version of [`InvoiceRequestAssessor`]
+/// Implements the default version of [`Bolt12CurrencyAssessor`]
 pub struct DefaultBolt12Assessor {}
 
 impl Bolt12CurrencyAssessor for DefaultBolt12Assessor {
