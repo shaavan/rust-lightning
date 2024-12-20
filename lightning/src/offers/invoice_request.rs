@@ -483,6 +483,18 @@ pub trait InvoiceRequestAssessor {
     fn assess_invoice_request(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError>;
 }
 
+/// Implements the default version of [`InvoiceRequestAssessor`]
+pub struct DefaultInvoiceRequestAssessor {}
+
+impl InvoiceRequestAssessor for DefaultInvoiceRequestAssessor {
+	fn assess_invoice_request(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError> {
+		match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(invoice_request) {
+			Ok(amount) => Ok(amount),
+			Err(error) => Err(Bolt12ResponseError::SemanticError(error))
+		}
+	}
+}
+
 impl UnsignedInvoiceRequest {
 	fn new(offer: &Offer, contents: InvoiceRequestContents) -> Self {
 		// Use the offer bytes instead of the offer TLV stream as the offer may have contained
