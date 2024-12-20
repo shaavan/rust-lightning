@@ -539,7 +539,7 @@ pub trait Bolt12Assessor {
     }
 }
 
-/// Implements the default version of [`InvoiceRequestAssessor`]
+/// Implements the default version of [`Bolt12Assessor`]
 pub struct DefaultBolt12Assessor {}
 
 impl Bolt12Assessor for DefaultBolt12Assessor {
