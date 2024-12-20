@@ -77,15 +77,19 @@ use crate::ln::channelmanager::PaymentId;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::invoice::{Bolt12Invoice, InvoiceContents};
 use crate::offers::merkle::{SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream, self, SIGNATURE_TLV_RECORD_SIZE};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef};
+use crate::offers::offer::{Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES};
 use crate::offers::parse::{Bolt12ParseError, ParsedMessage, Bolt12SemanticError};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::util::ser::{CursorReadable, HighZeroBytesDroppedBigSize, Readable, WithoutLength, Writeable, Writer};
 use crate::util::string::{PrintableString, UntrustedString};
+
+use super::offer::Currency;
+use super::parse::Bolt12ResponseError;
 
 #[cfg(not(c_bindings))]
 use {
@@ -461,6 +465,102 @@ where
 {
 	fn sign(&self, message: &UnsignedInvoiceRequest) -> Result<Signature, ()> {
 		self.sign_invoice_request(message)
+	}
+}
+
+/// Trait that allow user to introduce [`Amount::Currency`] support for [`Offer`]
+pub trait Bolt12CurrencyAssessor {
+	/// Converts fiat to milli satoshis.
+	fn fiat_to_msats(&self, currency: Currency) -> Result<u64, Bolt12ResponseError>;
+}
+
+/// Trait that allow users assess the received Bolt12 Message, and ensure if they want to respond to it.
+pub trait Bolt12Assessor {
+	/// Evaluates a received [`InvoiceRequest`] and determines the amount to be used for the corresponding [`Bolt12Invoice`].
+	///
+	/// This is a function that uses the other two asessors to determine whether an invoice_request should be replied to and
+	/// if so then with what amount.
+	///
+	/// Note about amount:
+	/// If [`InvoiceRequest`] does contains an amount. The returned amount MUST BE same as the amount.
+	/// See [Bolt 12](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md#requirements-1) for more details
+	fn assess_invoice_request(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError>;
+	/// Evaluates a received [`InvoiceRequest`] and determines the amount to be used for the corresponding [`Bolt12Invoice`].
+	///
+	/// This function is particularly useful when the associated offer specifies the amount in a currency denomination.
+	/// Users can use this to provide a custom amount to be used for the [`Bolt12Invoice`] if the [`InvoiceRequest`] does
+	/// not specify an amount.
+	fn assess_invoice_request_without_amount(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError>;
+
+	/// Evaluates a received [`InvoiceRequest`] and determines if the amount specified is sufficient.
+	///
+	/// This function is particularly useful when the associated offer specifies the amount in a currency denomination.
+	/// Users can use this to verify if the amount in the [`InvoiceRequest`] is sufficient, considering current exchange rates.
+	fn assess_invoice_request_with_amount(&self, invoice_request: &InvoiceRequest) -> Result<(), Bolt12ResponseError>;
+
+	/// Evaluates the recieved [`Bolt12Invoice`].
+	///
+	/// This function is useful when the underlying [`Offer`] specified the amount in currency, and the corresponding
+	/// [`InvoiceRequest`] doesn't specify the amount to be used.
+	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError>;
+}
+
+/// Trait defining private functions to be used as helpers for [`Bolt12Assessor`]
+trait Bolt12AssessorUtils {
+	fn calculate_offer_amount(&self, invoice_request: &InvoiceRequestContents) -> Result<u64, Bolt12ResponseError>;
+}
+
+/// Implement [`Bolt12Assessor`] for all that implements [`Bolt12CurrencyAssessor`]
+impl<T: Bolt12CurrencyAssessor> Bolt12Assessor for T {
+	fn assess_invoice_request(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError> {
+		match invoice_request.contents.amount_msats() {
+			Some(amount) => self.assess_invoice_request_with_amount(&invoice_request).map(|_| amount),
+			None => self.assess_invoice_request_without_amount(&invoice_request)
+		}
+	}
+
+	fn assess_invoice_request_without_amount(&self, invoice_request: &InvoiceRequest) -> Result<u64, Bolt12ResponseError> {
+		self.calculate_offer_amount(&invoice_request.contents)
+	}
+
+	fn assess_invoice_request_with_amount(&self, invoice_request: &InvoiceRequest) -> Result<(), Bolt12ResponseError> {
+		let offer_amount = self.calculate_offer_amount(&invoice_request.contents)?;
+
+		if invoice_request.amount_msats().unwrap() < offer_amount {
+			return Err(Bolt12ResponseError::InsufficientAmount);
+		}
+
+		Ok(())
+	}
+
+	fn assess_bolt12_invoice(&self, invoice: &Bolt12Invoice) -> Result<(), Bolt12ResponseError> {
+		if let InvoiceContents::ForOffer { invoice_request, .. } = &invoice.contents {
+			if invoice_request.amount_msats().is_none() {
+				let offer_amount = self.calculate_offer_amount(&invoice_request)?;
+
+				if invoice.amount_msats() < offer_amount {
+					return Err(Bolt12ResponseError::InsufficientAmount);
+				}
+			}
+		}
+		Ok(())
+	}
+}
+
+impl<T: Bolt12CurrencyAssessor> Bolt12AssessorUtils for T {
+	fn calculate_offer_amount(&self, invoice_request: &InvoiceRequestContents) -> Result<u64, Bolt12ResponseError> {
+		match invoice_request.inner.offer.amount() {
+			Some(Amount::Bitcoin { amount_msats }) => {
+				amount_msats
+					.checked_mul(invoice_request.quantity().unwrap_or(1))
+					.ok_or(Bolt12SemanticError::InvalidAmount)
+			}
+			Some(Amount::Currency(currency)) => self.fiat_to_msats(currency)?
+				.checked_mul(invoice_request.quantity().unwrap_or(1))
+				.ok_or(Bolt12SemanticError::InvalidAmount),
+			None => Err(Bolt12SemanticError::MissingAmount),
+		}
+		.map_err(Bolt12ResponseError::SemanticError)
 	}
 }
 
