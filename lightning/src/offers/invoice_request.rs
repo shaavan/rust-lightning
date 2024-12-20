@@ -564,6 +564,15 @@ impl<T: Bolt12CurrencyAssessor> Bolt12AssessorUtils for T {
 	}
 }
 
+/// Implements the default version of [`InvoiceRequestAssessor`]
+pub struct DefaultBolt12Assessor {}
+
+impl Bolt12CurrencyAssessor for DefaultBolt12Assessor {
+	fn fiat_to_msats(&self, _currency: Currency) -> Result<u64, Bolt12ResponseError> {
+		Err(Bolt12ResponseError::SemanticError(Bolt12SemanticError::UnsupportedCurrency))
+	}
+}
+
 impl UnsignedInvoiceRequest {
 	fn new(offer: &Offer, contents: InvoiceRequestContents) -> Self {
 		// Use the offer bytes instead of the offer TLV stream as the offer may have contained
