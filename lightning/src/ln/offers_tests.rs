@@ -2347,6 +2347,11 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_closed_event!(nodes[0], 2, ClosureReason::OutdatedChannelManager, [bob_id, bob_id], 10_000_000);
 	check_added_monitors!(nodes[0], 2);
 
+	let txs = nodes[0].tx_broadcaster.txn_broadcast();
+
+	nodes[1].node.peer_disconnected(nodes[0].node.get_our_node_id());
+	connect_peers(&nodes[0], &nodes[1]);
+
 	// Alice receives a duplicate invoice, but the payment should be transitioned to Retryable by now.
 	nodes[0].onion_messenger.handle_onion_message(bob_id, &invoice_om);
 	// Previously, Alice would've attempted to pay the invoice a 2nd time. In this test case, this 2nd
@@ -2355,7 +2360,11 @@ fn no_double_pay_with_stale_channelmanager() {
 	// generated in response to the duplicate invoice.
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
 
-	
+	create_announced_chan_between_nodes(&nodes, 0, 1);
+
+	assert!(false);
+
+	nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().extend(txs);
 
 	// Complete paying the original invoice.
 	let payment_preimage = match payment_purpose.preimage() {
