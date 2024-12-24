@@ -2338,15 +2338,6 @@ fn no_double_pay_with_stale_channelmanager() {
 		_ => panic!("No Event::PaymentClaimable"),
 	};
 
-	let payment_preimage = match payment_purpose.preimage() {
-		Some(preimage) => preimage,
-		None => panic!("No preimage in Event::PaymentClaimable"),
-	};
-
-	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_preimage));
-	expect_payment_sent!(&nodes[0], payment_preimage, Some(999));
-	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
-
 	// Reload with the stale manager and check that receiving the invoice again won't result in a
 	// duplicate payment attempt.
 	let monitor_0 = get_monitor!(nodes[0], chan_id_0).encode();
@@ -2364,11 +2355,18 @@ fn no_double_pay_with_stale_channelmanager() {
 	// generated in response to the duplicate invoice.
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
 
+	
 
-	// Complete paying the invoice
-	// claim_bolt12_payment(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_context);
+	// Complete paying the original invoice.
+	let payment_preimage = match payment_purpose.preimage() {
+		Some(preimage) => preimage,
+		None => panic!("No preimage in Event::PaymentClaimable"),
+	};
+	
+	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_preimage));
+	expect_payment_sent!(&nodes[0], payment_preimage, Some(999));
+	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 	
 	println!("\n\nPerfect till here 2\n\n");
-	
 }
 

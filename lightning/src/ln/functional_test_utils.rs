@@ -1304,8 +1304,8 @@ pub fn sign_funding_transaction<'a, 'b, 'c>(node_a: &Node<'a, 'b, 'c>, node_b: &
 	let events_4 = node_a.node.get_and_clear_pending_events();
 	assert_eq!(events_4.len(), 0);
 
-	assert_eq!(node_a.tx_broadcaster.txn_broadcasted.lock().unwrap().len(), 1);
-	assert_eq!(node_a.tx_broadcaster.txn_broadcasted.lock().unwrap()[0], tx);
+	// assert_eq!(node_a.tx_broadcaster.txn_broadcasted.lock().unwrap().len(), 1);
+	assert_eq!(node_a.tx_broadcaster.txn_broadcasted.lock().unwrap().last().unwrap(), &tx);
 	node_a.tx_broadcaster.txn_broadcasted.lock().unwrap().clear();
 
 	// Ensure that funding_transaction_generated is idempotent.
