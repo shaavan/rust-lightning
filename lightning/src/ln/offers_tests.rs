@@ -2255,6 +2255,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 	}
 }
 
+
 #[test]
 fn no_double_pay_with_stale_channelmanager() {
 	// This tests the following bug:
@@ -2297,6 +2298,18 @@ fn no_double_pay_with_stale_channelmanager() {
 	let invreq_om = nodes[0].onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	nodes[1].onion_messenger.handle_onion_message(alice_id, &invreq_om);
 
+	let (invoice_request, _) = extract_invoice_request(&nodes[1], &invreq_om);
+
+	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
+		offer_id: offer.id(),
+		invoice_request: InvoiceRequestFields {
+			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
+			quantity: None,
+			payer_note_truncated: None,
+			human_readable_name: None,
+		},
+	});
+
 	// Save the manager while the payment is in state AwaitingInvoice so we can reload it later.
 	let alice_chan_manager_serialized = nodes[0].node.encode();
 
@@ -2315,15 +2328,24 @@ fn no_double_pay_with_stale_channelmanager() {
 	do_pass_along_path(args);
 
 	let ev = remove_first_msg_event_to_node(&bob_id, &mut events);
-	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
+	let args = PassAlongPathArgs::new(&nodes[0], expected_route[1], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events();
 	do_pass_along_path(args);
 
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::Pending, payment_id);
-	match get_event!(nodes[1], Event::PaymentClaimable) {
-		Event::PaymentClaimable { .. } => {},
+	let payment_purpose = match get_event!(nodes[1], Event::PaymentClaimable) {
+		Event::PaymentClaimable { purpose, .. } => purpose,
 		_ => panic!("No Event::PaymentClaimable"),
-	}
+	};
+
+	let payment_preimage = match payment_purpose.preimage() {
+		Some(preimage) => preimage,
+		None => panic!("No preimage in Event::PaymentClaimable"),
+	};
+
+	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_preimage));
+	expect_payment_sent!(&nodes[0], payment_preimage, Some(999));
+	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 
 	// Reload with the stale manager and check that receiving the invoice again won't result in a
 	// duplicate payment attempt.
@@ -2341,5 +2363,12 @@ fn no_double_pay_with_stale_channelmanager() {
 	// Alice and Bob is closed. Since no 2nd attempt should be made, check that no events are
 	// generated in response to the duplicate invoice.
 	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
+
+
+	// Complete paying the invoice
+	// claim_bolt12_payment(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_context);
+	
+	println!("\n\nPerfect till here 2\n\n");
+	
 }
 
