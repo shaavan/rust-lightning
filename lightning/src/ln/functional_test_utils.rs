@@ -795,6 +795,9 @@ macro_rules! get_event_msg {
 	($node: expr, $event_type: path, $node_id: expr) => {
 		{
 			let events = $node.node.get_and_clear_pending_msg_events();
+			for event in &events {
+				println!("{:?}\n\n", event);
+			}
 			assert_eq!(events.len(), 1);
 			match events[0] {
 				$event_type { ref node_id, ref msg } => {

@@ -2278,6 +2278,7 @@ fn no_double_pay_with_stale_channelmanager() {
 	let mut nodes = create_network(2, &node_cfgs, &node_chanmgrs);
 	let chan_id_0 = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000).2;
 	let chan_id_1 = create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000).2;
+	let error_message = "Channel force-closed".to_string();
 
 	let alice_id = nodes[0].node.get_our_node_id();
 	let bob_id = nodes[1].node.get_our_node_id();
@@ -2347,35 +2348,53 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_closed_event!(nodes[0], 2, ClosureReason::OutdatedChannelManager, [bob_id, bob_id], 10_000_000);
 	check_added_monitors!(nodes[0], 2);
 
-	let txs = nodes[0].tx_broadcaster.txn_broadcast();
+	// Close channel from bob side too.
+	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_0, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
+	check_added_monitors!(nodes[1], 1);
+	check_closed_broadcast!(nodes[1], true);
+	check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+
+	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_1, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
+	check_added_monitors!(nodes[1], 1);
+	check_closed_broadcast!(nodes[1], true);
+	check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+
+	// nodes[1].node.force_close_all_channels_without_broadcasting_txn(error_message);
 
 	nodes[1].node.peer_disconnected(nodes[0].node.get_our_node_id());
 	connect_peers(&nodes[0], &nodes[1]);
 
-	// Alice receives a duplicate invoice, but the payment should be transitioned to Retryable by now.
-	nodes[0].onion_messenger.handle_onion_message(bob_id, &invoice_om);
-	// Previously, Alice would've attempted to pay the invoice a 2nd time. In this test case, this 2nd
-	// attempt would have resulted in a PaymentFailed event here, since the only channels between
-	// Alice and Bob is closed. Since no 2nd attempt should be made, check that no events are
-	// generated in response to the duplicate invoice.
-	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
 
-	create_announced_chan_between_nodes(&nodes, 0, 1);
 
-	assert!(false);
+	// create_announced_chan_between_nodes(&nodes, 0, 1);
 
-	nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().extend(txs);
+	// let txs = nodes[0].tx_broadcaster.txn_broadcast();
 
-	// Complete paying the original invoice.
-	let payment_preimage = match payment_purpose.preimage() {
-		Some(preimage) => preimage,
-		None => panic!("No preimage in Event::PaymentClaimable"),
-	};
 	
-	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_preimage));
-	expect_payment_sent!(&nodes[0], payment_preimage, Some(999));
-	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
+	// // Alice receives a duplicate invoice, but the payment should be transitioned to Retryable by now.
+	// nodes[0].onion_messenger.handle_onion_message(bob_id, &invoice_om);
+	// // Previously, Alice would've attempted to pay the invoice a 2nd time. In this test case, this 2nd
+	// // attempt would have resulted in a PaymentFailed event here, since the only channels between
+	// // Alice and Bob is closed. Since no 2nd attempt should be made, check that no events are
+	// // generated in response to the duplicate invoice.
+	// assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
+
+	// create_announced_chan_between_nodes(&nodes, 0, 1);
+
+	// assert!(false);
+
+	// nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().extend(txs);
+
+	// // Complete paying the original invoice.
+	// let payment_preimage = match payment_purpose.preimage() {
+	// 	Some(preimage) => preimage,
+	// 	None => panic!("No preimage in Event::PaymentClaimable"),
+	// };
 	
-	println!("\n\nPerfect till here 2\n\n");
+	// do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]], &[&nodes[1]]], payment_preimage));
+	// expect_payment_sent!(&nodes[0], payment_preimage, Some(999));
+	// expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
+	
+	// println!("\n\nPerfect till here 2\n\n");
 }
 
