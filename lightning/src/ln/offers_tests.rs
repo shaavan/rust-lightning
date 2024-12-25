@@ -42,15 +42,16 @@
 
 use bitcoin::network::Network;
 use bitcoin::secp256k1::{PublicKey, Secp256k1};
+use types::string::UntrustedString;
 use core::time::Duration;
 use crate::blinded_path::IntroductionNode;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentContext};
 use crate::blinded_path::message::{MessageContext, OffersContext};
-use crate::events::{ClosureReason, Event, MessageSendEventsProvider, PaymentFailureReason, PaymentPurpose};
+use crate::events::{ClosureReason, Event, MessageSendEvent, MessageSendEventsProvider, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{Bolt12PaymentError, MAX_SHORT_LIVED_RELATIVE_EXPIRY, PaymentId, RecentPaymentDetails, Retry, self};
 use crate::types::features::Bolt12InvoiceFeatures;
-use crate::ln::functional_test_utils::*;
+use crate::ln::{functional_test_utils::*, msgs};
 use crate::ln::msgs::{ChannelMessageHandler, Init, NodeAnnouncement, OnionMessage, OnionMessageHandler, RoutingMessageHandler, SocketAddress, UnsignedGossipMessage, UnsignedNodeAnnouncement};
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
 use crate::offers::invoice::Bolt12Invoice;
@@ -2348,40 +2349,55 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_closed_event!(nodes[0], 2, ClosureReason::OutdatedChannelManager, [bob_id, bob_id], 10_000_000);
 	check_added_monitors!(nodes[0], 2);
 
-	// Close channel from bob side too.
-	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_0, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
-	check_added_monitors!(nodes[1], 1);
-	check_closed_broadcast!(nodes[1], true);
-	check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+	// Alice receives a duplicate invoice, but the payment should be transitioned to Retryable by now.
+	nodes[0].onion_messenger.handle_onion_message(bob_id, &invoice_om);
+	// Previously, Alice would've attempted to pay the invoice a 2nd time. In this test case, this 2nd
+	// attempt would have resulted in a PaymentFailed event here, since the only channels between
+	// Alice and Bob is closed. Since no 2nd attempt should be made, check that no events are
+	// generated in response to the duplicate invoice.
+	assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
 
-	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_1, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
-	check_added_monitors!(nodes[1], 1);
-	check_closed_broadcast!(nodes[1], true);
-	check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+	// Complete the pending transaction
+	// Assert that nodes[0] has pending transaction
+	assert!(nodes[0].node.list_channels().is_empty());
+	assert!(nodes[0].node.has_pending_payments());
 
-	// nodes[1].node.force_close_all_channels_without_broadcasting_txn(error_message);
+	// Reconnect nodes
 
 	nodes[1].node.peer_disconnected(nodes[0].node.get_our_node_id());
-	connect_peers(&nodes[0], &nodes[1]);
+	nodes[0].node.peer_connected(nodes[1].node.get_our_node_id(), &msgs::Init {
+		features: nodes[1].node.init_features(), networks: None, remote_network_address: None
+	}, true).unwrap();
+	assert!(nodes[0].node.get_and_clear_pending_msg_events().is_empty());
 
 
+
+	nodes[1].node.peer_connected(nodes[0].node.get_our_node_id(), &msgs::Init {
+		features: nodes[0].node.init_features(), networks: None, remote_network_address: None
+	}, false).unwrap();
+	let bs_reestablish = get_chan_reestablish_msgs!(nodes[1], nodes[0]).pop().unwrap();
+	nodes[0].node.handle_channel_reestablish(nodes[1].node.get_our_node_id(), &bs_reestablish);
+	let as_err = nodes[0].node.get_and_clear_pending_msg_events();
+	assert_eq!(as_err.len(), 2);
+	match as_err[1] {
+		MessageSendEvent::HandleError { node_id, action: msgs::ErrorAction::SendErrorMessage { ref msg } } => {
+			assert_eq!(node_id, nodes[1].node.get_our_node_id());
+			nodes[1].node.handle_error(nodes[0].node.get_our_node_id(), msg);
+			check_closed_event!(nodes[1], 1, ClosureReason::CounterpartyForceClosed { peer_msg: UntrustedString(format!("Got a message for a channel from the wrong node! No such channel for the passed counterparty_node_id {}",
+				&nodes[1].node.get_our_node_id())) }, [nodes[0].node.get_our_node_id()], 100000);
+			check_added_monitors!(nodes[1], 1);
+			assert_eq!(nodes[1].tx_broadcaster.txn_broadcasted.lock().unwrap().split_off(0).len(), 1);
+		},
+		_ => panic!("Unexpected event"),
+	}
+	check_closed_broadcast!(nodes[1], false);
+
+
+
+	// ## Archive
 
 	// create_announced_chan_between_nodes(&nodes, 0, 1);
 
-	// let txs = nodes[0].tx_broadcaster.txn_broadcast();
-
-	
-	// // Alice receives a duplicate invoice, but the payment should be transitioned to Retryable by now.
-	// nodes[0].onion_messenger.handle_onion_message(bob_id, &invoice_om);
-	// // Previously, Alice would've attempted to pay the invoice a 2nd time. In this test case, this 2nd
-	// // attempt would have resulted in a PaymentFailed event here, since the only channels between
-	// // Alice and Bob is closed. Since no 2nd attempt should be made, check that no events are
-	// // generated in response to the duplicate invoice.
-	// assert!(nodes[0].node.get_and_clear_pending_events().is_empty());
-
-	// create_announced_chan_between_nodes(&nodes, 0, 1);
-
-	// assert!(false);
 
 	// nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().extend(txs);
 
@@ -2396,5 +2412,24 @@ fn no_double_pay_with_stale_channelmanager() {
 	// expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 	
 	// println!("\n\nPerfect till here 2\n\n");
+
+	// // Close channel-1 from bob side too.
+	// nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_0, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
+	// check_added_monitors!(nodes[1], 1);
+	// check_closed_broadcast!(nodes[1], true);
+	// check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+
+	// // Close channel-2 from bob side too.
+	// nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_1, &nodes[0].node.get_our_node_id(), "".to_owned()).unwrap();
+	// check_added_monitors!(nodes[1], 1);
+	// check_closed_broadcast!(nodes[1], true);
+	// check_closed_event!(nodes[1], 1, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [nodes[0].node.get_our_node_id()], 10_000_000);
+
+	// nodes[1].node.peer_disconnected(nodes[0].node.get_our_node_id());
+	// reconnect_nodes(ReconnectArgs::new(&nodes[0], &nodes[1]));
+
+	// create_announced_chan_between_nodes(&nodes, 0, 1);
+
+	// let txs = nodes[0].tx_broadcaster.txn_broadcast();
 }
 
