@@ -495,7 +495,17 @@ impl Readable for BlindedPaymentTlvs {
 
 /// Represents the padding round off size (in bytes) that
 /// is used to pad payment bilnded path's [`BlindedHop`]
-pub(crate) const PAYMENT_PADDING_ROUND_OFF: usize = 35;
+/// when the payee tlvs comes from an [`Offer`].
+///
+/// [`Offer`]: crate::offers::offer::Offer
+pub(crate) const OFFER_PAYMENT_PADDING_ROUND_OFF: usize = 31;
+
+/// Represents the padding round off size (in bytes) that
+/// is used to pad payment bilnded path's [`BlindedHop`] when
+/// the payee tlvs comes from an [`Refund`].
+///
+/// [`Refund`]: crate::offers::refund::Refund
+pub(crate) const REFUND_PAYMENT_PADDING_ROUND_OFF: usize = 29;
 
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
@@ -507,7 +517,12 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	let tlvs = intermediate_nodes.iter().map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
 		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
-	let path = pks.zip(tlvs.map(|tlv| WithPadding { tlvs: tlv, round_off: PAYMENT_PADDING_ROUND_OFF }));
+	let round_off = match &payee_tlvs.tlvs.payment_context {
+		PaymentContext::Bolt12Offer(_) => OFFER_PAYMENT_PADDING_ROUND_OFF,
+		PaymentContext::Bolt12Refund(_) => REFUND_PAYMENT_PADDING_ROUND_OFF,
+	};
+
+	let path = pks.zip(tlvs.map(|tlv| WithPadding { tlvs: tlv, round_off }));
 
 	utils::construct_blinded_hops(secp_ctx, path, session_priv)
 }
