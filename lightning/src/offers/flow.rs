@@ -1215,6 +1215,61 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 
 		Ok(builder.into())
 	}
+
+	/// Creates an [`OfferBuilder`] to build an [`Offer`] recognized by the
+	/// [`OffersMessageFlow`] for handling [`InvoiceRequest`] messages.
+	///
+	/// # Privacy
+	///
+	/// - Constructs a [`BlindedMessagePath`] for the offer using a custom [`MessageRouter`].
+	///   Users can implement a custom [`MessageRouter`] to define properties of the
+	///   [`BlindedMessagePath`] as required or opt not to create any `BlindedMessagePath`.
+	/// - Uses a derived signing pubkey in the offer for recipient privacy.
+	///
+	/// # Limitations
+	///
+	/// - Requires a direct connection to the introduction node in the responding
+	///   [`InvoiceRequest`]'s reply path.
+	///
+	/// # Errors
+	///
+	/// - Returns an error if the parameterized [`Router`] fails to create a blinded path.
+	///
+	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	/// [`MessageRouter`]: crate::onion_message::messenger::MessageRouter
+	/// [`Offer`]: crate::offers::offer
+	/// [`Router`]: crate::routing::router::Router
+	pub fn create_offer_builder_using_router<M: MessageRouter>(
+		&$self,
+		router: M,
+	) -> Result<$builder, Bolt12SemanticError> {
+		// Extract necessary values from `self`
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		// Generate nonce and context for the offer
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
+
+		let peers = $self.commons.get_peer_for_blinded_path();
+
+		let paths = router.create_blinded_paths(node_id, context, peers, secp_ctx)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		// Initialize the OfferBuilder with the required parameters
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.commons.get_chain_hash());
+
+		for path in paths {
+			builder = builder.path(path)
+		}
+
+		// Return the constructed builder
+		Ok(builder.into())
+	}
 } }
 
 macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
