@@ -1354,6 +1354,113 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 
 		Ok(builder.into())
 	}
+
+	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
+	/// [`OffersMessageFlow`] when handling [`Bolt12Invoice`] messages for the refund.
+	///
+	/// # Payment
+	///
+	/// The provided `payment_id` is used to ensure that only one invoice is paid for the refund.
+	/// See [Avoiding Duplicate Payments] for other requirements once the payment has been sent.
+	///
+	/// The builder will have the provided expiration set. Any changes to the expiration on the
+	/// returned builder will not be honored by [`OffersMessageFlow`]. For non-`std`, the highest seen
+	/// block time minus two hours is used for the current time when determining if the refund has
+	/// expired.
+	///
+	/// To revoke the refund, use [`ChannelManager::abandon_payment`] prior to receiving the
+	/// invoice. If abandoned, or an invoice isn't received before expiration, the payment will fail
+	/// with an [`Event::PaymentFailed`].
+	///
+	/// If `max_total_routing_fee_msat` is not specified, The default from
+	/// [`RouteParameters::from_payment_params_and_value`] is applied.
+	///
+	/// # Privacy
+	///
+	/// Constructs a [`BlindedMessagePath`] for the refund using a custom [`MessageRouter`].
+	/// Users can implement a custom [`MessageRouter`] to define properties of the
+	/// [`BlindedMessagePath`] as required or opt not to create any `BlindedMessagePath`.
+	///
+	/// Also, uses a derived payer id in the refund for payer privacy.
+	///
+	/// # Limitations
+	///
+	/// Requires a direct connection to an introduction node in the responding
+	/// [`Bolt12Invoice::payment_paths`].
+	///
+	/// # Errors
+	///
+	/// Errors if:
+	/// - a duplicate `payment_id` is provided given the caveats in the aforementioned link,
+	/// - `amount_msats` is invalid, or
+	/// - the parameterized [`Router`] is unable to create a blinded path for the refund.
+	///
+	/// [`Refund`]: crate::offers::refund::Refund
+	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	/// [`Bolt12Invoice::payment_paths`]: crate::offers::invoice::Bolt12Invoice::payment_paths
+	/// [`ChannelManager::abandon_payment`]: crate::ln::channelmanager::ChannelManager::abandon_payment
+	/// [`MessageRouter`]: crate::onion_message::messenger::MessageRouter
+	/// [`RouteParameters::from_payment_params_and_value`]: crate::routing::router::RouteParameters::from_payment_params_and_value
+	/// [`Router`]: crate::routing::router::Router
+	/// [`Event::PaymentFailed`]: crate::events::Event::PaymentFailed
+	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
+	pub fn create_refund_builder_using_router<M: MessageRouter>(
+		&$self,
+		router: M,
+		amount_msats: u64,
+		absolute_expiry: Duration,
+		payment_id: PaymentId,
+		retry_strategy: Retry,
+		max_total_routing_fee_msat: Option<u64>,
+	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError> {
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = MessageContext::Offers(OffersContext::OutboundPayment {
+			payment_id,
+			nonce,
+			hmac: None,
+		});
+
+		let peers = $self.commons.get_peer_for_blinded_path();
+
+		let paths = router.create_blinded_paths(node_id, context, peers, secp_ctx)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		let mut builder = RefundBuilder::deriving_signing_pubkey(
+			node_id,
+			expanded_key,
+			nonce,
+			secp_ctx,
+			amount_msats,
+			payment_id,
+		)?
+		.chain_hash($self.commons.get_chain_hash())
+		.absolute_expiry(absolute_expiry);
+
+		for path in paths {
+			builder = builder.path(path);
+		}
+
+		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
+
+		$self
+			.commons
+			.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				retry_strategy,
+				max_total_routing_fee_msat,
+				None,
+			)
+			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
+
+		Ok(builder.into())
+	}
 } }
 
 impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> OffersMessageFlow<ES, OMC, MR, L>
