@@ -455,8 +455,9 @@ fn creates_short_lived_refund() {
 
 	let absolute_expiry = bob.offers_handler.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
+	let router = DefaultMessageRouter::compact_blinded_paths(bob.network_graph, bob.node.entropy_source);
 	let refund = bob.offers_handler
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
+		.create_refund_builder_using_router(router, 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), None)
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));

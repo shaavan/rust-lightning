@@ -1331,17 +1331,19 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
+		let context = MessageContext::Offers(OffersContext::OutboundPayment { payment_id, nonce, hmac: None });
+		let paths = $self.create_blinded_paths(context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		let builder = RefundBuilder::deriving_signing_pubkey(
+		let mut builder = RefundBuilder::deriving_signing_pubkey(
 			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
 		)?
 			.chain_hash($self.commons.get_chain_hash())
-			.absolute_expiry(absolute_expiry)
-			.path(path);
+			.absolute_expiry(absolute_expiry);
+
+		for path in paths {
+			builder = builder.path(path);
+		}
 
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 
