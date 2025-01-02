@@ -2281,7 +2281,9 @@ fn no_double_pay_with_stale_channelmanager() {
 	let alice_id = nodes[0].node.get_our_node_id();
 	let bob_id = nodes[1].node.get_our_node_id();
 
-	let amt_msat = nodes[0].node.list_usable_channels()[0].next_outbound_htlc_limit_msat + 1; // Force MPP
+	// `test_default_channel_config()` sets `htlc_minimum_msat` to 1000, causing it to be rounded up in the router.
+	// To account for this behavior, we add an extra 1000 here.
+	let amt_msat = nodes[0].node.list_usable_channels()[0].next_outbound_htlc_limit_msat + 1000; // Force MPP
 	let offer = nodes[1].node
 		.create_offer_builder(None).unwrap()
 		.clear_paths()
@@ -2320,7 +2322,7 @@ fn no_double_pay_with_stale_channelmanager() {
 	do_pass_along_path(args);
 
 	let payment_preimage = match get_event!(nodes[1], Event::PaymentClaimable) {
-		Event::PaymentClaimable { purpose, .. } => purpose.preimage(),
+		Event::PaymentClaimable { purpose, .. } => purpose.preimage().unwrap(),
 		_ => panic!("No Event::PaymentClaimable"),
 	};
 
@@ -2351,4 +2353,8 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_closed_broadcast!(nodes[1], true);
 	check_added_monitors!(nodes[1], 2);
 	check_closed_event!(nodes[1], 2, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [alice_id, alice_id], 10_000_000);
+
+	nodes[1].node.claim_funds(payment_preimage);
+	expect_payment_claimed!(nodes[1], payment_hash, amt_msat);
+	check_added_monitors!(nodes[1], 2);
 }
