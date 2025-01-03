@@ -1229,7 +1229,11 @@ impl_writeable_tlv_based!(PaymentClaimDetails, {
 });
 
 #[derive(Clone)]
+#[cfg(not(any(test, feature = "_test_utils")))]
 pub(crate) struct PendingMPPClaimPointer(Arc<Mutex<PendingMPPClaim>>);
+#[derive(Clone)]
+#[cfg(any(test, feature = "_test_utils"))]
+pub struct PendingMPPClaimPointer(Arc<Mutex<PendingMPPClaim>>);
 
 impl PartialEq for PendingMPPClaimPointer {
 	fn eq(&self, o: &Self) -> bool { Arc::ptr_eq(&self.0, &o.0) }
@@ -1243,9 +1247,36 @@ impl core::fmt::Debug for PendingMPPClaimPointer {
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg(not(any(test, feature = "_test_utils")))]
 /// If something is blocked on the completion of an RAA-generated [`ChannelMonitorUpdate`] we track
 /// the blocked action here. See enum variants for more info.
 pub(crate) enum RAAMonitorUpdateBlockingAction {
+	/// A forwarded payment was claimed. We block the downstream channel completing its monitor
+	/// update which removes the HTLC preimage until the upstream channel has gotten the preimage
+	/// durably to disk.
+	ForwardedPaymentInboundClaim {
+		/// The upstream channel ID (i.e. the inbound edge).
+		channel_id: ChannelId,
+		/// The HTLC ID on the inbound edge.
+		htlc_id: u64,
+	},
+	/// We claimed an MPP payment across multiple channels. We have to block removing the payment
+	/// preimage from any monitor until the last monitor is updated to contain the payment
+	/// preimage. Otherwise we may not be able to replay the preimage on the monitor(s) that
+	/// weren't updated on startup.
+	///
+	/// This variant is *not* written to disk, instead being inferred from [`ChannelMonitor`]
+	/// state.
+	ClaimedMPPPayment {
+		pending_claim: PendingMPPClaimPointer,
+	}
+}
+
+#[derive(Clone, PartialEq, Eq, Debug)]
+#[cfg(any(test, feature = "_test_utils"))]
+/// If something is blocked on the completion of an RAA-generated [`ChannelMonitorUpdate`] we track
+/// the blocked action here. See enum variants for more info.
+pub enum RAAMonitorUpdateBlockingAction {
 	/// A forwarded payment was claimed. We block the downstream channel completing its monitor
 	/// update which removes the HTLC preimage until the upstream channel has gotten the preimage
 	/// durably to disk.
@@ -10598,6 +10629,29 @@ where
 	#[cfg(test)]
 	pub fn clear_pending_payments(&self) {
 		self.pending_outbound_payments.clear_pending_payments()
+	}
+
+	#[cfg(any(test, feature = "_test_utils"))]
+	pub fn get_and_clear_pending_raa_blockers(
+		&self,
+	) -> Vec<(ChannelId, Vec<RAAMonitorUpdateBlockingAction>)> {
+		let per_peer_state = self.per_peer_state.read().unwrap();
+		let mut pending_blockers = Vec::new();
+
+		for (_peer_pubkey, peer_state_mutex) in per_peer_state.iter() {
+			let mut peer_state = peer_state_mutex.lock().unwrap();
+
+			for (chan_id, actions) in peer_state.actions_blocking_raa_monitor_updates.iter() {
+				// Only collect the non-empty actions into `pending_blockers`.
+				if !actions.is_empty() {
+					pending_blockers.push((chan_id.clone(), actions.clone()));
+				}
+			}
+
+			peer_state.actions_blocking_raa_monitor_updates.clear();
+		}
+
+		pending_blockers
 	}
 
 	/// When something which was blocking a channel from updating its [`ChannelMonitor`] (e.g. an
