@@ -676,7 +676,6 @@ where
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		Self::create_compact_blinded_paths(&self.network_graph, recipient, context, peers, &self.entropy_source, secp_ctx)
 	}
-
 }
 
 /// A path for sending an [`OnionMessage`].
