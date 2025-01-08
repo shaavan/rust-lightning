@@ -678,6 +678,31 @@ where
 	}
 }
 
+pub struct NullMessageRouter {}
+
+impl MessageRouter for NullMessageRouter {
+	fn find_path(
+		&self, _sender: PublicKey, _peers: Vec<PublicKey>, _destination: Destination
+	) -> Result<OnionMessagePath, ()> {
+		Err(())
+	}
+	fn create_blinded_paths<
+		T: secp256k1::Signing + secp256k1::Verification
+	>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		Ok(Vec::new())
+	}
+
+	fn create_compact_blinded_paths<
+		T: secp256k1::Signing + secp256k1::Verification
+	>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<MessageForwardNode>, _secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		Ok(Vec::new())
+	}
+}
+
 /// A path for sending an [`OnionMessage`].
 #[derive(Clone)]
 pub struct OnionMessagePath {
