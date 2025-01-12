@@ -2358,7 +2358,11 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_added_monitors!(nodes[1], 2);
 	check_closed_event!(nodes[1], 2, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [alice_id, alice_id], 10_000_000);
 
-	connect_peers(&nodes[0], &nodes[1]);
+	reconnect_nodes(ReconnectArgs::new(&nodes[0], &nodes[1]));
+
+	let node_txn_0 = nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().split_off(0);
+	create_chan_between_nodes(&nodes[0], &nodes[1]);
+	nodes[0].tx_broadcaster.txn_broadcasted.lock().unwrap().extend(node_txn_0);
 
 	nodes[1].node.claim_funds(payment_preimage);
 	expect_payment_claimed!(nodes[1], payment_hash, amt_msat);
