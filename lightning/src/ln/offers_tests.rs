@@ -2293,7 +2293,7 @@ fn no_double_pay_with_stale_channelmanager() {
 	assert!(offer.paths().is_empty());
 
 	let payment_id = PaymentId([1; 32]);
-	nodes[0].node.pay_for_offer(&offer, None, None, None, payment_id, Retry::Attempts(0), None).unwrap();
+	nodes[0].node.pay_for_offer(&offer, None, None, None, payment_id, Retry::Attempts(1), None).unwrap();
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	let invreq_om = nodes[0].onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
@@ -2350,12 +2350,15 @@ fn no_double_pay_with_stale_channelmanager() {
 
 	// First close the channel between bob and alice, from bob's side
 	let error_message = "Channel force-closed";
+	nodes[1].node.peer_disconnected(nodes[0].node.get_our_node_id());
 	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_0, &alice_id, error_message.to_string()).unwrap();
 	check_closed_broadcast!(nodes[1], true);
 	nodes[1].node.force_close_broadcasting_latest_txn(&chan_id_1, &alice_id, error_message.to_string()).unwrap();
 	check_closed_broadcast!(nodes[1], true);
 	check_added_monitors!(nodes[1], 2);
 	check_closed_event!(nodes[1], 2, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [alice_id, alice_id], 10_000_000);
+
+	connect_peers(&nodes[0], &nodes[1]);
 
 	nodes[1].node.claim_funds(payment_preimage);
 	expect_payment_claimed!(nodes[1], payment_hash, amt_msat);
