@@ -11061,6 +11061,7 @@ where
 								}
 								if let Some(announcement_sigs) = announcement_sigs {
 									log_trace!(logger, "Sending announcement_signatures for channel {}", channel.context.channel_id());
+									// This event is not triggering (when it should) for new channel creation after alice reloads.
 									pending_msg_events.push(events::MessageSendEvent::SendAnnouncementSignatures {
 										node_id: channel.context.get_counterparty_node_id(),
 										msg: announcement_sigs,

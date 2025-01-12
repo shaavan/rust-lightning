@@ -1423,6 +1423,9 @@ pub fn create_chan_between_nodes_with_value_confirm_first<'a, 'b, 'c, 'd>(node_r
 pub fn create_chan_between_nodes_with_value_confirm_second<'a, 'b, 'c>(node_recv: &Node<'a, 'b, 'c>, node_conf: &Node<'a, 'b, 'c>) -> ((msgs::ChannelReady, msgs::AnnouncementSignatures), ChannelId) {
 	let channel_id;
 	let events_6 = node_conf.node.get_and_clear_pending_msg_events();
+
+	// Receiving two instead of three events here.
+	// For some reason: Alice is not generating `SendAnnouncementSignatures` msg_event at this point after reload.
 	assert_eq!(events_6.len(), 3);
 	let announcement_sigs_idx = if let MessageSendEvent::SendChannelUpdate { ref node_id, msg: _ } = events_6[1] {
 		assert_eq!(*node_id, node_recv.node.get_our_node_id());
