@@ -55,9 +55,9 @@ impl Readable for BlindedMessagePath {
 impl BlindedMessagePath {
 	/// Create a one-hop blinded path for a message.
 	pub fn one_hop<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
-		recipient_node_id: PublicKey, context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>
+		recipient_node_id: PublicKey, recipient_tlvs: ReceiveTlvs, entropy_source: ES, secp_ctx: &Secp256k1<T>
 	) -> Result<Self, ()> where ES::Target: EntropySource {
-		Self::new(&[], recipient_node_id, context, entropy_source, secp_ctx)
+		Self::new(&[], recipient_node_id, recipient_tlvs, entropy_source, secp_ctx)
 	}
 
 	/// Create a path for an onion message, to be forwarded along `node_pks`. The last node
@@ -67,7 +67,7 @@ impl BlindedMessagePath {
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[MessageForwardNode], recipient_node_id: PublicKey,
-		context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>,
+		recipient_tlvs: ReceiveTlvs, entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()> where ES::Target: EntropySource {
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(recipient_node_id, |n| n.node_id)
@@ -80,7 +80,7 @@ impl BlindedMessagePath {
 			blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
 			blinded_hops: blinded_hops(
 				secp_ctx, intermediate_nodes, recipient_node_id,
-				context, &blinding_secret,
+				recipient_tlvs, &blinding_secret,
 			).map_err(|_| ())?,
 		}))
 	}
@@ -237,7 +237,8 @@ pub(crate) struct ForwardTlvs {
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
-pub(crate) struct ReceiveTlvs {
+#[derive(Clone)]
+pub struct ReceiveTlvs {
 	/// If `context` is `Some`, it is used to identify the blinded path that this onion message is
 	/// sending to. This is useful for receivers to check that said blinded path is being used in
 	/// the right context.
@@ -456,7 +457,7 @@ impl_writeable_tlv_based!(DNSResolverContext, {
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[MessageForwardNode],
-	recipient_node_id: PublicKey, context: MessageContext, session_priv: &SecretKey,
+	recipient_node_id: PublicKey, recipient_tlvs: ReceiveTlvs, session_priv: &SecretKey,
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes.iter().map(|node| node.node_id)
 		.chain(core::iter::once(recipient_node_id));
@@ -468,7 +469,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 			None => NextMessageHop::NodeId(pubkey),
 		})
 		.map(|next_hop| ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None }))
-		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs{ context: Some(context) })));
+		.chain(core::iter::once(ControlTlvs::Receive(recipient_tlvs)));
 
 	let path = pks.zip(tlvs);
 
