@@ -7,7 +7,7 @@
 // You may not use this file except in accordance with one or both of these
 // licenses.
 
-use crate::blinded_path::message::{MessageContext, OffersContext};
+use crate::blinded_path::message::{MessageContext, OffersContext, ReceiveTlvs};
 use crate::events::{Event, HTLCDestination, MessageSendEventsProvider, PaymentFailureReason};
 use crate::ln::blinded_payment_tests::{blinded_payment_path, get_blinded_route_parameters};
 use crate::ln::channelmanager;
@@ -282,11 +282,17 @@ fn static_invoice_unknown_required_features() {
 	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0);
 	create_unannounced_chan_between_nodes_with_value(&nodes, 1, 2, 1_000_000, 0);
 
+	let recipient_tlvs = ReceiveTlvs {
+		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
+			nonce: Nonce([42; 16]),
+		})),
+	};
+
 	let blinded_paths_to_always_online_node = nodes[1]
 		.message_router
 		.create_blinded_paths(
 			nodes[1].node.get_our_node_id(),
-			MessageContext::Offers(OffersContext::InvoiceRequest { nonce: Nonce([42; 16]) }),
+			recipient_tlvs,
 			Vec::new(),
 			&secp_ctx,
 		)
@@ -361,12 +367,18 @@ fn ignore_unexpected_static_invoice() {
 	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0);
 	create_unannounced_chan_between_nodes_with_value(&nodes, 1, 2, 1_000_000, 0);
 
+	let recipient_tlvs = ReceiveTlvs {
+		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
+			nonce: Nonce([42; 16]),
+		})),
+	};
+
 	// Initiate payment to the sender's intended offer.
 	let blinded_paths_to_always_online_node = nodes[1]
 		.message_router
 		.create_blinded_paths(
 			nodes[1].node.get_our_node_id(),
-			MessageContext::Offers(OffersContext::InvoiceRequest { nonce: Nonce([42; 16]) }),
+			recipient_tlvs,
 			Vec::new(),
 			&secp_ctx,
 		)
@@ -499,11 +511,17 @@ fn pays_static_invoice() {
 	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0);
 	create_unannounced_chan_between_nodes_with_value(&nodes, 1, 2, 1_000_000, 0);
 
+	let recipient_tlvs = ReceiveTlvs {
+		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
+			nonce: Nonce([42; 16]),
+		})),
+	};
+
 	let blinded_paths_to_always_online_node = nodes[1]
 		.message_router
 		.create_blinded_paths(
 			nodes[1].node.get_our_node_id(),
-			MessageContext::Offers(OffersContext::InvoiceRequest { nonce: Nonce([42; 16]) }),
+			recipient_tlvs,
 			Vec::new(),
 			&secp_ctx,
 		)
