@@ -331,7 +331,8 @@ mod test {
 		let (msg, context) =
 			payer.resolver.resolve_name(payment_id, name.clone(), &*payer_keys).unwrap();
 		let recipient_tlvs = message::ReceiveTlvs {
-			context: Some(MessageContext::DNSResolver(context))
+			context: Some(MessageContext::DNSResolver(context)),
+			custom_data: None,
 		};
 		let reply_path =
 			BlindedMessagePath::one_hop(payer_id, recipient_tlvs, &*payer_keys, &secp_ctx).unwrap();

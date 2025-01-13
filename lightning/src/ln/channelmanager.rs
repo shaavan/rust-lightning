@@ -10423,7 +10423,8 @@ where
 			.collect::<Vec<_>>();
 
 		let recipient_tlvs = ReceiveTlvs {
-			context: Some(context)
+			context: Some(context),
+			custom_data: None,
 		};
 
 		self.message_router
@@ -10455,7 +10456,8 @@ where
 			.collect::<Vec<_>>();
 
 		let recipient_tlvs = ReceiveTlvs {
-			context: Some(MessageContext::Offers(context))
+			context: Some(MessageContext::Offers(context)),
+			custom_data: None,
 		};
 
 		self.message_router
@@ -11948,7 +11950,8 @@ where
 	L::Target: Logger,
 {
 	fn handle_message(
-		&self, message: OffersMessage, context: Option<OffersContext>, responder: Option<Responder>,
+		// todo: Allow user to analyse `custom_data`.
+		&self, message: OffersMessage, context: Option<OffersContext>, _custom_data: Option<Vec<u8>>, responder: Option<Responder>,
 	) -> Option<(OffersMessage, ResponseInstruction)> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
