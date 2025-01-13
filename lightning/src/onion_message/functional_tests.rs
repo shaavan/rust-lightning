@@ -80,7 +80,7 @@ struct TestOffersMessageHandler {}
 
 impl OffersMessageHandler for TestOffersMessageHandler {
 	fn handle_message(
-		&self, _message: OffersMessage, _context: Option<OffersContext>,
+		&self, _message: OffersMessage, _context: Option<OffersContext>, _custom_data: Option<Vec<u8>>,
 		_responder: Option<Responder>,
 	) -> Option<(OffersMessage, ResponseInstruction)> {
 		None
@@ -408,6 +408,7 @@ fn one_blinded_hop() {
 	let secp_ctx = Secp256k1::new();
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[1].entropy_source;
 
@@ -430,6 +431,7 @@ fn two_unblinded_two_blinded() {
 		[MessageForwardNode { node_id: nodes[3].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[4].entropy_source;
 	let blinded_path =
@@ -458,6 +460,7 @@ fn three_blinded_hops() {
 	];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[3].entropy_source;
 	let blinded_path =
@@ -487,6 +490,7 @@ fn async_response_over_one_blinded_hop() {
 	let secp_ctx = Secp256k1::new();
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[1].entropy_source;
 	let reply_path =
@@ -529,6 +533,7 @@ fn async_response_with_reply_path_succeeds() {
 	let message = TestCustomMessage::Ping;
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let reply_path =
 		BlindedMessagePath::new(&[], bob.node_id, recipient_tlvs, &*bob.entropy_source, &secp_ctx)
@@ -572,6 +577,7 @@ fn async_response_with_reply_path_fails() {
 	let message = TestCustomMessage::Ping;
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let reply_path =
 		BlindedMessagePath::new(&[], bob.node_id, recipient_tlvs, &*bob.entropy_source, &secp_ctx)
@@ -623,6 +629,7 @@ fn we_are_intro_node() {
 	];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[2].entropy_source;
 	let blinded_path =
@@ -640,6 +647,7 @@ fn we_are_intro_node() {
 		[MessageForwardNode { node_id: nodes[0].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[1].entropy_source;
 	let blinded_path =
@@ -665,6 +673,7 @@ fn invalid_blinded_path_error() {
 		[MessageForwardNode { node_id: nodes[1].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[2].entropy_source;
 	let mut blinded_path =
@@ -696,6 +705,7 @@ fn reply_path() {
 	];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[0].entropy_source;
 	let reply_path =
@@ -719,6 +729,7 @@ fn reply_path() {
 	];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[3].entropy_source;
 	let blinded_path =
@@ -731,6 +742,7 @@ fn reply_path() {
 	];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[0].entropy_source;
 	let reply_path =
@@ -831,6 +843,7 @@ fn requests_peer_connection_for_buffered_messages() {
 		[MessageForwardNode { node_id: nodes[1].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[0].entropy_source;
 	let blinded_path =
@@ -875,6 +888,7 @@ fn drops_buffered_messages_waiting_for_peer_connection() {
 		[MessageForwardNode { node_id: nodes[1].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[0].entropy_source;
 	let blinded_path =
@@ -935,6 +949,7 @@ fn intercept_offline_peer_oms() {
 		[MessageForwardNode { node_id: nodes[1].node_id, short_channel_id: None }];
 	let recipient_tlvs = ReceiveTlvs {
 		context: Some(MessageContext::Custom(Vec::new())),
+		custom_data: None,
 	};
 	let entropy = &*nodes[2].entropy_source;
 	let blinded_path =
