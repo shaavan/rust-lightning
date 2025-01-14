@@ -147,6 +147,7 @@ struct TestCustomMessageHandler {
 struct OnHandleCustomMessage {
 	expect: TestCustomMessage,
 	include_reply_path: bool,
+	custom_data: Option<Vec<u8>>,
 }
 
 impl TestCustomMessageHandler {
@@ -159,6 +160,7 @@ impl TestCustomMessageHandler {
 			OnHandleCustomMessage {
 				expect: message,
 				include_reply_path: false,
+				custom_data: None,
 			}
 		);
 	}
@@ -168,6 +170,17 @@ impl TestCustomMessageHandler {
 			OnHandleCustomMessage {
 				expect: message,
 				include_reply_path: true,
+				custom_data: None
+			}
+		);
+	}
+
+	fn expect_message_with_custom_data(&self, message: TestCustomMessage, custom_data: Vec<u8>) {
+		self.expectations.lock().unwrap().push_back(
+			OnHandleCustomMessage {
+				expect: message,
+				include_reply_path: false,
+				custom_data: Some(custom_data),
 			}
 		);
 	}
@@ -191,6 +204,7 @@ impl CustomOnionMessageHandler for TestCustomMessageHandler {
 	fn handle_custom_message(&self, msg: Self::CustomMessage, context: Option<Vec<u8>>, custom_data: Option<Vec<u8>>, responder: Option<Responder>) -> Option<(Self::CustomMessage, ResponseInstruction)> {
 		let expectation = self.get_next_expectation();
 		assert_eq!(msg, expectation.expect);
+		assert_eq!(custom_data, expectation.custom_data);
 
 		let response = match msg {
 			TestCustomMessage::Ping => TestCustomMessage::Pong,
