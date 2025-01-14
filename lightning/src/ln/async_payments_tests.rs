@@ -286,6 +286,7 @@ fn static_invoice_unknown_required_features() {
 		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
 			nonce: Nonce([42; 16]),
 		})),
+		custom_data: None,
 	};
 
 	let blinded_paths_to_always_online_node = nodes[1]
@@ -371,6 +372,7 @@ fn ignore_unexpected_static_invoice() {
 		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
 			nonce: Nonce([42; 16]),
 		})),
+		custom_data: None,
 	};
 
 	// Initiate payment to the sender's intended offer.
@@ -515,6 +517,7 @@ fn pays_static_invoice() {
 		context: Some(MessageContext::Offers(OffersContext::InvoiceRequest {
 			nonce: Nonce([42; 16]),
 		})),
+		custom_data: None,
 	};
 
 	let blinded_paths_to_always_online_node = nodes[1]
