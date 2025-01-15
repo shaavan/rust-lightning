@@ -1670,7 +1670,7 @@ where
 							},
 							None => return,
 						};
-						self.async_payments_handler.handle_release_held_htlc(msg, context);
+						self.async_payments_handler.handle_release_held_htlc(msg, context, custom_data);
 					},
 					ParsedOnionMessageContents::DNSResolver(DNSResolverMessage::DNSSECQuery(msg)) => {
 						let response_instructions = self.dns_resolver_handler.handle_dnssec_query(msg, responder);

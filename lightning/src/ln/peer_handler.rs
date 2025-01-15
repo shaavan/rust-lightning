@@ -153,7 +153,7 @@ impl AsyncPaymentsMessageHandler for IgnoringMessageHandler {
 	) -> Option<(ReleaseHeldHtlc, ResponseInstruction)> {
 		None
 	}
-	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext) {}
+	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext, _custom_data: Option<Vec<u8>>) {}
 }
 impl DNSResolverMessageHandler for IgnoringMessageHandler {
 	fn handle_dnssec_query(

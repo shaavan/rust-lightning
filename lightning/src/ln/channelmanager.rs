@@ -12259,8 +12259,9 @@ where
 		None
 	}
 
-	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext) {
+	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext, _custom_data: Option<Vec<u8>>) {
 		#[cfg(async_payments)] {
+			// todo: Introduce ability to analyse `custom_data`
 			let (payment_id, nonce, hmac) = match _context {
 				AsyncPaymentsContext::OutboundPayment { payment_id, hmac, nonce } => {
 					(payment_id, nonce, hmac)
