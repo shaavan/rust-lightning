@@ -195,6 +195,12 @@ pub enum PendingHTLCRouting {
 		/// [`Event::PaymentClaimable::onion_fields`] as
 		/// [`RecipientOnionFields::sender_custom_tlvs`].
 		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
+		/// Custom TLVs set by the receiver in the blinded path used to reach them.
+		///
+		/// For HTLCs received by LDK, this will be exposed in
+		/// [`Event::PaymentClaimable::onion_fields`] as
+		/// [`RecipientOnionFields::user_custom_data`].
+		user_custom_data: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
 	},
@@ -225,6 +231,11 @@ pub enum PendingHTLCRouting {
 		/// For HTLCs received by LDK, these will ultimately bubble back up as
 		/// [`RecipientOnionFields::sender_custom_tlvs`].
 		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
+		/// Custom TLVs set by the receiver in the blinded path used to reach them.
+		///
+		/// For HTLCs received by LDK, these will ultimately bubble back up as
+		/// [`RecipientOnionFields::user_custom_data`].
+		user_custom_data: Vec<u8>,
 		/// Set if this HTLC is the final hop in a multi-hop blinded path.
 		requires_blinded_error: bool,
 		/// Set if we are receiving a keysend to a blinded path, meaning we created the
@@ -6052,24 +6063,25 @@ where
 									PendingHTLCRouting::Receive {
 										payment_data, payment_metadata, payment_context,
 										incoming_cltv_expiry, phantom_shared_secret, sender_custom_tlvs,
-										requires_blinded_error: _
+										user_custom_data, requires_blinded_error: _
 									} => {
 										let _legacy_hop_data = Some(payment_data.clone());
 										let onion_fields = RecipientOnionFields { payment_secret: Some(payment_data.payment_secret),
-												payment_metadata, sender_custom_tlvs };
+												payment_metadata, sender_custom_tlvs, user_custom_data };
 										(incoming_cltv_expiry, OnionPayload::Invoice { _legacy_hop_data },
 											Some(payment_data), payment_context, phantom_shared_secret, onion_fields,
 											true)
 									},
 									PendingHTLCRouting::ReceiveKeysend {
 										payment_data, payment_preimage, payment_metadata,
-										incoming_cltv_expiry, sender_custom_tlvs, requires_blinded_error: _,
-										has_recipient_created_payment_secret,
+										incoming_cltv_expiry, sender_custom_tlvs, user_custom_data,
+										requires_blinded_error: _, has_recipient_created_payment_secret,
 									} => {
 										let onion_fields = RecipientOnionFields {
 											payment_secret: payment_data.as_ref().map(|data| data.payment_secret),
 											payment_metadata,
 											sender_custom_tlvs,
+											user_custom_data
 										};
 										(incoming_cltv_expiry, OnionPayload::Spontaneous(payment_preimage),
 											payment_data, None, None, onion_fields, has_recipient_created_payment_secret)
@@ -12392,6 +12404,7 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(5, sender_custom_tlvs, optional_vec),
 		(7, requires_blinded_error, (default_value, false)),
 		(9, payment_context, option),
+		(11, user_custom_data, optional_vec),
 	},
 	(2, ReceiveKeysend) => {
 		(0, payment_preimage, required),
@@ -12401,6 +12414,7 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(4, payment_data, option), // Added in 0.0.116
 		(5, sender_custom_tlvs, optional_vec),
 		(7, has_recipient_created_payment_secret, (default_value, false)),
+		(9, user_custom_data, optional_vec),
 	},
 );
 
@@ -15365,7 +15379,7 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: sender_intended_amt_msat,
 			}),
-			sender_custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(), 
 		};
 		// Check that if the amount we received + the penultimate hop extra fee is less than the sender
 		// intended amount, we fail the payment.
@@ -15387,7 +15401,7 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: sender_intended_amt_msat,
 			}),
-			sender_custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(), 
 		};
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		assert!(create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
@@ -15411,7 +15425,7 @@ mod tests {
 			payment_data: Some(msgs::FinalOnionHopData {
 				payment_secret: PaymentSecret([0; 32]), total_msat: 100,
 			}),
-			sender_custom_tlvs: Vec::new(),
+			sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(), 
 		}, [0; 32], PaymentHash([0; 32]), 100, 23, None, true, None, current_height);
 
 		// Should not return an error as this condition:
