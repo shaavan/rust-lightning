@@ -100,7 +100,7 @@ impl DNSResolverMessageHandler for TestDNSResolverMessageHandler {
 	) -> Option<(DNSResolverMessage, ResponseInstruction)> {
 		None
 	}
-	fn handle_dnssec_proof(&self, _message: DNSSECProof, _context: DNSResolverContext) {}
+	fn handle_dnssec_proof(&self, _message: DNSSECProof, _context: DNSResolverContext, custom_data: Option<Vec<u8>>) {}
 }
 
 #[derive(Clone, Debug, PartialEq)]
