@@ -12202,8 +12202,9 @@ where
 		None
 	}
 
-	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext) {
+	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext, _custom_data: Option<Vec<u8>>) {
 		#[cfg(async_payments)] {
+			// todo: Introduce ability to analyse `custom_data`
 			let AsyncPaymentsContext::OutboundPayment { payment_id, hmac, nonce } = _context;
 			if payment_id.verify_for_async_payment(hmac, nonce, &self.inbound_payment_key).is_err() { return }
 			if let Err(e) = self.send_payment_for_static_invoice(payment_id) {
