@@ -240,6 +240,7 @@ for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, DRH, CMH> where
 /// ];
 /// let recipient_tlvs = ReceiveTlvs {
 /// 	context: Some(MessageContext::Custom(Vec::new())),
+/// 	custom_data: None,
 /// };
 /// let blinded_path = BlindedMessagePath::new(&hops, your_node_id, recipient_tlvs, &keys_manager, &secp_ctx).unwrap();
 ///
