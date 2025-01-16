@@ -347,7 +347,7 @@ impl Readable for ControlTlvs {
 			(4, next_node_id, option),
 			(8, next_blinding_override, option),
 			(65537, context, option),
-			(65539, custom_data, option)
+			(65541, custom_data, option)
 		});
 		let _padding: Option<Padding> = _padding;
 

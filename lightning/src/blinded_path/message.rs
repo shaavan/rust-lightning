@@ -281,7 +281,7 @@ impl Writeable for ReceiveTlvs {
 		// TODO: write padding
 		encode_tlv_stream!(writer, {
 			(65537, self.context, option),
-			(65539, self.custom_data, option)
+			(65541, self.custom_data, option)
 		});
 		Ok(())
 	}

@@ -3834,8 +3834,8 @@ fn test_sender_custom_tlvs_consistency() {
 	let even_type_1 = 1 << 16;
 	let odd_type_1	= (1 << 16)+ 1;
 	let even_type_2 = (1 << 16) + 2;
-	// (1<<16) + 3 is reserved for user_custom_data.
-	let odd_type_2	= (1 << 16) + 5;
+	let odd_type_2	= (1 << 16) + 3;
+	// (1<<16) + 5 is reserved for user_custom_data.
 	let value_1 = || vec![1, 2, 3, 4];
 	let differing_value_1 = || vec![1, 2, 3, 5];
 	let value_2 = || vec![42u8; 16];
