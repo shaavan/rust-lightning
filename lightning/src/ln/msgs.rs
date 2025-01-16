@@ -2750,7 +2750,7 @@ impl<'a> Writeable for OutboundOnionPayload<'a> {
 				// We need to update [`ln::outbound_payment::RecipientOnionFields::with_sender_custom_tlvs`]
 				// to reject any reserved types in the experimental range if new ones are ever
 				// standardized.
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
+				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65541, user_custom_data.to_vec()));
 				let keysend_tlv = keysend_preimage.map(|preimage| (5482373484, preimage.encode()));
 				let mut custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter().chain(keysend_tlv.iter()).chain(user_custom_data.iter()).collect();
 				custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
@@ -2774,7 +2774,7 @@ impl<'a> Writeable for OutboundOnionPayload<'a> {
 				// We need to update [`ln::outbound_payment::RecipientOnionFields::with_sender_custom_tlvs`]
 				// to reject any reserved types in the experimental range if new ones are ever
 				// standardized.
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
+				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65541, user_custom_data.to_vec()));
 				let invoice_request_tlv = invoice_request.map(|invreq| (77_777, invreq.encode())); // TODO: update TLV type once the async payments spec is merged
 				let keysend_tlv = keysend_preimage.map(|preimage| (5482373484, preimage.encode()));
 				let mut custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter()
@@ -2832,7 +2832,7 @@ impl<'a> Writeable for OutboundTrampolinePayload<'a> {
 				});
 			},
 			Self::BlindedReceive { sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, encrypted_tlvs, intro_node_blinding_point, keysend_preimage, sender_custom_tlvs, user_custom_data} => {
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
+				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65541, user_custom_data.to_vec()));
 				let custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter()
 					.chain(user_custom_data.iter())
 					.collect();
@@ -2889,7 +2889,7 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 
 		let (user_custom_data, sender_custom_tlvs): (Vec<(u64, Vec<u8>)>, Vec<(u64, Vec<u8>)>) = custom_tlvs
 			.into_iter()
-			.partition(|(tlv_type, _)| *tlv_type == 65539);
+			.partition(|(tlv_type, _)| *tlv_type == 65541);
 
 		let user_custom_data = user_custom_data.into_iter().next().map(|(_, data)| data).unwrap_or_else(Vec::new);
 
@@ -2926,6 +2926,7 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 						next_blinding_override,
 					})
 				},
+				// Note: The custom data in the receive tlvs is not used here.
 				ChaChaPolyReadAdapter { readable: BlindedPaymentTlvs::Receive(receive_tlvs) } => {
 					let ReceiveTlvs { tlvs, authentication: (hmac, nonce) } = receive_tlvs;
 					let expanded_key = node_signer.get_inbound_payment_key();
@@ -2934,8 +2935,9 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 					}
 
 					let UnauthenticatedReceiveTlvs {
-						payment_secret, payment_constraints, payment_context,
+						payment_secret, payment_constraints, payment_context, custom_data
 					} = tlvs;
+					debug_assert_eq!(custom_data, user_custom_data, "The custom TLVs in ReceiveTlvs must match the ones read from serialization.");
 					if total_msat.unwrap_or(0) > MAX_VALUE_MSAT { return Err(DecodeError::InvalidValue) }
 					Ok(Self::BlindedReceive {
 						sender_intended_htlc_amt_msat: amt.ok_or(DecodeError::InvalidValue)?,
