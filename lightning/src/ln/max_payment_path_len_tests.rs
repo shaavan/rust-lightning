@@ -165,6 +165,7 @@ fn one_hop_blinded_path_with_custom_tlv() {
 			htlc_minimum_msat: chan_upd_1_2.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::unknown(),
+			custom_data: Vec::new(),
 	};
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
