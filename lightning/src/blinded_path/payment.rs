@@ -495,7 +495,7 @@ impl Readable for BlindedPaymentTlvs {
 
 /// Represents the padding round off size (in bytes) that
 /// is used to pad payment bilnded path's [`BlindedHop`]
-pub(crate) const PAYMENT_PADDING_ROUND_OFF: usize = 35;
+pub(crate) const PAYMENT_PADDING_ROUND_OFF: usize = 30;
 
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
