@@ -13,7 +13,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::message::{BlindedMessagePath, ForwardTlvs, NextMessageHop, ReceiveTlvs};
-use crate::blinded_path::utils::Padding;
+use crate::blinded_path::utils::BlindedPathPadding;
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 #[cfg(async_payments)]
@@ -348,7 +348,7 @@ impl Readable for ControlTlvs {
 			(8, next_blinding_override, option),
 			(65537, context, option),
 		});
-		let _padding: Option<Padding> = _padding;
+		let _padding: Option<BlindedPathPadding> = _padding;
 
 		let next_hop = match (short_channel_id, next_node_id) {
 			(Some(_), Some(_)) => return Err(DecodeError::InvalidValue),
