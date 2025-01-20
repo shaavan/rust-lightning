@@ -13,7 +13,6 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::secp256k1::ecdh::SharedSecret;
 
 use crate::blinded_path::message::{BlindedMessagePath, ForwardTlvs, NextMessageHop, ReceiveTlvs};
-use crate::blinded_path::utils::BlindedPathPadding;
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 #[cfg(async_payments)]
@@ -342,13 +341,13 @@ pub(crate) enum ControlTlvs {
 impl Readable for ControlTlvs {
 	fn read<R: Read>(r: &mut R) -> Result<Self, DecodeError> {
 		_init_and_read_tlv_stream!(r, {
-			(1, _padding, option),
+			// Padding is not used, so it is not read here.
+			// (1, _padding, option),
 			(2, short_channel_id, option),
 			(4, next_node_id, option),
 			(8, next_blinding_override, option),
 			(65537, context, option),
 		});
-		let _padding: Option<BlindedPathPadding> = _padding;
 
 		let next_hop = match (short_channel_id, next_node_id) {
 			(Some(_), Some(_)) => return Err(DecodeError::InvalidValue),
