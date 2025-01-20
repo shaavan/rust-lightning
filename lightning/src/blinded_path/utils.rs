@@ -201,6 +201,11 @@ impl Writeable for BlindedPathPadding {
 	}
 }
 
+/// The constant size added to unencrypted TLV length,
+/// due to the addition of Padding Type (2 bytes) and
+/// encryption data (16 bytes).
+const TLV_OVERHEAD: usize = 18;
+
 /// A generic struct that applies padding to blinded path TLVs, rounding their size off to `round_off`
 pub(crate) struct BlindedPathWithPadding<T: Writeable> {
 	pub(crate) tlvs: T,
@@ -209,10 +214,13 @@ pub(crate) struct BlindedPathWithPadding<T: Writeable> {
 
 impl<T:Writeable> Writeable for BlindedPathWithPadding<T> {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
-		let length = self.tlvs.serialized_length();
-		let padding_length = (length + self.round_off - 1) / self.round_off * self.round_off - length;
+		let tlv_length = self.tlvs.serialized_length();
+		let total_length = tlv_length + TLV_OVERHEAD;
 
-		let padding = Some(BlindedPathPadding::new(padding_length));
+		let padding_length = (total_length + self.round_off - 1) / self.round_off * self.round_off
+							- total_length;
+
+		let padding = BlindedPathPadding::new(padding_length).into();
 
 		encode_tlv_stream!(writer, {
 			(1, padding, option),
