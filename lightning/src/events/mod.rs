@@ -1769,6 +1769,8 @@ impl Writeable for Event {
 					(0, peer_node_id, required),
 				});
 			},
+			// Note: The type number `41u8` was previously used for `Event::InvoiceReceived`, which has now been removed.
+			// To prevent serialization issues, please avoid reusing `41u8` for any new events.
 			&Event::FundingTxBroadcastSafe { ref channel_id, ref user_channel_id, ref funding_txo, ref counterparty_node_id, ref former_temporary_channel_id} => {
 				43u8.write(writer)?;
 				write_tlv_fields!(writer, {
@@ -2250,6 +2252,8 @@ impl MaybeReadable for Event {
 				};
 				f()
 			},
+			// Note: The type number `41u8` was previously used for `Event::InvoiceReceived`, which has now been removed.
+			// To prevent serialization issues, please avoid reusing `41u8` for any new events.
 			43u8 => {
 				let mut channel_id = RequiredWrapper(None);
 				let mut user_channel_id = RequiredWrapper(None);
