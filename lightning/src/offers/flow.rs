@@ -18,7 +18,7 @@ use bitcoin::secp256k1::schnorr;
 use lightning_invoice::PaymentSecret;
 use types::payment::PaymentHash;
 
-use crate::blinded_path::message::{BlindedMessagePath, MessageContext, OffersContext};
+use crate::blinded_path::message::{BlindedMessagePath, MessageContext};
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentContext};
 use crate::events::PaymentFailureReason;
 use crate::ln::channelmanager::{Bolt12PaymentError, PaymentId};
@@ -101,11 +101,6 @@ pub trait OffersMessageCommons {
 	fn create_blinded_payment_paths(
 		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext,
 	) -> Result<Vec<BlindedPaymentPath>, ()>;
-
-	/// Verify bolt12 invoice
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()>;
 
 	/// Send payment for verified bolt12 invoice
 	fn send_payment_for_verified_bolt12_invoice(

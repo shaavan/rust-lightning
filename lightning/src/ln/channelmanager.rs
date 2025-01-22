@@ -4728,6 +4728,23 @@ where
 		self.pending_outbound_payments.test_set_payment_metadata(payment_id, new_payment_metadata);
 	}
 
+	fn verify_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
+	) -> Result<PaymentId, ()> {
+		let secp_ctx = &self.secp_ctx;
+		let expanded_key = &self.inbound_payment_key;
+
+		match context {
+			None if invoice.is_for_refund_without_paths() => {
+				invoice.verify_using_metadata(expanded_key, secp_ctx)
+			},
+			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
+				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
+			},
+			_ => Err(()),
+		}
+	}
+
 	#[cfg(async_payments)]
 	fn send_payment_for_static_invoice(
 		&self, payment_id: PaymentId
@@ -9925,23 +9942,6 @@ where
 		self.router.create_blinded_payment_paths(
 			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
 		)
-	}
-
-	fn verify_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
-	) -> Result<PaymentId, ()> {
-		let secp_ctx = &self.secp_ctx;
-		let expanded_key = &self.inbound_payment_key;
-
-		match context {
-			None if invoice.is_for_refund_without_paths() => {
-				invoice.verify_using_metadata(expanded_key, secp_ctx)
-			},
-			Some(&OffersContext::OutboundPayment { payment_id, nonce, .. }) => {
-				invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
-			},
-			_ => Err(()),
-		}
 	}
 
 	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
