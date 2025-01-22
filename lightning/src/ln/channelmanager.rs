@@ -28,7 +28,7 @@ use bitcoin::hashes::hmac::Hmac;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hash_types::{BlockHash, Txid};
 
-use bitcoin::secp256k1::{SecretKey,PublicKey};
+use bitcoin::secp256k1::{schnorr, PublicKey, SecretKey};
 use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
@@ -47,6 +47,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
+use crate::offers::flow::OffersMessageCommons;
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelPhase, ChannelError, ChannelUpdateStatus, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, InboundV1Channel, WithChannelContext, InboundV2Channel, InteractivelyFunded as _};
 use crate::ln::channel_state::ChannelDetails;
@@ -119,7 +120,7 @@ use core::{cmp, mem};
 use core::borrow::Borrow;
 use core::cell::RefCell;
 use crate::io::Read;
-use crate::sync::{Arc, Mutex, RwLock, RwLockReadGuard, FairRwLock, LockTestExt, LockHeldState};
+use crate::sync::{Arc, FairRwLock, LockHeldState, LockTestExt, Mutex, MutexGuard, RwLock, RwLockReadGuard};
 use core::sync::atomic::{AtomicUsize, AtomicBool, Ordering};
 use core::time::Duration;
 use core::ops::Deref;
@@ -9954,6 +9955,71 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		Ok(builder.into())
 	}
 } }
+
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> OffersMessageCommons for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+where
+	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
+	T::Target: BroadcasterInterface,
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	SP::Target: SignerProvider,
+	F::Target: FeeEstimator,
+	R::Target: Router,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	fn get_pending_offers_messages(&self) -> MutexGuard<'_, Vec<(OffersMessage, MessageSendInstructions)>> {
+		self.pending_offers_messages.lock().expect("Mutex is locked by other thread.")
+	}
+
+	fn sign_bolt12_invoice(
+		&self, invoice: &UnsignedBolt12Invoice,
+	) -> Result<schnorr::Signature, ()> {
+		self.node_signer.sign_bolt12_invoice(invoice)
+	}
+
+	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
+		self.create_inbound_payment(min_value_msat, invoice_expiry_delta_secs, min_final_cltv_expiry_delta)
+	}
+
+	fn create_blinded_payment_paths(
+		&self, amount_msats: u64, payment_secret: PaymentSecret, payment_context: PaymentContext
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		self.create_blinded_payment_paths(amount_msats, payment_secret, payment_context)
+	}
+
+	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
+		self.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
+	}
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
+		self.abandon_payment_with_reason(payment_id, reason);
+	}
+
+	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)> {
+		self.pending_outbound_payments.release_invoice_requests_awaiting_invoice()
+	}
+
+	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
+		self.create_blinded_paths(context)
+	}
+
+	fn enqueue_invoice_request(&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedMessagePath>) -> Result<(), Bolt12SemanticError> {
+		self.enqueue_invoice_request(invoice_request, reply_paths)
+	}
+
+	fn get_current_blocktime(&self) -> Duration {
+		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
+	}
+
+	#[cfg(async_payments)]
+	fn initiate_async_payment(
+		&self, invoice: &StaticInvoice, payment_id: PaymentId
+	) -> Result<(), Bolt12PaymentError> {
+		self.initiate_async_payment(invoice, payment_id)
+	}
+}
 
 /// Defines the maximum number of [`OffersMessage`] including different reply paths to be sent
 /// along different paths.
