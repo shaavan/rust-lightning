@@ -86,11 +86,8 @@ use crate::util::ser::{BigSize, FixedLengthReader, Readable, ReadableArgs, Maybe
 use crate::util::ser::TransactionU16LenLimited;
 use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
-#[cfg(async_payments)] use {
-	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::Amount,
-	crate::offers::static_invoice::{DEFAULT_RELATIVE_EXPIRY as STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY, StaticInvoice, StaticInvoiceBuilder},
-};
+#[cfg(async_payments)]
+use crate::offers::static_invoice::StaticInvoice;
 
 #[cfg(feature = "dnssec")]
 use crate::blinded_path::message::DNSResolverContext;
@@ -9657,6 +9654,11 @@ where
 			payment_id, expiration, retry_strategy, max_total_routing_fee_msat, retryable_invoice_request,
 		)
 	}
+
+	#[cfg(not(feature = "std"))]
+	fn get_highest_seen_timestamp(&self) -> Duration {
+		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
+	}
 }
 
 /// Defines the maximum number of [`OffersMessage`] including different reply paths to be sent
@@ -9678,55 +9680,6 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-	/// Creates a [`StaticInvoiceBuilder`] from the corresponding [`Offer`] and [`Nonce`] that were
-	/// created via [`create_async_receive_offer_builder`]. If `relative_expiry` is unset, the
-	/// invoice's expiry will default to [`STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY`].
-	/// 
-	/// [`create_async_receive_offer_builder`]: crate::offers::flow::create_async_receive_offer_builder
-	#[cfg(async_payments)]
-	pub fn create_static_invoice_builder<'a>(
-		&self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>
-	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError> {
-		let expanded_key = &self.inbound_payment_key;
-		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
-
-		let payment_context = PaymentContext::AsyncBolt12Offer(
-			AsyncBolt12OfferContext { offer_nonce }
-		);
-		let amount_msat = offer.amount().and_then(|amount| {
-			match amount {
-				Amount::Bitcoin { amount_msats } => Some(amount_msats),
-				Amount::Currency { .. } => None
-			}
-		});
-
-		let relative_expiry = relative_expiry.unwrap_or(STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY);
-		let relative_expiry_secs: u32 = relative_expiry.as_secs().try_into().unwrap_or(u32::MAX);
-
-		let created_at = self.duration_since_epoch();
-		let payment_secret = inbound_payment::create_for_spontaneous_payment(
-			&self.inbound_payment_key, amount_msat, relative_expiry_secs, created_at.as_secs(), None
-		).map_err(|()| Bolt12SemanticError::InvalidAmount)?;
-
-		let payment_paths = self.create_blinded_payment_paths(
-			amount_msat, payment_secret, payment_context, relative_expiry_secs
-		).map_err(|()| Bolt12SemanticError::MissingPaths)?;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let hmac = signer::hmac_for_held_htlc_available_context(nonce, expanded_key);
-		let context = MessageContext::AsyncPayments(
-			AsyncPaymentsContext::InboundPayment { nonce, hmac }
-		);
-		let async_receive_message_paths = self.create_blinded_paths(context)
-			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
-
-		StaticInvoiceBuilder::for_offer_using_derived_keys(
-			offer, payment_paths, async_receive_message_paths, created_at, expanded_key,
-			offer_nonce, secp_ctx
-		).map(|inv| inv.allow_mpp().relative_expiry(relative_expiry_secs))
-	}
-
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
 	/// enqueuing it to be sent via an onion message. [`ChannelManager`] will pay the actual
 	/// [`Bolt12Invoice`] once it is received.
