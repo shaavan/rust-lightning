@@ -922,4 +922,37 @@ where
 
 	#[cfg(c_bindings)]
 	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
+
+	/// Create an offer for receiving async payments as an often-offline recipient.
+	///
+	/// Because we may be offline when the payer attempts to request an invoice, you MUST:
+	/// 1. Provide at least 1 [`BlindedMessagePath`] terminating at an always-online node that will
+	///    serve the [`StaticInvoice`] created from this offer on our behalf.
+	/// 2. Use [`Self::create_static_invoice_builder`] to create a [`StaticInvoice`] from this
+	///    [`Offer`] plus the returned [`Nonce`], and provide the static invoice to the
+	///    aforementioned always-online node.
+	#[cfg(async_payments)]
+	pub fn create_async_receive_offer_builder(
+		&self, message_paths_to_always_online_node: Vec<BlindedMessagePath>,
+	) -> Result<(OfferBuilder<DerivedMetadata, secp256k1::All>, Nonce), Bolt12SemanticError> {
+		if message_paths_to_always_online_node.is_empty() {
+			return Err(Bolt12SemanticError::MissingPaths);
+		}
+
+		let node_id = self.get_our_node_id();
+		let expanded_key = &self.inbound_payment_key;
+		let entropy = &*self.entropy_source;
+		let secp_ctx = &self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let mut builder =
+			OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+				.chain_hash(self.commons.get_chain_hash());
+
+		for path in message_paths_to_always_online_node {
+			builder = builder.path(path);
+		}
+
+		Ok((builder.into(), nonce))
+	}
 }
