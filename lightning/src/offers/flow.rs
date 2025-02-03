@@ -44,7 +44,16 @@ use crate::sign::EntropySource;
 use crate::util::logger::{Logger, WithContext};
 
 #[cfg(async_payments)]
-use crate::offers::static_invoice::StaticInvoice;
+use {
+	crate::blinded_path::message::AsyncPaymentsContext,
+	crate::blinded_path::payment::AsyncBolt12OfferContext,
+	crate::offers::offer::{Amount, Offer},
+	crate::offers::signer,
+	crate::offers::static_invoice::{
+		StaticInvoice, StaticInvoiceBuilder,
+		DEFAULT_RELATIVE_EXPIRY as STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY,
+	},
+};
 
 #[cfg(not(c_bindings))]
 use crate::offers::offer::DerivedMetadata;
@@ -181,6 +190,10 @@ pub trait OffersMessageCommons {
 		max_total_routing_fee_msat: Option<u64>,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()>;
+
+	#[cfg(not(feature = "std"))]
+	/// Get the approximate current time using the highest seen timestamp
+	fn get_highest_seen_timestamp(&self) -> Duration;
 }
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
@@ -473,6 +486,24 @@ where
 			},
 			_ => Err(()),
 		}
+	}
+}
+
+impl<ES: Deref, OMC: Deref, L: Deref> OffersMessageFlow<ES, OMC, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	L::Target: Logger,
+{
+	pub(crate) fn duration_since_epoch(&self) -> Duration {
+		#[cfg(not(feature = "std"))]
+		let now = self.commons.get_highest_seen_timestamp();
+		#[cfg(feature = "std")]
+		let now = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
+		now
 	}
 }
 
@@ -954,5 +985,69 @@ where
 		}
 
 		Ok((builder.into(), nonce))
+	}
+
+	/// Creates a [`StaticInvoiceBuilder`] from the corresponding [`Offer`] and [`Nonce`] that were
+	/// created via [`create_async_receive_offer_builder`]. If `relative_expiry` is unset, the
+	/// invoice's expiry will default to [`STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY`].
+	///
+	/// [`create_async_receive_offer_builder`]: crate::offers::flow::create_async_receive_offer_builder
+	#[cfg(async_payments)]
+	pub fn create_static_invoice_builder<'a>(
+		&self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>,
+	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError> {
+		let expanded_key = &self.inbound_payment_key;
+		let entropy = &*self.entropy_source;
+		let secp_ctx = &self.secp_ctx;
+
+		let payment_context =
+			PaymentContext::AsyncBolt12Offer(AsyncBolt12OfferContext { offer_nonce });
+		let amount_msat = offer.amount().and_then(|amount| match amount {
+			Amount::Bitcoin { amount_msats } => Some(amount_msats),
+			Amount::Currency { .. } => None,
+		});
+
+		let relative_expiry = relative_expiry.unwrap_or(STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY);
+		let relative_expiry_secs: u32 = relative_expiry.as_secs().try_into().unwrap_or(u32::MAX);
+
+		let created_at = self.duration_since_epoch();
+		let payment_secret = inbound_payment::create_for_spontaneous_payment(
+			&self.inbound_payment_key,
+			amount_msat,
+			relative_expiry_secs,
+			created_at.as_secs(),
+			None,
+		)
+		.map_err(|()| Bolt12SemanticError::InvalidAmount)?;
+
+		let payment_paths = self
+			.commons
+			.create_blinded_payment_paths(
+				amount_msat,
+				payment_secret,
+				payment_context,
+				relative_expiry_secs,
+			)
+			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let hmac = signer::hmac_for_held_htlc_available_context(nonce, expanded_key);
+		let context =
+			MessageContext::AsyncPayments(AsyncPaymentsContext::InboundPayment { nonce, hmac });
+		let async_receive_message_paths = self
+			.commons
+			.create_blinded_paths(context)
+			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
+
+		StaticInvoiceBuilder::for_offer_using_derived_keys(
+			offer,
+			payment_paths,
+			async_receive_message_paths,
+			created_at,
+			expanded_key,
+			offer_nonce,
+			secp_ctx,
+		)
+		.map(|inv| inv.allow_mpp().relative_expiry(relative_expiry_secs))
 	}
 }
