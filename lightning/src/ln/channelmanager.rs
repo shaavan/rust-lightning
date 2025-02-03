@@ -88,7 +88,7 @@ use crate::util::logger::{Level, Logger, WithContext};
 use crate::util::errors::APIError;
 #[cfg(async_payments)] use {
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::{Amount, DerivedMetadata, OfferBuilder},
+	crate::offers::offer::Amount,
 	crate::offers::static_invoice::{DEFAULT_RELATIVE_EXPIRY as STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY, StaticInvoice, StaticInvoiceBuilder},
 };
 
@@ -9678,43 +9678,11 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
-
-	/// Create an offer for receiving async payments as an often-offline recipient.
-	///
-	/// Because we may be offline when the payer attempts to request an invoice, you MUST:
-	/// 1. Provide at least 1 [`BlindedMessagePath`] terminating at an always-online node that will
-	///    serve the [`StaticInvoice`] created from this offer on our behalf.
-	/// 2. Use [`Self::create_static_invoice_builder`] to create a [`StaticInvoice`] from this
-	///    [`Offer`] plus the returned [`Nonce`], and provide the static invoice to the
-	///    aforementioned always-online node.
-	#[cfg(async_payments)]
-	pub fn create_async_receive_offer_builder(
-		&self, message_paths_to_always_online_node: Vec<BlindedMessagePath>
-	) -> Result<(OfferBuilder<DerivedMetadata, secp256k1::All>, Nonce), Bolt12SemanticError> {
-		if message_paths_to_always_online_node.is_empty() {
-			return Err(Bolt12SemanticError::MissingPaths)
-		}
-
-		let node_id = self.get_our_node_id();
-		let expanded_key = &self.inbound_payment_key;
-		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let mut builder = OfferBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx
-		).chain_hash(self.chain_hash);
-
-		for path in message_paths_to_always_online_node {
-			builder = builder.path(path);
-		}
-
-		Ok((builder.into(), nonce))
-	}
-
 	/// Creates a [`StaticInvoiceBuilder`] from the corresponding [`Offer`] and [`Nonce`] that were
-	/// created via [`Self::create_async_receive_offer_builder`]. If `relative_expiry` is unset, the
+	/// created via [`create_async_receive_offer_builder`]. If `relative_expiry` is unset, the
 	/// invoice's expiry will default to [`STATIC_INVOICE_DEFAULT_RELATIVE_EXPIRY`].
+	/// 
+	/// [`create_async_receive_offer_builder`]: crate::offers::flow::create_async_receive_offer_builder
 	#[cfg(async_payments)]
 	pub fn create_static_invoice_builder<'a>(
 		&self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>

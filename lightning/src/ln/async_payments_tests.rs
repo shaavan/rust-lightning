@@ -49,7 +49,7 @@ fn create_static_invoice<T: secp256k1::Signing + secp256k1::Verification>(
 		)
 		.unwrap();
 	let (offer_builder, offer_nonce) = recipient
-		.node
+		.offers_handler
 		.create_async_receive_offer_builder(blinded_paths_to_always_online_node)
 		.unwrap();
 	let offer = offer_builder.build().unwrap();
@@ -155,7 +155,7 @@ fn static_invoice_unknown_required_features() {
 		)
 		.unwrap();
 	let (offer_builder, nonce) = nodes[2]
-		.node
+		.offers_handler
 		.create_async_receive_offer_builder(blinded_paths_to_always_online_node)
 		.unwrap();
 	let offer = offer_builder.build().unwrap();
