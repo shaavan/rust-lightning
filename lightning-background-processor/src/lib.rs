@@ -1192,7 +1192,7 @@ mod tests {
 			>,
 		>,
 		IgnoringMessageHandler,
-		Arc<ChannelManager>,
+		IgnoringMessageHandler,
 		IgnoringMessageHandler,
 		IgnoringMessageHandler,
 	>;
@@ -1595,7 +1595,7 @@ mod tests {
 				manager.clone(),
 				msg_router.clone(),
 				IgnoringMessageHandler {},
-				manager.clone(),
+				IgnoringMessageHandler {},
 				IgnoringMessageHandler {},
 				IgnoringMessageHandler {},
 			));

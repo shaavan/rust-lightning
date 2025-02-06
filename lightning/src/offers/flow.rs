@@ -20,7 +20,7 @@ use lightning_invoice::PaymentSecret;
 use types::payment::PaymentHash;
 
 use crate::blinded_path::message::{
-	BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext,
+	AsyncPaymentsContext, BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext,
 };
 use crate::blinded_path::payment::{
 	BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentContext,
@@ -46,13 +46,16 @@ use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::refund::{Refund, RefundBuilder};
 
+use crate::onion_message::async_payments::{
+	AsyncPaymentsMessage, AsyncPaymentsMessageHandler, HeldHtlcAvailable, ReleaseHeldHtlc,
+};
+
 use crate::sign::EntropySource;
 use crate::sync::Mutex;
 use crate::util::logger::{Logger, WithContext};
 
 #[cfg(async_payments)]
 use {
-	crate::blinded_path::message::AsyncPaymentsContext,
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
 	crate::offers::offer::Amount,
 	crate::offers::signer,
@@ -166,12 +169,6 @@ pub trait OffersMessageCommons {
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
 
-	/// Initiate a new async payment
-	#[cfg(async_payments)]
-	fn initiate_async_payment(
-		&self, invoice: &StaticInvoice, payment_id: PaymentId,
-	) -> Result<(), Bolt12PaymentError>;
-
 	/// Get the [`ChainHash`] of the chain
 	fn get_chain_hash(&self) -> ChainHash;
 
@@ -202,6 +199,16 @@ pub trait OffersMessageCommons {
 	fn received_offer(
 		&self, payment_id: PaymentId, retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()>;
+
+	#[cfg(async_payments)]
+	fn handle_static_invoice_received(
+		&self, invoice: &StaticInvoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError>;
+
+	#[cfg(async_payments)]
+	fn send_payment_for_static_invoice(
+		&self, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError>;
 }
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
@@ -571,6 +578,8 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
+	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
+
 	#[cfg(feature = "_test_utils")]
 	/// In testing, it is useful be able to forge a name -> offer mapping so that we can pay an
 	/// offer generated in the test.
@@ -613,6 +622,8 @@ where
 
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			#[cfg(feature = "_test_utils")]
 			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
@@ -1053,7 +1064,7 @@ where
 					},
 					_ => return None,
 				};
-				let res = self.commons.initiate_async_payment(&invoice, payment_id);
+				let res = self.initiate_async_payment(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, self.logger);
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
@@ -1131,6 +1142,50 @@ where
 
 	fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
+	}
+}
+
+impl<ES: Deref, OMC: Deref, MR: Deref, L: Deref> AsyncPaymentsMessageHandler
+	for OffersMessageFlow<ES, OMC, MR, L>
+where
+	ES::Target: EntropySource,
+	OMC::Target: OffersMessageCommons,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	fn handle_held_htlc_available(
+		&self, _message: HeldHtlcAvailable, _context: AsyncPaymentsContext,
+		_responder: Option<Responder>,
+	) -> Option<(ReleaseHeldHtlc, ResponseInstruction)> {
+		None
+	}
+
+	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext) {
+		#[cfg(async_payments)]
+		{
+			let (payment_id, nonce, hmac) = match _context {
+				AsyncPaymentsContext::OutboundPayment { payment_id, hmac, nonce } => {
+					(payment_id, nonce, hmac)
+				},
+				_ => return,
+			};
+			if payment_id.verify_for_async_payment(hmac, nonce, &self.inbound_payment_key).is_err()
+			{
+				return;
+			}
+			if let Err(e) = self.commons.send_payment_for_static_invoice(payment_id) {
+				log_trace!(
+					self.logger,
+					"Failed to release held HTLC with payment id {}: {:?}",
+					payment_id,
+					e
+				);
+			}
+		}
+	}
+
+	fn release_pending_messages(&self) -> Vec<(AsyncPaymentsMessage, MessageSendInstructions)> {
+		core::mem::take(&mut self.pending_async_payments_messages.lock().unwrap())
 	}
 }
 
@@ -1383,6 +1438,48 @@ where
 			secp_ctx,
 		)
 		.map(|inv| inv.allow_mpp().relative_expiry(relative_expiry_secs))
+	}
+
+	#[cfg(async_payments)]
+	fn initiate_async_payment(
+		&self, invoice: &StaticInvoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError> {
+		self.commons.handle_static_invoice_received(invoice, payment_id)?;
+
+		let nonce = Nonce::from_entropy_source(&*self.entropy_source);
+		let hmac = payment_id.hmac_for_async_payment(nonce, &self.inbound_payment_key);
+		let reply_paths = match self.create_blinded_paths(MessageContext::AsyncPayments(
+			AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac },
+		)) {
+			Ok(paths) => paths,
+			Err(()) => {
+				self.commons.abandon_payment_with_reason(
+					payment_id,
+					PaymentFailureReason::BlindedPathCreationFailed,
+				);
+				return Err(Bolt12PaymentError::BlindedPathCreationFailed);
+			},
+		};
+
+		let mut pending_async_payments_messages =
+			self.pending_async_payments_messages.lock().unwrap();
+		const HTLC_AVAILABLE_LIMIT: usize = 10;
+		reply_paths
+			.iter()
+			.flat_map(|reply_path| {
+				invoice.message_paths().iter().map(move |invoice_path| (invoice_path, reply_path))
+			})
+			.take(HTLC_AVAILABLE_LIMIT)
+			.for_each(|(invoice_path, reply_path)| {
+				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+					destination: Destination::BlindedPath(invoice_path.clone()),
+					reply_path: reply_path.clone(),
+				};
+				let message = AsyncPaymentsMessage::HeldHtlcAvailable(HeldHtlcAvailable {});
+				pending_async_payments_messages.push((message, instructions));
+			});
+
+		Ok(())
 	}
 
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and

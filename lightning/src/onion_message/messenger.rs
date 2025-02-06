@@ -2114,7 +2114,14 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 			Arc<L>,
 		>,
 	>,
-	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<
+		OffersMessageFlow<
+			Arc<KeysManager>,
+			Arc<SimpleArcChannelManager<M, T, F, L>>,
+			Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
+			Arc<L>,
+		>,
+	>,
 	Arc<
 		OffersMessageFlow<
 			Arc<KeysManager>,

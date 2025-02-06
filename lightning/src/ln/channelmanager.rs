@@ -33,7 +33,7 @@ use bitcoin::secp256k1::Secp256k1;
 use bitcoin::{secp256k1, Sequence, Weight};
 
 use crate::events::FundingInfo;
-use crate::blinded_path::message::{AsyncPaymentsContext, MessageForwardNode};
+use crate::blinded_path::message::MessageForwardNode;
 use crate::blinded_path::NodeIdLookUp;
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentConstraints, PaymentContext, UnauthenticatedReceiveTlvs};
 use crate::chain;
@@ -68,8 +68,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice::UnsignedBolt12Invoice;
 use crate::offers::nonce::Nonce;
 use crate::offers::signer;
-use crate::onion_message::async_payments::{AsyncPaymentsMessage, HeldHtlcAvailable, ReleaseHeldHtlc, AsyncPaymentsMessageHandler};
-use crate::onion_message::messenger::{MessageRouter, MessageSendInstructions, Responder, ResponseInstruction};
+use crate::onion_message::messenger::MessageRouter;
 use crate::sign::{EntropySource, NodeSigner, Recipient, SignerProvider};
 use crate::sign::ecdsa::EcdsaChannelSigner;
 use crate::util::config::{UserConfig, ChannelConfig, ChannelConfigUpdate};
@@ -88,7 +87,6 @@ use crate::onion_message::dns_resolution::OMNameResolver;
 use {
 	crate::blinded_path::message::{BlindedMessagePath, MessageContext},
 	crate::offers::static_invoice::StaticInvoice,
-	crate::onion_message::messenger::Destination,
 };
 
 #[cfg(not(c_bindings))]
@@ -2418,8 +2416,6 @@ where
 	event_persist_notifier: Notifier,
 	needs_persist_flag: AtomicBool,
 
-	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
-
 	/// Tracks the message events that are to be broadcasted when we are connected to some peer.
 	pending_broadcast_messages: Mutex<Vec<MessageSendEvent>>,
 
@@ -3339,7 +3335,6 @@ where
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
 
-			pending_async_payments_messages: Mutex::new(Vec::new()),
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
 			last_days_feerates: Mutex::new(VecDeque::new()),
@@ -4506,45 +4501,6 @@ where
 		});
 
 		res
-	}
-
-	#[cfg(async_payments)]
-	fn initiate_async_payment(
-		&self, invoice: &StaticInvoice, payment_id: PaymentId
-	) -> Result<(), Bolt12PaymentError> {
-
-		self.handle_static_invoice_received(invoice, payment_id)?;
-
-		let nonce = Nonce::from_entropy_source(&*self.entropy_source);
-		let hmac = payment_id.hmac_for_async_payment(nonce, &self.inbound_payment_key);
-		let reply_paths = match self.create_blinded_paths(
-			MessageContext::AsyncPayments(
-				AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac }
-			)
-		) {
-			Ok(paths) => paths,
-			Err(()) => {
-				self.abandon_payment_with_reason(payment_id, PaymentFailureReason::BlindedPathCreationFailed);
-				return Err(Bolt12PaymentError::BlindedPathCreationFailed);
-			}
-		};
-
-		let mut pending_async_payments_messages = self.pending_async_payments_messages.lock().unwrap();
-		const HTLC_AVAILABLE_LIMIT: usize = 10;
-		reply_paths
-			.iter()
-			.flat_map(|reply_path| invoice.message_paths().iter().map(move |invoice_path| (invoice_path, reply_path)))
-			.take(HTLC_AVAILABLE_LIMIT)
-			.for_each(|(invoice_path, reply_path)| {
-				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: Destination::BlindedPath(invoice_path.clone()),
-					reply_path: reply_path.clone(),
-				};
-				let message = AsyncPaymentsMessage::HeldHtlcAvailable(HeldHtlcAvailable {});
-				pending_async_payments_messages.push((message, instructions));
-			});
-
-		Ok(())
 	}
 
 	#[cfg(async_payments)]
@@ -9528,13 +9484,6 @@ where
 		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
 	}
 
-	#[cfg(async_payments)]
-	fn initiate_async_payment(
-		&self, invoice: &StaticInvoice, payment_id: PaymentId
-	) -> Result<(), Bolt12PaymentError> {
-		self.initiate_async_payment(invoice, payment_id)
-	}
-
 	fn get_chain_hash(&self) -> ChainHash {
 		self.chain_hash
 	}
@@ -9567,6 +9516,20 @@ where
 		&self, payment_id: PaymentId, retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()> {
 		self.pending_outbound_payments.received_offer(payment_id, retryable_invoice_request)
+	}
+
+	#[cfg(async_payments)]
+	fn handle_static_invoice_received(
+		&self, invoice: &StaticInvoice, payment_id: PaymentId
+	) -> Result<(), Bolt12PaymentError> {
+		self.handle_static_invoice_received(invoice, payment_id)
+	}
+
+	#[cfg(async_payments)]
+	fn send_payment_for_static_invoice(
+		&self, payment_id: PaymentId
+	) -> Result<(), Bolt12PaymentError> {
+		self.send_payment_for_static_invoice(payment_id)
 	}
 }
 
@@ -11138,48 +11101,6 @@ where
 			let _ = handle_error!(self, self.internal_tx_abort(&counterparty_node_id, msg), counterparty_node_id);
 			NotifyOption::SkipPersistHandleEvents
 		});
-	}
-}
-
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-AsyncPaymentsMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
-where
-	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
-	T::Target: BroadcasterInterface,
-	ES::Target: EntropySource,
-	NS::Target: NodeSigner,
-	SP::Target: SignerProvider,
-	F::Target: FeeEstimator,
-	R::Target: Router,
-	MR::Target: MessageRouter,
-	L::Target: Logger,
-{
-	fn handle_held_htlc_available(
-		&self, _message: HeldHtlcAvailable, _context: AsyncPaymentsContext,
-		_responder: Option<Responder>
-	) -> Option<(ReleaseHeldHtlc, ResponseInstruction)> {
-		None
-	}
-
-	fn handle_release_held_htlc(&self, _message: ReleaseHeldHtlc, _context: AsyncPaymentsContext) {
-		#[cfg(async_payments)] {
-			let (payment_id, nonce, hmac) = match _context {
-				AsyncPaymentsContext::OutboundPayment { payment_id, hmac, nonce } => {
-					(payment_id, nonce, hmac)
-				},
-				_ => return
-			};
-			if payment_id.verify_for_async_payment(hmac, nonce, &self.inbound_payment_key).is_err() { return }
-			if let Err(e) = self.send_payment_for_static_invoice(payment_id) {
-				log_trace!(
-					self.logger, "Failed to release held HTLC with payment id {}: {:?}", payment_id, e
-				);
-			}
-		}
-	}
-
-	fn release_pending_messages(&self) -> Vec<(AsyncPaymentsMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.pending_async_payments_messages.lock().unwrap())
 	}
 }
 
@@ -13101,8 +13022,6 @@ where
 			needs_persist_flag: AtomicBool::new(false),
 
 			funding_batch_states: Mutex::new(BTreeMap::new()),
-
-			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			pending_broadcast_messages: Mutex::new(Vec::new()),
 
