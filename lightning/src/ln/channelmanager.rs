@@ -84,10 +84,7 @@ use crate::util::errors::APIError;
 use crate::onion_message::dns_resolution::OMNameResolver;
 
 #[cfg(async_payments)]
-use {
-	crate::blinded_path::message::{BlindedMessagePath, MessageContext},
-	crate::offers::static_invoice::StaticInvoice,
-};
+use crate::offers::static_invoice::StaticInvoice;
 
 #[cfg(not(c_bindings))]
 use {

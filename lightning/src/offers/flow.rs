@@ -66,7 +66,14 @@ use {
 };
 
 #[cfg(not(c_bindings))]
-use crate::offers::offer::DerivedMetadata;
+use {
+	crate::sync::Arc,
+	crate::sign::KeysManager,
+	crate::onion_message::messenger::DefaultMessageRouter,
+	crate::offers::offer::DerivedMetadata,
+	crate::routing::gossip::NetworkGraph,
+	crate::ln::channelmanager::SimpleArcChannelManager,
+};
 
 #[cfg(c_bindings)]
 use {
@@ -175,6 +182,23 @@ pub trait OffersMessageCommons {
 	) -> Result<(), Bolt12PaymentError>;
 }
 
+/// [`SimpleArcOffersMessageFlow`] is useful when you need a [`OffersMessageFlow`] with a static lifetime, e.g.
+/// when you're using `lightning-net-tokio` (since `tokio::spawn` requires parameters with static
+/// lifetimes). Other times you can afford a reference, which is more efficient, in which case
+/// [`SimpleRefOffersMessageFlow`] is the more appropriate type. Defining these type aliases prevents
+/// issues such as overly long function definitions. Note that the `OffersMessageFlow` can take any type
+/// that implements [`EntropySource`], for its keys manager, [`MessageRouter`] for its message router, or
+/// [`OffersMessageCommons`] for its shared core functionalities. But this type alias chooses the concrete types
+/// of [`KeysManager`] and [`SimpleArcChannelManager`] and [`DefaultMessageRouter`].
+///
+/// This is not exported to bindings users as type aliases aren't supported in most languages.
+#[cfg(not(c_bindings))]
+pub type SimpleArcOffersMessageFlow<M, T, F, L> = OffersMessageFlow<
+	Arc<KeysManager>,
+	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
+	Arc<L>,
+>;
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
 ///
