@@ -86,60 +86,22 @@ use {
 ///
 /// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
 pub trait OffersMessageCommons {
+	/// Get the [`ChainHash`] of the chain
+	fn get_chain_hash(&self) -> ChainHash;
+
+	/// Get the current time determined by highest seen timestamp
+	fn get_current_blocktime(&self) -> Duration;
+
+	#[cfg(not(feature = "std"))]
+	/// Get the approximate current time using the highest seen timestamp
+	fn get_highest_seen_timestamp(&self) -> Duration;
+
 	#[cfg(feature = "dnssec")]
 	/// Get hrn resolver
 	fn get_hrn_resolver(&self) -> &OMNameResolver;
 
-	/// Signs the [`TaggedHash`] of a BOLT 12 invoice.
-	///
-	/// May be called by a function passed to [`UnsignedBolt12Invoice::sign`] where `invoice` is the
-	/// callee.
-	///
-	/// Implementors may check that the `invoice` is expected rather than blindly signing the tagged
-	/// hash. An `Ok` result should sign `invoice.tagged_hash().as_digest()` with the node's signing
-	/// key or an ephemeral key to preserve privacy, whichever is associated with
-	/// [`UnsignedBolt12Invoice::signing_pubkey`].
-	///
-	/// [`TaggedHash`]: crate::offers::merkle::TaggedHash
-	fn sign_bolt12_invoice(
-		&self, invoice: &UnsignedBolt12Invoice,
-	) -> Result<schnorr::Signature, ()>;
-
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
-	/// [`PaymentClaimable`]: crate::events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: crate::events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: crate::events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment_for_hash
-	/// [`PaymentPreimage`]: crate::types::payment::PaymentPreimage
-	fn create_inbound_payment(
-		&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>,
-	) -> Result<(PaymentHash, PaymentSecret), ()>;
+	/// Get the vector of peers that can be used for a blinded path
+	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode>;
 
 	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
 	/// [`Router::create_blinded_payment_paths`].
@@ -150,27 +112,17 @@ pub trait OffersMessageCommons {
 		payment_context: PaymentContext, relative_expiry_time: u32,
 	) -> Result<Vec<BlindedPaymentPath>, ()>;
 
-	/// Get the vector of peers that can be used for a blinded path
-	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode>;
-
-	/// Send payment for verified bolt12 invoice
-	fn send_payment_for_verified_bolt12_invoice(
-		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
-	) -> Result<(), Bolt12PaymentError>;
-
-	/// Abandon Payment with Reason
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
+	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
+	/// to pay us.
+	fn create_inbound_payment(
+		&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>,
+	) -> Result<(PaymentHash, PaymentSecret), ()>;
 
 	/// Release invoice requests awaiting invoice
 	fn release_invoice_requests_awaiting_invoice(
 		&self,
 	) -> Vec<(PaymentId, RetryableInvoiceRequest)>;
-
-	/// Get the current time determined by highest seen timestamp
-	fn get_current_blocktime(&self) -> Duration;
-
-	/// Get the [`ChainHash`] of the chain
-	fn get_chain_hash(&self) -> ChainHash;
 
 	/// Add new awaiting invoice
 	fn add_new_awaiting_invoice(
@@ -179,9 +131,18 @@ pub trait OffersMessageCommons {
 		retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()>;
 
-	#[cfg(not(feature = "std"))]
-	/// Get the approximate current time using the highest seen timestamp
-	fn get_highest_seen_timestamp(&self) -> Duration;
+	/// Signs the [`TaggedHash`] of a BOLT 12 invoice.
+	fn sign_bolt12_invoice(
+		&self, invoice: &UnsignedBolt12Invoice,
+	) -> Result<schnorr::Signature, ()>;
+
+	/// Send payment for verified bolt12 invoice
+	fn send_payment_for_verified_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError>;
+
+	/// Abandon Payment with Reason
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason);
 
 	#[cfg(feature = "dnssec")]
 	/// Add new awaiting offer
@@ -201,15 +162,19 @@ pub trait OffersMessageCommons {
 	) -> Result<(), ()>;
 
 	#[cfg(async_payments)]
+	/// Handles the received [`StaticInvoice`], ensuring it is neither unexpected nor a duplicate
+	/// before proceeding with further operations.
 	fn handle_static_invoice_received(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId,
 	) -> Result<(), Bolt12PaymentError>;
 
 	#[cfg(async_payments)]
+	/// Sends payment for the [`StaticInvoice`] associated with the given `payment_id`.
 	fn send_payment_for_static_invoice(
 		&self, payment_id: PaymentId,
 	) -> Result<(), Bolt12PaymentError>;
 }
+
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
 ///
@@ -709,7 +674,7 @@ where
 
 	pub(crate) fn duration_since_epoch(&self) -> Duration {
 		#[cfg(not(feature = "std"))]
-		let now = self.commons.get_highest_seen_timestamp();
+		let now = self.commons.get_current_blocktime();
 		#[cfg(feature = "std")]
 		let now = std::time::SystemTime::now()
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)

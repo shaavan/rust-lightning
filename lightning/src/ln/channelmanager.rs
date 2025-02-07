@@ -9429,26 +9429,17 @@ where
 	MR::Target: MessageRouter,
 	L::Target: Logger,
 {
+	fn get_chain_hash(&self) -> ChainHash {
+		self.chain_hash
+	}
+
+	fn get_current_blocktime(&self) -> Duration {
+		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
+	}
+
 	#[cfg(feature = "dnssec")]
 	fn get_hrn_resolver(&self) -> &OMNameResolver {
 		&self.hrn_resolver
-	}
-
-	fn sign_bolt12_invoice(
-		&self, invoice: &UnsignedBolt12Invoice,
-	) -> Result<schnorr::Signature, ()> {
-		self.node_signer.sign_bolt12_invoice(invoice)
-	}
-
-	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
-		self.create_inbound_payment(min_value_msat, invoice_expiry_delta_secs, min_final_cltv_expiry_delta)
-	}
-
-	fn create_blinded_payment_paths(
-		&self, amount_msats: Option<u64>, payment_secret: PaymentSecret, payment_context: PaymentContext, relative_expiry_time: u32,
-	) -> Result<Vec<BlindedPaymentPath>, ()> {
-		self.create_blinded_payment_paths(amount_msats, payment_secret, payment_context, relative_expiry_time)
 	}
 
 	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
@@ -9468,35 +9459,46 @@ where
 			.collect::<Vec<_>>()
 	}
 
-	fn send_payment_for_verified_bolt12_invoice(&self, invoice: &Bolt12Invoice, payment_id: PaymentId) -> Result<(), Bolt12PaymentError> {
-		self.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
+	fn create_blinded_payment_paths(
+		&self, amount_msats: Option<u64>, payment_secret: PaymentSecret, payment_context: PaymentContext, relative_expiry_time: u32,
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		self.create_blinded_payment_paths(amount_msats, payment_secret, payment_context, relative_expiry_time)
 	}
 
-	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
-		self.abandon_payment_with_reason(payment_id, reason);
+	fn create_inbound_payment(
+		&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>
+	) -> Result<(PaymentHash, PaymentSecret), ()> {
+		self.create_inbound_payment(min_value_msat, invoice_expiry_delta_secs, min_final_cltv_expiry_delta)
 	}
 
 	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)> {
 		self.pending_outbound_payments.release_invoice_requests_awaiting_invoice()
 	}
 
-	fn get_current_blocktime(&self) -> Duration {
-		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
-	}
-
-	fn get_chain_hash(&self) -> ChainHash {
-		self.chain_hash
-	}
-
-	fn add_new_awaiting_invoice(&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry, max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>) -> Result<(), ()> {
+	fn add_new_awaiting_invoice(
+		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry, 
+		max_total_routing_fee_msat: Option<u64>, retryable_invoice_request: Option<RetryableInvoiceRequest>
+	) -> Result<(), ()> {
 		self.pending_outbound_payments.add_new_awaiting_invoice (
 			payment_id, expiration, retry_strategy, max_total_routing_fee_msat, retryable_invoice_request,
 		)
 	}
 
-	#[cfg(not(feature = "std"))]
-	fn get_highest_seen_timestamp(&self) -> Duration {
-		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
+	fn sign_bolt12_invoice(
+		&self, invoice: &UnsignedBolt12Invoice,
+	) -> Result<schnorr::Signature, ()> {
+		self.node_signer.sign_bolt12_invoice(invoice)
+	}
+
+	fn send_payment_for_verified_bolt12_invoice(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId
+	) -> Result<(), Bolt12PaymentError> {
+		self.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
+	}
+
+	fn abandon_payment_with_reason(&self, payment_id: PaymentId, reason: PaymentFailureReason) {
+		self.abandon_payment_with_reason(payment_id, reason);
 	}
 
 	#[cfg(feature = "dnssec")]
@@ -9511,6 +9513,7 @@ where
 	fn amt_msats_for_payment_awaiting_offer(&self, payment_id: PaymentId) -> Result<u64, ()> {
 		self.pending_outbound_payments.amt_msats_for_payment_awaiting_offer(payment_id)
 	}
+
 	#[cfg(feature = "dnssec")]
 	fn received_offer(
 		&self, payment_id: PaymentId, retryable_invoice_request: Option<RetryableInvoiceRequest>,
