@@ -72,7 +72,7 @@ use {
 	crate::onion_message::messenger::DefaultMessageRouter,
 	crate::offers::offer::DerivedMetadata,
 	crate::routing::gossip::NetworkGraph,
-	crate::ln::channelmanager::SimpleArcChannelManager,
+	crate::ln::channelmanager::{SimpleArcChannelManager, SimpleRefChannelManager},
 };
 
 #[cfg(c_bindings)]
@@ -199,6 +199,26 @@ pub type SimpleArcOffersMessageFlow<M, T, F, L> = OffersMessageFlow<
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
 	Arc<L>,
 >;
+
+/// [`SimpleRefOffersMessageFlow`] is a type alias for a OffersMessageFlow reference, and is the reference
+/// counterpart to the [`SimpleArcOffersMessageFlow`] type alias. Use this type by default when you don't
+/// need a OffersMessageFlow with a static lifetime. You'll need a static lifetime in cases such as
+/// usage of lightning-net-tokio (since `tokio::spawn` requires parameters with static lifetimes).
+/// But if this is not necessary, using a reference is more efficient. Defining these type aliases
+/// issues such as overly long function definitions. Note that the `OffersMessageFlow` can take any type
+/// that implements [`EntropySource`], for its keys manager, [`MessageRouter`] for its message router, or
+/// [`OffersMessageCommons`] for its shared core functionalities. But this type alias chooses the concrete types
+/// of [`KeysManager`] and [`SimpleArcChannelManager`] and [`DefaultMessageRouter`].
+///
+/// This is not exported to bindings users as type aliases aren't supported in most languages.
+#[cfg(not(c_bindings))]
+pub type SimpleRefOffersMessageFlow<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, 'j, M, T, F, L> =
+	OffersMessageFlow<
+		&'a KeysManager,
+		&'j SimpleRefChannelManager<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, M, T, F, L>,
+		&'i DefaultMessageRouter<&'g NetworkGraph<&'b L>, &'b L, &'a KeysManager>,
+		&'g L
+	>;
 
 /// A trivial trait which describes any [`OffersMessageFlow`].
 ///
