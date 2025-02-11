@@ -2400,15 +2400,35 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 	(5, AwaitingInvoice) => {
 		(0, expiration, required),
 		(2, retry_strategy, required),
-		// TODO: Add support for legacy `max_total_routing_fee_msat`
+		(4, _max_total_routing_fee_msat, (legacy, u64,
+			|us: &PendingOutboundPayment| match us {
+				PendingOutboundPayment::AwaitingInvoice { route_params_config, .. } => route_params_config.max_total_routing_fee_msat,
+				_ => None,
+			}
+		)),
 		(5, retryable_invoice_request, option),
-		(7, route_params_config, (default_value, RouteParametersConfig::new())),
+		(7, route_params_config, (default_value, (
+			_max_total_routing_fee_msat.map_or(
+				RouteParametersConfig::new(),
+				|fee_msat| RouteParametersConfig::new().with_max_total_routing_fee_msat(fee_msat)
+			)
+		))),
 	},
 	(7, InvoiceReceived) => {
 		(0, payment_hash, required),
 		(2, retry_strategy, required),
-		(3, route_params_config, (default_value, RouteParametersConfig::new())),
-		// TODO: Add support for legacy `max_total_routing_fee_msat`
+		(3, route_params_config, (default_value, (
+			_max_total_routing_fee_msat.map_or(
+				RouteParametersConfig::new(),
+				|fee_msat| RouteParametersConfig::new().with_max_total_routing_fee_msat(fee_msat)
+			)
+		))),
+		(4, _max_total_routing_fee_msat, (legacy, u64,
+			|us: &PendingOutboundPayment| match us {
+				PendingOutboundPayment::InvoiceReceived { route_params_config, .. } => route_params_config.max_total_routing_fee_msat,
+				_ => None,
+			}
+		)),
 	},
 	// Added in 0.1. Prior versions will drop these outbounds on downgrade, which is safe because no
 	// HTLCs are in-flight.
@@ -2424,7 +2444,18 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 	(11, AwaitingOffer) => {
 		(0, expiration, required),
 		(2, retry_strategy, required),
-		(5, route_params_config, (default_value, RouteParametersConfig::new())),
+		(4, _max_total_routing_fee_msat, (legacy, u64,
+			|us: &PendingOutboundPayment| match us {
+				PendingOutboundPayment::AwaitingOffer { route_params_config, .. } => route_params_config.max_total_routing_fee_msat,
+				_ => None,
+			}
+		)),
+		(5, route_params_config, (default_value, (
+			_max_total_routing_fee_msat.map_or(
+				RouteParametersConfig::new(),
+				|fee_msat| RouteParametersConfig::new().with_max_total_routing_fee_msat(fee_msat)
+			)
+		))),
 		(6, amount_msats, required),
 	},
 );
