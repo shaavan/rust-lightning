@@ -61,7 +61,6 @@ fn large_payment_metadata() {
 		payment_metadata: None,
 		keysend_preimage: None,
 		sender_custom_tlvs: &Vec::new(),
-		user_custom_data: &Vec::new(),
 		sender_intended_htlc_amt_msat: MIN_FINAL_VALUE_ESTIMATE_WITH_OVERPAY,
 		cltv_expiry_height: nodes[0].best_block_info().1 + DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA,
 	}.serialized_length();
@@ -78,7 +77,8 @@ fn large_payment_metadata() {
 	let mut recipient_onion_max_md_size = RecipientOnionFields {
 		payment_secret: Some(payment_secret),
 		payment_metadata: Some(payment_metadata.clone()),
-		sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(), 
+		sender_custom_tlvs: Vec::new(),
+		user_custom_data: None,
 	};
 	nodes[0].node.send_payment(payment_hash, recipient_onion_max_md_size.clone(), PaymentId(payment_hash.0), route_0_1.route_params.clone().unwrap(), Retry::Attempts(0)).unwrap();
 	check_added_monitors!(nodes[0], 1);
@@ -126,7 +126,8 @@ fn large_payment_metadata() {
 	let mut recipient_onion_allows_2_hops = RecipientOnionFields {
 		payment_secret: Some(payment_secret_2),
 		payment_metadata: Some(vec![42; max_metadata_len - INTERMED_PAYLOAD_LEN_ESTIMATE]),
-		sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(), 
+		sender_custom_tlvs: Vec::new(),
+		user_custom_data: None,
 	};
 	let mut route_params_0_2 = route_0_2.route_params.clone().unwrap();
 	route_params_0_2.payment_params.max_path_length = 2;
@@ -192,7 +193,6 @@ fn one_hop_blinded_path_with_custom_tlv() {
 		keysend_preimage: None,
 		invoice_request: None,
 		sender_custom_tlvs: &Vec::new(),
-		user_custom_data: &Vec::new()
 	}.serialized_length();
 	let max_custom_tlv_len = 1300
 		- crate::util::ser::BigSize(CUSTOM_TLV_TYPE).serialized_length() // custom TLV type

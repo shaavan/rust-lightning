@@ -1771,7 +1771,6 @@ mod fuzzy_internal_msgs {
 			payment_metadata: Option<Vec<u8>>,
 			keysend_preimage: Option<PaymentPreimage>,
 			sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-			user_custom_data: Vec<u8>,
 			sender_intended_htlc_amt_msat: u64,
 			cltv_expiry_height: u32,
 		},
@@ -1793,7 +1792,7 @@ mod fuzzy_internal_msgs {
 			intro_node_blinding_point: Option<PublicKey>,
 			keysend_preimage: Option<PaymentPreimage>,
 			sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-			user_custom_data: Vec<u8>,
+			user_custom_data: Option<Vec<u8>>,
 		}
 	}
 
@@ -1816,7 +1815,6 @@ mod fuzzy_internal_msgs {
 			payment_metadata: Option<&'a Vec<u8>>,
 			keysend_preimage: Option<PaymentPreimage>,
 			sender_custom_tlvs: &'a Vec<(u64, Vec<u8>)>,
-			user_custom_data: &'a Vec<u8>,
 			sender_intended_htlc_amt_msat: u64,
 			cltv_expiry_height: u32,
 		},
@@ -1832,7 +1830,6 @@ mod fuzzy_internal_msgs {
 			intro_node_blinding_point: Option<PublicKey>, // Set if the introduction node of the blinded path is the final node
 			keysend_preimage: Option<PaymentPreimage>,
 			sender_custom_tlvs: &'a Vec<(u64, Vec<u8>)>,
-			user_custom_data: &'a Vec<u8>,
 			invoice_request: Option<&'a InvoiceRequest>,
 		}
 	}
@@ -1872,7 +1869,6 @@ mod fuzzy_internal_msgs {
 			intro_node_blinding_point: Option<PublicKey>, // Set if the introduction node of the blinded path is the final node
 			keysend_preimage: Option<PaymentPreimage>,
 			sender_custom_tlvs: &'a Vec<(u64, Vec<u8>)>,
-			user_custom_data: &'a Vec<u8>,
 		}
 	}
 
@@ -2745,21 +2741,20 @@ impl<'a> Writeable for OutboundOnionPayload<'a> {
 			},
 			Self::Receive {
 				ref payment_data, ref payment_metadata, ref keysend_preimage, sender_intended_htlc_amt_msat,
-				cltv_expiry_height, ref sender_custom_tlvs, ref user_custom_data
+				cltv_expiry_height, ref sender_custom_tlvs
 			} => {
 				// We need to update [`ln::outbound_payment::RecipientOnionFields::with_sender_custom_tlvs`]
 				// to reject any reserved types in the experimental range if new ones are ever
 				// standardized.
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
 				let keysend_tlv = keysend_preimage.map(|preimage| (5482373484, preimage.encode()));
-				let mut custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter().chain(keysend_tlv.iter()).chain(user_custom_data.iter()).collect();
-				custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
+				let mut sender_custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter().chain(keysend_tlv.iter()).collect();
+				sender_custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
 				_encode_varint_length_prefixed_tlv!(w, {
 					(2, HighZeroBytesDroppedBigSize(*sender_intended_htlc_amt_msat), required),
 					(4, HighZeroBytesDroppedBigSize(*cltv_expiry_height), required),
 					(8, payment_data, option),
 					(16, payment_metadata.map(|m| WithoutLength(m)), option)
-				}, custom_tlvs.iter());
+				}, sender_custom_tlvs.iter());
 			},
 			Self::BlindedForward { encrypted_tlvs, intro_node_blinding_point } => {
 				_encode_varint_length_prefixed_tlv!(w, {
@@ -2769,27 +2764,25 @@ impl<'a> Writeable for OutboundOnionPayload<'a> {
 			},
 			Self::BlindedReceive {
 				sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, encrypted_tlvs,
-				intro_node_blinding_point, keysend_preimage, ref invoice_request, ref sender_custom_tlvs, ref user_custom_data
+				intro_node_blinding_point, keysend_preimage, ref invoice_request, ref sender_custom_tlvs
 			} => {
 				// We need to update [`ln::outbound_payment::RecipientOnionFields::with_sender_custom_tlvs`]
 				// to reject any reserved types in the experimental range if new ones are ever
 				// standardized.
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
 				let invoice_request_tlv = invoice_request.map(|invreq| (77_777, invreq.encode())); // TODO: update TLV type once the async payments spec is merged
 				let keysend_tlv = keysend_preimage.map(|preimage| (5482373484, preimage.encode()));
-				let mut custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter()
-					.chain(user_custom_data.iter())
+				let mut sender_custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter()
 					.chain(invoice_request_tlv.iter())
 					.chain(keysend_tlv.iter())
 					.collect();
-				custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
+				sender_custom_tlvs.sort_unstable_by_key(|(typ, _)| *typ);
 				_encode_varint_length_prefixed_tlv!(w, {
 					(2, HighZeroBytesDroppedBigSize(*sender_intended_htlc_amt_msat), required),
 					(4, HighZeroBytesDroppedBigSize(*cltv_expiry_height), required),
 					(10, **encrypted_tlvs, required_vec),
 					(12, intro_node_blinding_point, option),
 					(18, HighZeroBytesDroppedBigSize(*total_msat), required)
-				}, custom_tlvs.iter());
+				}, sender_custom_tlvs.iter());
 			},
 		}
 		Ok(())
@@ -2831,11 +2824,7 @@ impl<'a> Writeable for OutboundTrampolinePayload<'a> {
 					(12, intro_node_blinding_point, option)
 				});
 			},
-			Self::BlindedReceive { sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, encrypted_tlvs, intro_node_blinding_point, keysend_preimage, sender_custom_tlvs, user_custom_data} => {
-				let user_custom_data = (!user_custom_data.is_empty()).then(|| (65539, user_custom_data.to_vec()));
-				let custom_tlvs: Vec<&(u64, Vec<u8>)> = sender_custom_tlvs.iter()
-					.chain(user_custom_data.iter())
-					.collect();
+			Self::BlindedReceive { sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, encrypted_tlvs, intro_node_blinding_point, keysend_preimage, sender_custom_tlvs } => {
 				_encode_varint_length_prefixed_tlv!(w, {
 					(2, HighZeroBytesDroppedBigSize(*sender_intended_htlc_amt_msat), required),
 					(4, HighZeroBytesDroppedBigSize(*cltv_expiry_height), required),
@@ -2843,7 +2832,7 @@ impl<'a> Writeable for OutboundTrampolinePayload<'a> {
 					(12, intro_node_blinding_point, option),
 					(18, HighZeroBytesDroppedBigSize(*total_msat), required),
 					(20, keysend_preimage, option)
-				}, custom_tlvs.iter());
+				}, sender_custom_tlvs.iter());
 			}
 		}
 		Ok(())
@@ -2941,7 +2930,7 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 						intro_node_blinding_point,
 						keysend_preimage,
 						sender_custom_tlvs,
-						user_custom_data: vec![],
+						user_custom_data: None,
 					})
 				},
 			}
@@ -2970,7 +2959,6 @@ impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload wh
 				sender_intended_htlc_amt_msat: amt.ok_or(DecodeError::InvalidValue)?,
 				cltv_expiry_height: cltv_value.ok_or(DecodeError::InvalidValue)?,
 				sender_custom_tlvs,
-				user_custom_data: vec![],
 			})
 		}
 	}
@@ -4582,7 +4570,6 @@ mod tests {
 			sender_intended_htlc_amt_msat: 0x0badf00d01020304,
 			cltv_expiry_height: 0xffffffff,
 			sender_custom_tlvs: &vec![],
-			user_custom_data: &vec![],
 		};
 		let encoded_value = outbound_msg.encode();
 		let target_value = <Vec<u8>>::from_hex("1002080badf00d010203040404ffffffff").unwrap();
@@ -4611,7 +4598,6 @@ mod tests {
 			sender_intended_htlc_amt_msat: 0x0badf00d01020304,
 			cltv_expiry_height: 0xffffffff,
 			sender_custom_tlvs: &vec![],
-			user_custom_data: &vec![],
 		};
 		let encoded_value = outbound_msg.encode();
 		let target_value = <Vec<u8>>::from_hex("3602080badf00d010203040404ffffffff082442424242424242424242424242424242424242424242424242424242424242421badca1f").unwrap();
@@ -4628,13 +4614,11 @@ mod tests {
 			payment_metadata: None,
 			keysend_preimage: None,
 			sender_custom_tlvs,
-			user_custom_data,
 		} = inbound_msg  {
 			assert_eq!(payment_secret, expected_payment_secret);
 			assert_eq!(sender_intended_htlc_amt_msat, 0x0badf00d01020304);
 			assert_eq!(cltv_expiry_height, 0xffffffff);
 			assert_eq!(sender_custom_tlvs, vec![]);
-			assert_eq!(user_custom_data, vec![]);
 		} else { panic!(); }
 	}
 
@@ -4651,7 +4635,6 @@ mod tests {
 			payment_metadata: None,
 			keysend_preimage: None,
 			sender_custom_tlvs: &bad_type_range_tlvs,
-			user_custom_data: &vec![],
 			sender_intended_htlc_amt_msat: 0x0badf00d01020304,
 			cltv_expiry_height: 0xffffffff,
 		};
@@ -4684,7 +4667,6 @@ mod tests {
 			payment_metadata: None,
 			keysend_preimage: None,
 			sender_custom_tlvs: &expected_sender_custom_tlvs,
-			user_custom_data: &vec![],
 			sender_intended_htlc_amt_msat: 0x0badf00d01020304,
 			cltv_expiry_height: 0xffffffff,
 		};
@@ -4813,7 +4795,6 @@ mod tests {
 			intro_node_blinding_point: None,
 			keysend_preimage: None,
 			sender_custom_tlvs: &vec![],
-			user_custom_data: &vec![],
 		};
 		let eve_payload = trampoline_payload_eve.encode().to_lower_hex_string();
 		assert_eq!(eve_payload, "e4020408f0d18004030c35000ad1bcd747394fbd4d99588da075a623316e15a576df5bc785cccc7cd6ec7b398acce6faf520175f9ec920f2ef261cdb83dc28cc3a0eeb970107b3306489bf771ef5b1213bca811d345285405861d08a655b6c237fa247a8b4491beee20c878a60e9816492026d8feb9dafa84585b253978db6a0aa2945df5ef445c61e801fb82f43d5f00716baf9fc9b3de50bc22950a36bda8fc27bfb1242e5860c7e687438d4133e058770361a19b6c271a2a07788d34dccc27e39b9829b061a4d960eac4a2c2b0f4de506c24f9af3868c0aff6dda27281c120408f0d180");

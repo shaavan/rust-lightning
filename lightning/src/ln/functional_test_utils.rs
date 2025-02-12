@@ -2646,7 +2646,7 @@ pub struct PassAlongPathArgs<'a, 'b, 'c, 'd> {
 	pub expected_preimage: Option<PaymentPreimage>,
 	pub is_probe: bool,
 	pub sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-	pub user_custom_data: Vec<u8>,
+	pub user_custom_data: Option<Vec<u8>>,
 	pub payment_metadata: Option<Vec<u8>>,
 	pub expected_failure: Option<HTLCDestination>,
 }
@@ -2659,7 +2659,7 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node, expected_path, recv_value, payment_hash, payment_secret: None, event,
 			payment_claimable_expected: true, clear_recipient_events: true, expected_preimage: None,
-			is_probe: false, sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(),  payment_metadata: None, expected_failure: None,
+			is_probe: false, sender_custom_tlvs: Vec::new(), user_custom_data: None, payment_metadata: None, expected_failure: None,
 		}
 	}
 	pub fn without_clearing_recipient_events(mut self) -> Self {
@@ -2857,7 +2857,7 @@ pub struct ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	pub skip_last: bool,
 	pub payment_preimage: PaymentPreimage,
 	pub sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-	pub user_custom_data: Vec<u8>,
+	pub user_custom_data: Option<Vec<u8>>,
 	// Allow forwarding nodes to have taken 1 msat more fee than expected based on the downstream
 	// fulfill amount.
 	//
@@ -2876,7 +2876,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node, expected_paths, expected_extra_fees: vec![0; expected_paths.len()],
 			expected_min_htlc_overpay: vec![0; expected_paths.len()], skip_last: false, payment_preimage,
-			allow_1_msat_fee_overpay: false, sender_custom_tlvs: vec![], user_custom_data: vec![]
+			allow_1_msat_fee_overpay: false, sender_custom_tlvs: vec![], user_custom_data: None,
 		}
 	}
 	pub fn skip_last(mut self, skip_last: bool) -> Self {
@@ -2900,7 +2900,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 		self
 	}
 	pub fn with_user_custom_data(mut self, user_custom_data: Vec<u8>) -> Self {
-		self.user_custom_data = user_custom_data;
+		self.user_custom_data = Some(user_custom_data);
 		self
 	}
 }

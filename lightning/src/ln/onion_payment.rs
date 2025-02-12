@@ -138,10 +138,10 @@ pub(super) fn create_recv_pending_htlc_info(
 		payment_metadata, payment_context, requires_blinded_error, has_recipient_created_payment_secret
 	) = match hop_data {
 		msgs::InboundOnionPayload::Receive {
-			payment_data, keysend_preimage, sender_custom_tlvs, user_custom_data, sender_intended_htlc_amt_msat,
+			payment_data, keysend_preimage, sender_custom_tlvs, sender_intended_htlc_amt_msat,
 			cltv_expiry_height, payment_metadata, ..
 		} =>
-			(payment_data, keysend_preimage, sender_custom_tlvs, user_custom_data, sender_intended_htlc_amt_msat,
+			(payment_data, keysend_preimage, sender_custom_tlvs, None, sender_intended_htlc_amt_msat,
 			 cltv_expiry_height, payment_metadata, None, false, keysend_preimage.is_none()),
 		msgs::InboundOnionPayload::BlindedReceive {
 			sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, payment_secret,
