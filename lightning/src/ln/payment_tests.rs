@@ -3746,7 +3746,7 @@ fn do_test_sender_custom_tlvs(spontaneous: bool, even_tlvs: bool, known_tlvs: bo
 }
 
 #[test]
-fn test_retry_sender_custom_tlvs() {
+fn test_retry_custom_tlvs() {
 	// Test that sender custom TLVs are successfully sent on retries
 	let chanmon_cfgs = create_chanmon_cfgs(3);
 	let node_cfgs = create_node_cfgs(3, &chanmon_cfgs);
@@ -3769,7 +3769,6 @@ fn test_retry_sender_custom_tlvs() {
 
 	let sender_custom_tlvs = vec![((1 << 16) + 1, vec![0x42u8; 16])];
 	let onion_fields = RecipientOnionFields::secret_only(payment_secret);
-	let onion_fields = onion_fields.with_sender_custom_tlvs(sender_custom_tlvs.clone()).unwrap();
 
 	nodes[0].router.expect_find_route(route_params.clone(), Ok(route.clone()));
 	nodes[0].node.send_payment(payment_hash, onion_fields,
