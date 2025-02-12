@@ -105,7 +105,7 @@ pub(crate) enum PendingOutboundPayment {
 		keysend_preimage: Option<PaymentPreimage>,
 		invoice_request: Option<InvoiceRequest>,
 		sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
-		user_custom_data: Vec<u8>,
+		user_custom_data: Option<Vec<u8>>,
 		pending_amt_msat: u64,
 		/// Used to track the fee paid. Present iff the payment was serialized on 0.0.103+.
 		pending_fee_msat: Option<u64>,
@@ -634,14 +634,14 @@ pub struct RecipientOnionFields {
 	/// See [`Self::sender_custom_tlvs`] for more info.
 	pub(super) sender_custom_tlvs: Vec<(u64, Vec<u8>)>,
 	/// See [`Self::user_custom_data`] for more info.
-	pub(super) user_custom_data: Vec<u8>
+	pub(super) user_custom_data: Option<Vec<u8>>
 }
 
 impl_writeable_tlv_based!(RecipientOnionFields, {
 	(0, payment_secret, option),
 	(1, sender_custom_tlvs, optional_vec),
 	(2, payment_metadata, option),
-	(3, user_custom_data, optional_vec),
+	(3, user_custom_data, option),
 });
 
 impl RecipientOnionFields {
@@ -649,7 +649,7 @@ impl RecipientOnionFields {
 	/// set of onion fields for today's BOLT11 invoices - most nodes require a [`PaymentSecret`]
 	/// but do not require or provide any further data.
 	pub fn secret_only(payment_secret: PaymentSecret) -> Self {
-		Self { payment_secret: Some(payment_secret), payment_metadata: None, sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new() }
+		Self { payment_secret: Some(payment_secret), payment_metadata: None, sender_custom_tlvs: Vec::new(), user_custom_data: None }
 	}
 
 	/// Creates a new [`RecipientOnionFields`] with no fields. This generally does not create
@@ -661,7 +661,7 @@ impl RecipientOnionFields {
 	/// [`ChannelManager::send_spontaneous_payment`]: super::channelmanager::ChannelManager::send_spontaneous_payment
 	/// [`RecipientOnionFields::secret_only`]: RecipientOnionFields::secret_only
 	pub fn spontaneous_empty() -> Self {
-		Self { payment_secret: None, payment_metadata: None, sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new()}
+		Self { payment_secret: None, payment_metadata: None, sender_custom_tlvs: Vec::new(), user_custom_data: None}
 	}
 
 	/// Creates a new [`RecipientOnionFields`] from an existing one, adding sender custom TLVs. Each
@@ -694,7 +694,7 @@ impl RecipientOnionFields {
 	/// 
 	/// See [`Self::user_custom_data`] for more info.
 	pub fn with_user_custom_data(mut self, custom_data: Vec<u8>) -> Self {
-		self.user_custom_data = custom_data;
+		self.user_custom_data = Some(custom_data);
 		self
 	}
 
@@ -707,7 +707,7 @@ impl RecipientOnionFields {
 	/// This provides additional flexibility to users by enabling them to include
 	/// extra data they want to receive back, which can be used for authentication
 	/// or other purposes.
-	pub fn user_custom_data(&self) -> &Vec<u8> {
+	pub fn user_custom_data(&self) -> &Option<Vec<u8>> {
 		&self.user_custom_data
 	}
 
@@ -966,7 +966,7 @@ impl OutboundPayments {
 			payment_secret: None,
 			payment_metadata: None,
 			sender_custom_tlvs: vec![],
-			user_custom_data: vec![],
+			user_custom_data: None,
 		};
 		let route = match self.find_initial_route(
 			payment_id, payment_hash, &recipient_onion, keysend_preimage, invoice_request,
@@ -2299,7 +2299,8 @@ impl OutboundPayments {
 					payment_metadata: None, // only used for retries, and we'll never retry on startup
 					keysend_preimage: None, // only used for retries, and we'll never retry on startup
 					invoice_request: None, // only used for retries, and we'll never retry on startup
-					sender_custom_tlvs: Vec::new(), user_custom_data: Vec::new(),  // only used for retries, and we'll never retry on startup
+					sender_custom_tlvs: Vec::new(), // only used for retries, and we'll never retry on startup
+					user_custom_data: None, // only used for retries, and we'll never retry on startup
 					pending_amt_msat: path_amt,
 					pending_fee_msat: Some(path_fee),
 					total_msat: path_amt,
@@ -2387,7 +2388,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		(10, starting_block_height, required),
 		(11, remaining_max_total_routing_fee_msat, option),
 		(13, invoice_request, option),
-		(15, user_custom_data, optional_vec),
+		(15, user_custom_data, option),
 		(not_written, retry_strategy, (static_value, None)),
 		(not_written, attempts, (static_value, PaymentAttempts::new())),
 	},
