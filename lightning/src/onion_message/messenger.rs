@@ -35,6 +35,7 @@ use crate::blinded_path::{IntroductionNode, NodeIdLookUp};
 use crate::events::{Event, EventHandler, EventsProvider, ReplayEvent};
 use crate::ln::msgs::{self, OnionMessage, OnionMessageHandler, SocketAddress};
 use crate::ln::onion_utils;
+use crate::offers::flow::SimpleArcOffersMessageFlow;
 use crate::routing::gossip::{NetworkGraph, NodeId, ReadOnlyNetworkGraph};
 use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::types::features::{InitFeatures, NodeFeatures};
@@ -2105,7 +2106,7 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 	Arc<L>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
-	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<SimpleArcOffersMessageFlow<M, T, F, L>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	IgnoringMessageHandler,
@@ -2126,7 +2127,7 @@ pub type SimpleArcOnionMessenger<M, T, F, L> = OnionMessenger<
 	Arc<L>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	Arc<DefaultMessageRouter<Arc<NetworkGraph<Arc<L>>>, Arc<L>, Arc<KeysManager>>>,
-	Arc<SimpleArcChannelManager<M, T, F, L>>,
+	Arc<SimpleArcOffersMessageFlow<M, T, F, L>>,
 	Arc<SimpleArcChannelManager<M, T, F, L>>,
 	IgnoringMessageHandler,
 	IgnoringMessageHandler,
