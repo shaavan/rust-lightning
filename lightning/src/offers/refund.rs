@@ -76,11 +76,11 @@
 //!
 //! # Note
 //!
-//! If constructing a [`Refund`] for use with a [`ChannelManager`], use
-//! [`ChannelManager::create_refund_builder`] instead of [`RefundBuilder::new`].
+//! If constructing a [`Refund`] for use with a [`OffersMessageFlow`], use
+//! [`OffersMessageFlow::create_refund_builder`] instead of [`RefundBuilder::new`].
 //!
-//! [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
-//! [`ChannelManager::create_refund_builder`]: crate::ln::channelmanager::ChannelManager::create_refund_builder
+//! [`OffersMessageFlow`]: crate::offers::flow::OffersMessageFlow
+//! [`OffersMessageFlow::create_refund_builder`]: crate::offers::flow::OffersMessageFlow::create_refund_builder
 
 use bitcoin::constants::ChainHash;
 use bitcoin::network::Network;

@@ -71,11 +71,11 @@
 //!
 //! # Note
 //!
-//! If constructing an [`Offer`] for use with a [`ChannelManager`], use
-//! [`ChannelManager::create_offer_builder`] instead of [`OfferBuilder::new`].
+//! If constructing an [`Offer`] for use with a [`OffersMessageFlow`], use
+//! [`OffersMessageFlow::create_offer_builder`] instead of [`OfferBuilder::new`].
 //!
-//! [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
-//! [`ChannelManager::create_offer_builder`]: crate::ln::channelmanager::ChannelManager::create_offer_builder
+//! [`OffersMessageFlow`]: crate::offers::flow::OffersMessageFlow
+//! [`ChannelManager::create_offer_builder`]: crate::offers::flow::OffersMessageFlow::create_offer_builder
 
 use core::borrow::Borrow;
 use bitcoin::constants::ChainHash;
