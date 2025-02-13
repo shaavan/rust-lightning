@@ -170,7 +170,7 @@ fn static_invoice_unknown_required_features() {
 	let amt_msat = 5000;
 	let payment_id = PaymentId([1; 32]);
 	nodes[0]
-		.node
+		.offers_handler
 		.pay_for_offer(&offer, None, Some(amt_msat), None, payment_id, Retry::Attempts(0), None)
 		.unwrap();
 
@@ -230,7 +230,7 @@ fn ignore_unexpected_static_invoice() {
 	let amt_msat = 5000;
 	let payment_id = PaymentId([1; 32]);
 	nodes[0]
-		.node
+		.offers_handler
 		.pay_for_offer(&offer, None, Some(amt_msat), None, payment_id, Retry::Attempts(0), None)
 		.unwrap();
 
@@ -339,7 +339,7 @@ fn pays_static_invoice() {
 	let amt_msat = 5000;
 	let payment_id = PaymentId([1; 32]);
 	nodes[0]
-		.node
+		.offers_handler
 		.pay_for_offer(&offer, None, Some(amt_msat), None, payment_id, Retry::Attempts(0), None)
 		.unwrap();
 
@@ -433,7 +433,7 @@ fn expired_static_invoice_fail() {
 	let amt_msat = 5000;
 	let payment_id = PaymentId([1; 32]);
 	nodes[0]
-		.node
+		.offers_handler
 		.pay_for_offer(&offer, None, Some(amt_msat), None, payment_id, Retry::Attempts(0), None)
 		.unwrap();
 
