@@ -2123,7 +2123,7 @@ where
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
-/// #     payer_note: Option<String>, retry: Retry, route_params_config: Option<RouteParametersConfig>
+/// #     payer_note: Option<String>, retry: Retry, route_params_config: RouteParametersConfig
 /// # ) {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
@@ -2180,7 +2180,7 @@ where
 /// #
 /// # fn example<T: AChannelManager>(
 /// #     channel_manager: T, amount_msats: u64, absolute_expiry: Duration, retry: Retry,
-/// #     route_params_config: Option<RouteParametersConfig>
+/// #     route_params_config: RouteParametersConfig
 /// # ) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
 /// let payment_id = PaymentId([42; 32]);
@@ -9884,7 +9884,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
 	pub fn create_refund_builder(
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
-		retry_strategy: Retry, route_params_config: Option<RouteParametersConfig>
+		retry_strategy: Retry, route_params_config: RouteParametersConfig
 	) -> Result<$builder, Bolt12SemanticError> {
 		let node_id = $self.get_our_node_id();
 		let expanded_key = &$self.inbound_payment_key;
@@ -10085,7 +10085,7 @@ where
 	pub fn pay_for_offer(
 		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
 		payer_note: Option<String>, payment_id: PaymentId, retry_strategy: Retry,
-		route_params_config: Option<RouteParametersConfig>
+		route_params_config: RouteParametersConfig
 	) -> Result<(), Bolt12SemanticError> {
 		self.pay_for_offer_intern(offer, quantity, amount_msats, payer_note, payment_id, None, |invoice_request, nonce| {
 			let expiration = StaleExpiration::TimerTicks(1);
@@ -10329,7 +10329,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pub fn pay_for_offer_from_human_readable_name(
 		&self, name: HumanReadableName, amount_msats: u64, payment_id: PaymentId,
-		retry_strategy: Retry, route_params_config: Option<RouteParametersConfig>,
+		retry_strategy: Retry, route_params_config: RouteParametersConfig,
 		dns_resolvers: Vec<Destination>,
 	) -> Result<(), ()> {
 		let (onion_message, context) =
