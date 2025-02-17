@@ -1711,10 +1711,9 @@ impl OutboundPayments {
 	#[cfg(feature = "dnssec")]
 	pub(super) fn add_new_awaiting_offer(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
-		route_params_config: Option<RouteParametersConfig>, amount_msats: u64,
+		route_params_config: RouteParametersConfig, amount_msats: u64,
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
-		let route_params_config = route_params_config.unwrap_or(RouteParametersConfig::default());
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -1767,10 +1766,9 @@ impl OutboundPayments {
 
 	pub(super) fn add_new_awaiting_invoice(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
-		route_params_config: Option<RouteParametersConfig>, retryable_invoice_request: Option<RetryableInvoiceRequest>
+		route_params_config: RouteParametersConfig, retryable_invoice_request: Option<RetryableInvoiceRequest>
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
-		let route_params_config = route_params_config.unwrap_or(RouteParametersConfig::default());
 		match pending_outbounds.entry(payment_id) {
 			hash_map::Entry::Occupied(_) => Err(()),
 			hash_map::Entry::Vacant(entry) => {
@@ -2706,7 +2704,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2736,14 +2734,14 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_err()
 		);
 	}
@@ -2759,7 +2757,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2789,14 +2787,14 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_err()
 		);
 	}
@@ -2811,7 +2809,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2849,7 +2847,7 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), None, None,
+				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -2915,7 +2913,7 @@ mod tests {
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
 				payment_id, expiration, Retry::Attempts(0),
-				Some(route_params_config), None,
+				route_params_config, None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3016,7 +3014,7 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), Some(route_params_config), None,
+				payment_id, expiration, Retry::Attempts(0), route_params_config, None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
