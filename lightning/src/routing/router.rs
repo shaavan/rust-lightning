@@ -1081,7 +1081,7 @@ impl_writeable_tlv_based!(RouteParametersConfig, {
 
 impl RouteParametersConfig {
 	/// Initates an new set of route parameter configs with default parameters.
-	pub fn new() -> Self {
+	pub fn default() -> Self {
 		Self {
 			max_total_routing_fee_msat: None,
 			max_total_cltv_expiry_delta: DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA,
