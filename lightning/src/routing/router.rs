@@ -949,7 +949,7 @@ impl PaymentParameters {
 			max_total_cltv_expiry_delta: params_config.max_total_cltv_expiry_delta,
 			max_path_count: params_config.max_path_count,
 			max_channel_saturation_power_of_half: params_config.max_channel_saturation_power_of_half,
-			.. self
+			..self
 		}
 	}
 
