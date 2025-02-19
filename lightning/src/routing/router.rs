@@ -1039,7 +1039,7 @@ pub struct RouteParametersConfig {
 	/// paths.
 	///
 	/// Note that values below a few sats may result in some paths being spuriously ignored.
-	/// 
+	///
 	/// Defaults to 1% of the payment amount + 50 sats
 	pub max_total_routing_fee_msat: Option<u64>,
 
@@ -1075,16 +1075,6 @@ impl_writeable_tlv_based!(RouteParametersConfig, {
 });
 
 impl RouteParametersConfig {
-	/// Initates an new set of route parameter configs with default parameters.
-	pub fn new() -> Self {
-		Self {
-			max_total_routing_fee_msat: None,
-			max_total_cltv_expiry_delta: DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA,
-			max_path_count: DEFAULT_MAX_PATH_COUNT,
-			max_channel_saturation_power_of_half: DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF,
-		}
-	}
-
 	/// Set the maximum total fees, in millisatoshi, that may accrue during route finding.
 	///
 	/// This is not exported to bindings users since bindings don't support move semantics
@@ -1112,6 +1102,18 @@ impl RouteParametersConfig {
 	/// This is not exported to bindings users since bindings don't support move semantics
 	pub fn with_max_channel_saturation_power_of_half(self, max_channel_saturation_power_of_half: u8) -> Self {
 		Self { max_channel_saturation_power_of_half, ..self }
+	}
+}
+
+impl Default for RouteParametersConfig {
+	/// Initates an new set of route parameter configs with default parameters.
+	fn default() -> Self {
+		Self {
+			max_total_routing_fee_msat: None,
+			max_total_cltv_expiry_delta: DEFAULT_MAX_TOTAL_CLTV_EXPIRY_DELTA,
+			max_path_count: DEFAULT_MAX_PATH_COUNT,
+			max_channel_saturation_power_of_half: DEFAULT_MAX_CHANNEL_SATURATION_POW_HALF,
+		}
 	}
 }
 
