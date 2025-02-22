@@ -12,6 +12,7 @@
 use bitcoin::hashes::Hash;
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::secp256k1::{self, Secp256k1, SecretKey};
+use lightning_invoice::Bolt11Invoice;
 
 use crate::blinded_path::{IntroductionNode, NodeIdLookUp};
 use crate::events::{self, PaymentFailureReason};
@@ -817,6 +818,49 @@ impl OutboundPayments {
 		self.send_payment_internal(payment_id, payment_hash, recipient_onion, None, retry_strategy,
 			route_params, router, first_hops, &compute_inflight_htlcs, entropy_source, node_signer,
 			best_block_height, logger, pending_events, &send_payment_along_path)
+	}
+
+	pub(super) fn pay_for_bolt11_invoice<R: Deref, ES: Deref, NS: Deref, IH, SP, L: Deref>(
+		&self, invoice: &Bolt11Invoice, amount_msats: Option<u64>,
+		route_params_config: RouteParametersConfig,
+		retry_strategy: Retry,
+		router: &R,
+		first_hops: Vec<ChannelDetails>, compute_inflight_htlcs: IH, entropy_source: &ES,
+		node_signer: &NS, best_block_height: u32, logger: &L,
+		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>, send_payment_along_path: SP,
+	) -> Result<(), RetryableSendFailure>
+	where 
+		R::Target: Router,
+		ES::Target: EntropySource,
+		NS::Target: NodeSigner,
+		L::Target: Logger,
+		IH: Fn() -> InFlightHtlcs,
+		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
+	{
+		let payment_hash = PaymentHash((*invoice.payment_hash()).to_byte_array());
+		let payment_id = PaymentId(payment_hash.0);
+
+		let amount = match (invoice.amount_milli_satoshis(), amount_msats) {
+			(Some(amt), None) | (None, Some(amt)) => amt,
+			(None, None) | (Some(_), Some(_)) => return Err(RetryableSendFailure::DuplicatePayment), // change error properly
+		};
+
+		let mut recipient_onion = RecipientOnionFields::secret_only(*invoice.payment_secret());
+		recipient_onion.payment_metadata = invoice.payment_metadata().map(|v| v.clone());
+		
+		let payment_params = PaymentParameters::from_bolt11_invoice(invoice)
+			.with_user_config(route_params_config);
+
+		let mut route_params = RouteParameters::from_payment_params_and_value(payment_params, amount);
+
+		if let Some(max_fee_msat) = route_params_config.max_total_routing_fee_msat {
+			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
+		}
+
+		self.send_payment(payment_hash, recipient_onion, payment_id, retry_strategy, route_params,
+			router, first_hops, compute_inflight_htlcs,
+			entropy_source, node_signer, best_block_height, logger,
+			pending_events, send_payment_along_path)
 	}
 
 	pub(super) fn send_spontaneous_payment<R: Deref, ES: Deref, NS: Deref, IH, SP, L: Deref>(

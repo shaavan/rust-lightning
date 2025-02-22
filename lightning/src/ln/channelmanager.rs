@@ -4738,6 +4738,16 @@ where
 				&self.pending_events, |args| self.send_payment_along_path(args))
 	}
 
+	pub fn pay_for_bolt11_invoice(&self, invoice: &Bolt11Invoice, amount_msats: Option<u64>, route_params_config: RouteParametersConfig, retry_strategy: Retry) -> Result<(), RetryableSendFailure> {
+		let best_block_height = self.best_block.read().unwrap().height;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+		self.pending_outbound_payments
+			.pay_for_bolt11_invoice(invoice, amount_msats, route_params_config, retry_strategy,
+				&self.router, self.list_usable_channels(), || self.compute_inflight_htlcs(),
+				&self.entropy_source, &self.node_signer, best_block_height, &self.logger,
+				&self.pending_events, |args| self.send_payment_along_path(args))
+	}
+
 	#[cfg(test)]
 	pub(super) fn test_send_payment_internal(&self, route: &Route, payment_hash: PaymentHash, recipient_onion: RecipientOnionFields, keysend_preimage: Option<PaymentPreimage>, payment_id: PaymentId, recv_value_msat: Option<u64>, onion_session_privs: Vec<[u8; 32]>) -> Result<(), PaymentSendFailure> {
 		let best_block_height = self.best_block.read().unwrap().height;
