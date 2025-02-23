@@ -2036,38 +2036,25 @@ where
 /// [`send_payment`].
 ///
 /// ```
+/// # use bitcoin::hashes::Hash;
 /// # use lightning::events::{Event, EventsProvider};
 /// # use lightning::types::payment::PaymentHash;
-/// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry};
-/// # use lightning::routing::router::RouteParameters;
-/// #
+/// # use lightning::ln::channelmanager::{AChannelManager, PaymentId, RecentPaymentDetails, Retry};
+/// # use lightning::routing::router::RouteParametersConfig;
+/// # use lightning_invoice::Bolt11Invoice;
+///
 /// # fn example<T: AChannelManager>(
-/// #     channel_manager: T, payment_hash: PaymentHash, recipient_onion: RecipientOnionFields,
-/// #     route_params: RouteParameters, retry: Retry
+/// #     channel_manager: T, invoice: &Bolt11Invoice, route_params_config: RouteParametersConfig,
+/// #     retry: Retry
 /// # ) {
 /// # let channel_manager = channel_manager.get_cm();
-/// // let (payment_hash, recipient_onion, route_params) =
-/// //     payment::payment_parameters_from_invoice(&invoice);
-/// let payment_id = PaymentId([42; 32]);
-/// match channel_manager.send_payment(
-///     payment_hash, recipient_onion, payment_id, route_params, retry
+/// # let payment_hash = PaymentHash((*invoice.payment_hash()).to_byte_array());
+/// match channel_manager.pay_for_bolt11_invoice(
+///     invoice, None, route_params_config, retry
 /// ) {
 ///     Ok(()) => println!("Sending payment with hash {}", payment_hash),
 ///     Err(e) => println!("Failed sending payment with hash {}: {:?}", payment_hash, e),
 /// }
-///
-/// let expected_payment_id = payment_id;
-/// let expected_payment_hash = payment_hash;
-/// assert!(
-///     channel_manager.list_recent_payments().iter().find(|details| matches!(
-///         details,
-///         RecentPaymentDetails::Pending {
-///             payment_id: expected_payment_id,
-///             payment_hash: expected_payment_hash,
-///             ..
-///         }
-///     )).is_some()
-/// );
 ///
 /// // On the event processing thread
 /// channel_manager.process_pending_events(&|event| {
@@ -4739,9 +4726,9 @@ where
 	}
 
 	/// Pays a Bolt11 invoice.
-	/// 
+	///
 	/// Note on amount:
-	/// 
+	///
 	/// If the user call the function with Some(amount_msats), they must ensure that the amount is not present within the invoice, and vice versa.
 	pub fn pay_for_bolt11_invoice(&self, invoice: &Bolt11Invoice, amount_msats: Option<u64>, route_params_config: RouteParametersConfig, retry_strategy: Retry) -> Result<(), RetryableSendFailure> {
 		let best_block_height = self.best_block.read().unwrap().height;

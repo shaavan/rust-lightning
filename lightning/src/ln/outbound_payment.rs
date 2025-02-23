@@ -504,7 +504,7 @@ pub enum RetryableSendFailure {
 	/// Incorrect amount was provided to [`ChannelManager::pay_for_bolt11_invoice`].
 	/// This happens when an amount is specified when [`Bolt11Invoice`] already contains
 	/// an amount, and vice versa.
-	/// 
+	///
 	/// [`ChannelManager::pay_for_bolt11_invoice`]: crate::ln::channelmanager::ChannelManager::pay_for_bolt11_invoice
 	InvalidAmount,
 }
@@ -835,7 +835,7 @@ impl OutboundPayments {
 		node_signer: &NS, best_block_height: u32, logger: &L,
 		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>, send_payment_along_path: SP,
 	) -> Result<(), RetryableSendFailure>
-	where 
+	where
 		R::Target: Router,
 		ES::Target: EntropySource,
 		NS::Target: NodeSigner,
@@ -853,7 +853,7 @@ impl OutboundPayments {
 
 		let mut recipient_onion = RecipientOnionFields::secret_only(*invoice.payment_secret());
 		recipient_onion.payment_metadata = invoice.payment_metadata().map(|v| v.clone());
-		
+
 		let payment_params = PaymentParameters::from_bolt11_invoice(invoice)
 			.with_user_config(route_params_config);
 

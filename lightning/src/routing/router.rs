@@ -911,6 +911,9 @@ impl PaymentParameters {
 			.expect("PaymentParameters::from_node_id should always initialize the payee as unblinded")
 	}
 
+	/// Creates parameters for paying to a blinded payee from the provided invoice. Sets
+	/// [`Payee::Blinded::route_hints`], [`Payee::Blinded::features`], and
+	/// [`PaymentParameters::expiry_time`].
 	pub fn from_bolt11_invoice(invoice: &Bolt11Invoice) -> Self {
 		let mut payment_params = Self::from_node_id(
 			invoice.recover_payee_pub_key(),
