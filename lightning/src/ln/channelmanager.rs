@@ -4738,6 +4738,11 @@ where
 				&self.pending_events, |args| self.send_payment_along_path(args))
 	}
 
+	/// Pays a Bolt11 invoice.
+	/// 
+	/// Note on amount:
+	/// 
+	/// If the user call the function with Some(amount_msats), they must ensure that the amount is not present within the invoice, and vice versa.
 	pub fn pay_for_bolt11_invoice(&self, invoice: &Bolt11Invoice, amount_msats: Option<u64>, route_params_config: RouteParametersConfig, retry_strategy: Retry) -> Result<(), RetryableSendFailure> {
 		let best_block_height = self.best_block.read().unwrap().height;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);

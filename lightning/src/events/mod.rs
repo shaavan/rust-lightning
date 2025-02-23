@@ -598,6 +598,12 @@ pub enum PaymentFailureReason {
 	///
 	/// [`HeldHtlcAvailable`]: crate::onion_message::async_payments::HeldHtlcAvailable
 	BlindedPathCreationFailed,
+	/// Incorrect amount was provided to [`ChannelManager::pay_for_bolt11_invoice`].
+	/// This happens when an amount is specified when [`Bolt11Invoice`] already contains
+	/// an amount, and vice versa.
+	/// 
+	/// [`ChannelManager::pay_for_bolt11_invoice`]: crate::ln::channelmanager::ChannelManager::pay_for_bolt11_invoice
+	InvalidAmount,
 }
 
 impl_writeable_tlv_based_enum_upgradable!(PaymentFailureReason,
@@ -610,6 +616,7 @@ impl_writeable_tlv_based_enum_upgradable!(PaymentFailureReason,
 	(6, PaymentExpired) => {},
 	(7, BlindedPathCreationFailed) => {},
 	(8, RouteNotFound) => {},
+	(9, InvalidAmount) => {},
 	(10, UnexpectedError) => {},
 );
 
@@ -1702,7 +1709,9 @@ impl Writeable for Event {
 					Some(PaymentFailureReason::InvoiceRequestRejected) =>
 						&Some(PaymentFailureReason::RecipientRejected),
 					Some(PaymentFailureReason::BlindedPathCreationFailed) =>
-						&Some(PaymentFailureReason::RouteNotFound)
+						&Some(PaymentFailureReason::RouteNotFound),
+					Some(PaymentFailureReason::InvalidAmount) => 
+						&Some(PaymentFailureReason::InvalidAmount)
 				};
 				write_tlv_fields!(writer, {
 					(0, payment_id, required),
