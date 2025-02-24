@@ -598,9 +598,12 @@ pub enum PaymentFailureReason {
 	///
 	/// [`HeldHtlcAvailable`]: crate::onion_message::async_payments::HeldHtlcAvailable
 	BlindedPathCreationFailed,
-	/// Incorrect amount was provided to ChannelManager::pay_for_bolt11_invoice.
-	/// This happens when an amount is specified when Bolt11Invoice already contains
+	/// Incorrect amount was provided to [`ChannelManager::pay_for_bolt11_invoice`].
+	/// This happens when an amount is specified when [`Bolt11Invoice`] already contains
 	/// an amount, or vice versa.
+	///
+	/// [`Bolt11Invoice`]: lightning_invoice::Bolt11Invoice
+	/// [`ChannelManager::pay_for_bolt11_invoice`]: crate::ln::channelmanager::ChannelManager::pay_for_bolt11_invoice
 	InvalidAmount,
 }
 
