@@ -4725,11 +4725,18 @@ where
 				&self.pending_events, |args| self.send_payment_along_path(args))
 	}
 
-	/// Pays a Bolt11 invoice.
+	/// Pays a [`BOLT11Invoice`] associated with the `payment_id` embedded in the invoice's `payment_hash`.
 	///
-	/// Note on amount:
+	/// # Handling Invoice Amounts
+	/// Some invoices include a specific amount, while others require you to specify one.
+	/// - If the invoice **includes** an amount, user must not provide `amount_msats`.
+	/// - If the invoice **doesn't include** an amount, you'll need to specify `amount_msats`.
 	///
-	/// If the user call the function with Some(amount_msats), they must ensure that the amount is not present within the invoice, and vice versa.
+	/// If these conditions aren’t met, the function will return [`RetryableSendFailure::InvalidAmount`].
+	///
+	/// # Custom Routing Parameters
+	/// Users can customize routing parameters via [`RouteParametersConfig`].  
+	/// To use default settings, call the function with `RouteParametersConfig::default()`.
 	pub fn pay_for_bolt11_invoice(&self, invoice: &Bolt11Invoice, amount_msats: Option<u64>, route_params_config: RouteParametersConfig, retry_strategy: Retry) -> Result<(), RetryableSendFailure> {
 		let best_block_height = self.best_block.read().unwrap().height;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);

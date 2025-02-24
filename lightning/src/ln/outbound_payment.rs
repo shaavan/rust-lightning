@@ -503,7 +503,7 @@ pub enum RetryableSendFailure {
 	OnionPacketSizeExceeded,
 	/// Incorrect amount was provided to [`ChannelManager::pay_for_bolt11_invoice`].
 	/// This happens when an amount is specified when [`Bolt11Invoice`] already contains
-	/// an amount, and vice versa.
+	/// an amount, or vice versa.
 	///
 	/// [`ChannelManager::pay_for_bolt11_invoice`]: crate::ln::channelmanager::ChannelManager::pay_for_bolt11_invoice
 	InvalidAmount,
