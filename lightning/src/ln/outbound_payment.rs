@@ -500,6 +500,10 @@ pub enum RetryableSendFailure {
 	///
 	/// [`BlindedPaymentPath`]: crate::blinded_path::payment::BlindedPaymentPath
 	OnionPacketSizeExceeded,
+	/// Incorrect amount was provided to ChannelManager::pay_for_bolt11_invoice.
+	/// This happens when an amount is specified when Bolt11Invoice already contains
+	/// an amount, or vice versa.
+	InvalidAmount,
 }
 
 /// If a payment fails to send to a route, it can be in one of several states. This enum is returned
@@ -958,6 +962,7 @@ impl OutboundPayments {
 					RetryableSendFailure::RouteNotFound => PaymentFailureReason::RouteNotFound,
 					RetryableSendFailure::DuplicatePayment => PaymentFailureReason::UnexpectedError,
 					RetryableSendFailure::OnionPacketSizeExceeded => PaymentFailureReason::UnexpectedError,
+					RetryableSendFailure::InvalidAmount => PaymentFailureReason::InvalidAmount,
 				};
 				self.abandon_payment(payment_id, reason, pending_events);
 				return Err(Bolt12PaymentError::SendingFailed(e));
