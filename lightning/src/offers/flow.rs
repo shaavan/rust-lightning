@@ -56,6 +56,9 @@ pub trait OffersMessageCommons {
 	/// Get the current time determined by highest seen timestamp
 	fn get_current_blocktime(&self) -> Duration;
 
+	/// Get the approximate current time using the highest seen timestamp
+	fn get_highest_seen_timestamp(&self) -> u64;
+
 	/// Get the vector of peers that can be used for a blinded path
 	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode>;
 
@@ -66,40 +69,6 @@ pub trait OffersMessageCommons {
 	fn create_blinded_payment_paths(
 		&self, amount_msats: Option<u64>, payment_secret: PaymentSecret, payment_context: PaymentContext, relative_expiry_time: u32,
 	) -> Result<Vec<BlindedPaymentPath>, ()>;
-
-	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
-	/// to pay us.
-	///
-	/// This differs from [`create_inbound_payment_for_hash`] only in that it generates the
-	/// [`PaymentHash`] and [`PaymentPreimage`] for you.
-	///
-	/// The [`PaymentPreimage`] will ultimately be returned to you in the [`PaymentClaimable`] event, which
-	/// will have the [`PaymentClaimable::purpose`] return `Some` for [`PaymentPurpose::preimage`]. That
-	/// should then be passed directly to [`claim_funds`].
-	///
-	/// See [`create_inbound_payment_for_hash`] for detailed documentation on behavior and requirements.
-	///
-	/// Note that a malicious eavesdropper can intuit whether an inbound payment was created by
-	/// `create_inbound_payment` or `create_inbound_payment_for_hash` based on runtime.
-	///
-	/// # Note
-	///
-	/// If you register an inbound payment with this method, then serialize the `ChannelManager`, then
-	/// deserialize it with a node running 0.0.103 and earlier, the payment will fail to be received.
-	///
-	/// Errors if `min_value_msat` is greater than total bitcoin supply.
-	///
-	/// If `min_final_cltv_expiry_delta` is set to some value, then the payment will not be receivable
-	/// on versions of LDK prior to 0.0.114.
-	///
-	/// [`claim_funds`]: crate::ln::channelmanager::ChannelManager::claim_funds
-	/// [`PaymentClaimable`]: crate::events::Event::PaymentClaimable
-	/// [`PaymentClaimable::purpose`]: crate::events::Event::PaymentClaimable::purpose
-	/// [`PaymentPurpose::preimage`]: crate::events::PaymentPurpose::preimage
-	/// [`create_inbound_payment_for_hash`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment_for_hash
-	/// [`PaymentPreimage`]: crate::types::payment::PaymentPreimage
-	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()>;
 
 	/// Release invoice requests awaiting invoice
 	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)>;

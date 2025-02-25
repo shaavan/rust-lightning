@@ -9948,6 +9948,10 @@ where
 	fn get_current_blocktime(&self) -> Duration {
 		Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64)
 	}
+
+	fn get_highest_seen_timestamp(&self) -> u64 {
+		self.highest_seen_timestamp.load(Ordering::Acquire) as u64
+	}
 	
 	fn get_peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
 		self.per_peer_state.read().unwrap()
@@ -9970,11 +9974,6 @@ where
 		&self, amount_msats: Option<u64>, payment_secret: PaymentSecret, payment_context: PaymentContext, relative_expiry_time: u32,
 	) -> Result<Vec<BlindedPaymentPath>, ()> {
 		self.create_blinded_payment_paths(amount_msats, payment_secret, payment_context, relative_expiry_time)
-	}
-	
-	fn create_inbound_payment(&self, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
-		min_final_cltv_expiry_delta: Option<u16>) -> Result<(PaymentHash, PaymentSecret), ()> {
-		self.create_inbound_payment(min_value_msat, invoice_expiry_delta_secs, min_final_cltv_expiry_delta)
 	}
 
 	fn release_invoice_requests_awaiting_invoice(&self) -> Vec<(PaymentId, RetryableInvoiceRequest)> {
