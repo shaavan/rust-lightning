@@ -1349,11 +1349,11 @@ impl Readable for Option<RAAMonitorUpdateBlockingAction> {
 }
 
 /// State we hold per-peer.
-pub(super) struct PeerState<SP: Deref> where SP::Target: SignerProvider {
+pub(crate) struct PeerState<SP: Deref> where SP::Target: SignerProvider {
 	/// `channel_id` -> `Channel`
 	///
 	/// Holds all channels where the peer is the counterparty.
-	pub(super) channel_by_id: HashMap<ChannelId, Channel<SP>>,
+	pub(crate) channel_by_id: HashMap<ChannelId, Channel<SP>>,
 	/// `temporary_channel_id` -> `InboundChannelRequest`.
 	///
 	/// When manual channel acceptance is enabled, this holds all unaccepted inbound channels where
@@ -1362,7 +1362,7 @@ pub(super) struct PeerState<SP: Deref> where SP::Target: SignerProvider {
 	/// the channel is rejected, then the entry is simply removed.
 	pub(super) inbound_channel_request_by_id: HashMap<ChannelId, InboundChannelRequest>,
 	/// The latest `InitFeatures` we heard from the peer.
-	latest_features: InitFeatures,
+	pub(crate) latest_features: InitFeatures,
 	/// Messages to send to the peer - pushed to in the same lock that they are generated in (except
 	/// for broadcast messages, where ordering isn't as strict).
 	pub(super) pending_msg_events: Vec<MessageSendEvent>,
@@ -8035,7 +8035,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 
 		let per_peer_state = self.per_peer_state.read().unwrap();
 		let peer_state_mutex = per_peer_state.get(counterparty_node_id)
-		    .ok_or_else(|| {
+			.ok_or_else(|| {
 				debug_assert!(false);
 				MsgHandleErrInternal::send_err_msg_no_close(
 					format!("Can't find a peer matching the passed counterparty node_id {}", counterparty_node_id),
@@ -10202,7 +10202,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 /// Sending multiple requests increases the chances of successful delivery in case some
 /// paths are unavailable. However, only one invoice for a given [`PaymentId`] will be paid,
 /// even if multiple invoices are received.
-const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
+pub(crate) const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
 
 impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
 where
@@ -10810,6 +10810,23 @@ where
 		self.message_router
 			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
+	}
+
+	fn peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
+		self.per_peer_state.read().unwrap()
+			.iter()
+			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
+			.filter(|(_, peer)| peer.is_connected)
+			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
+			.map(|(node_id, peer)| MessageForwardNode {
+				node_id: *node_id,
+				short_channel_id: peer.channel_by_id
+					.iter()
+					.filter(|(_, channel)| channel.context().is_usable())
+					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
+					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
+			})
+			.collect::<Vec<_>>()
 	}
 
 	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
