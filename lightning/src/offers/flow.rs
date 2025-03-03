@@ -340,6 +340,7 @@ where
         Ok(())
     }
 
+    #[cfg(feature = "dnssec")]
     fn enqueue_dns_onion_message(
         &self, message: DNSSECQuery, dns_resolvers: Vec<Destination>, reply_paths: Vec<BlindedMessagePath>
     ) -> Result<(), Bolt12SemanticError> {
