@@ -43,14 +43,14 @@ pub trait Flow {
 
     fn create_refund_builder(&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, nonce: Nonce) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>;
 
-    fn create_invoice_request_builder(
-        &self, offer: &'static Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
+    fn create_invoice_request_builder<'a>(
+        &'a self, offer: &'a Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
         payer_note: Option<String>, human_readable_name: Option<HumanReadableName>, payment_id: PaymentId
-    ) -> Result<InvoiceRequestBuilder<secp256k1::All>, Bolt12SemanticError>;
+    ) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError>;
 
-    fn create_invoice_builder(
-        &self, refund: &'static Refund, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
-    ) -> Result<InvoiceBuilder<DerivedSigningPubkey>, Bolt12SemanticError>;
+    fn create_invoice_builder<'a>(
+        &'a self, refund: &'a Refund, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+    ) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>;
 
     fn create_blinded_paths(&self, peers: Vec<MessageForwardNode>, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
 
@@ -176,10 +176,10 @@ where
         Ok(builder)
     }
 
-    fn create_invoice_request_builder(
-        &self, offer: &'static Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
+    fn create_invoice_request_builder<'a>(
+        &'a self, offer: &'a Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
         payer_note: Option<String>, human_readable_name: Option<HumanReadableName>, payment_id: PaymentId
-    ) -> Result<InvoiceRequestBuilder<secp256k1::All>, Bolt12SemanticError> {
+    ) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
@@ -207,9 +207,9 @@ where
         Ok(builder.into())
     }
 
-    fn create_invoice_builder(
-        &self, refund: &'static Refund, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
-    ) -> Result<InvoiceBuilder<DerivedSigningPubkey>, Bolt12SemanticError> {
+    fn create_invoice_builder<'a>(
+        &'a self, refund: &'a Refund, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+    ) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError> {
         let expanded_key = &self.inbound_payment_key;
         let entropy = &*self.entropy_source;
 
