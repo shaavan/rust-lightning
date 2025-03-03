@@ -13,8 +13,19 @@
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::{Secp256k1, PublicKey};
 use bitcoin::{secp256k1, Network};
+use types::payment::PaymentHash;
+use crate::blinded_path::message::{BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext};
+use crate::blinded_path::payment::BlindedPaymentPath;
+use crate::ln::channelmanager::{PaymentId, MAX_SHORT_LIVED_RELATIVE_EXPIRY};
 use crate::ln::inbound_payment;
+use crate::onion_message::dns_resolution::{DNSSECQuery, HumanReadableName};
 use crate::sign::EntropySource;
+use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
+use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::nonce::Nonce;
+use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::messenger::{MessageRouter, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
@@ -22,9 +33,43 @@ use crate::sync::Mutex;
 
 use core::ops::Deref;
 use core::sync::atomic::AtomicUsize;
+use core::time::Duration;
 
 #[cfg(feature = "dnssec")]
 use crate::onion_message::dns_resolution::DNSResolverMessage;
+
+pub trait Flow {
+    fn create_offer_builder(&self, nonce: Nonce) -> Result<OfferBuilder<DerivedMetadata, secp256k1::All>, Bolt12SemanticError>;
+
+    fn create_refund_builder(&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, nonce: Nonce) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>;
+
+    fn create_invoice_request_builder(
+        &self, offer: &'static Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
+        payer_note: Option<String>, human_readable_name: Option<HumanReadableName>, payment_id: PaymentId
+    ) -> Result<InvoiceRequestBuilder<secp256k1::All>, Bolt12SemanticError>;
+
+    fn create_invoice_builder(
+        &self, refund: &'static Refund, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+    ) -> Result<InvoiceBuilder<DerivedSigningPubkey>, Bolt12SemanticError>;
+
+    fn create_blinded_paths(&self, peers: Vec<MessageForwardNode>, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+
+    fn create_compact_blinded_paths(&self, peers: Vec<MessageForwardNode>, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()>;
+
+    fn create_blinded_paths_using_absolute_expiry(&self, peers: Vec<MessageForwardNode>, context: OffersContext, absolute_expiry: Option<Duration>) -> Result<Vec<BlindedMessagePath>, ()>;
+
+    fn enqueue_invoice_request(
+		&self, invoice_request: InvoiceRequest, reply_paths: Vec<BlindedMessagePath>,
+	) -> Result<(), Bolt12SemanticError>;
+
+    fn enqueue_invoice(
+        &self, invoice: Bolt12Invoice, paths: &[BlindedMessagePath], reply_paths: Vec<BlindedMessagePath>
+    ) -> Result<(), Bolt12SemanticError>;
+
+    fn enqueue_dns_onion_message(
+        &self, message: DNSSECQuery, reply_paths: Vec<BlindedMessagePath>
+    ) -> Result<(), Bolt12SemanticError>;
+}
 
 pub struct OffersMessageFlow<ES: Deref, MR: Deref>
 where
