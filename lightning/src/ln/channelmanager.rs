@@ -1752,6 +1752,7 @@ where
 /// #     tx_broadcaster: &dyn lightning::chain::chaininterface::BroadcasterInterface,
 /// #     router: &lightning::routing::router::DefaultRouter<&NetworkGraph<&'a L>, &'a L, &ES, &S, SP, SL>,
 /// #     message_router: &lightning::onion_message::messenger::DefaultMessageRouter<&NetworkGraph<&'a L>, &'a L, &ES>,
+/// #	  flow: &lightning::offers::flow::OffersMessageFlow<&ES, &lightning::onion_message::messenger::DefaultMessageRouter<&NetworkGraph<&'a L>, &'a L, &ES>>,
 /// #     logger: &L,
 /// #     entropy_source: &ES,
 /// #     node_signer: &dyn lightning::sign::NodeSigner,
@@ -1767,7 +1768,7 @@ where
 /// };
 /// let default_config = UserConfig::default();
 /// let channel_manager = ChannelManager::new(
-///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, logger,
+///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, flow, logger,
 ///     entropy_source, node_signer, signer_provider, default_config, params, current_timestamp,
 /// );
 ///
@@ -1775,7 +1776,7 @@ where
 /// let mut channel_monitors = read_channel_monitors();
 /// let args = ChannelManagerReadArgs::new(
 ///     entropy_source, node_signer, signer_provider, fee_estimator, chain_monitor, tx_broadcaster,
-///     router, message_router, logger, default_config, channel_monitors.iter().collect(),
+///     router, message_router, flow, logger, default_config, channel_monitors.iter().collect(),
 /// );
 /// let (block_hash, channel_manager) =
 ///     <(BlockHash, ChannelManager<_, _, _, _, _, _, _, _, _, _>)>::read(&mut reader, args)?;
@@ -4885,7 +4886,8 @@ where
 
 			let nonce = Nonce::from_entropy_source(&*self.entropy_source);
 			let hmac = payment_id.hmac_for_async_payment(nonce, &self.inbound_payment_key);
-			let reply_paths = match self.create_blinded_paths(
+			let reply_paths = match self.flow.create_blinded_paths(
+				self.peer_for_blinded_path(),
 				MessageContext::AsyncPayments(
 					AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac }
 				)
@@ -10122,18 +10124,15 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	pub fn create_offer_builder(
 		&$self, absolute_expiry: Option<Duration>
 	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
 		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::InvoiceRequest { nonce };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
+		let path = $self.flow.create_blinded_paths_using_absolute_expiry($self.peer_for_blinded_path(), context, absolute_expiry)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
+
+		let builder = $self.flow.create_offer_builder(nonce)?
 			.path(path);
 
 		let builder = match absolute_expiry {
@@ -10195,23 +10194,16 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
 		retry_strategy: Retry, route_params_config: RouteParametersConfig
 	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
 		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
+		let path = $self.flow.create_blinded_paths_using_absolute_expiry($self.peer_for_blinded_path(), context, Some(absolute_expiry))
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		let builder = RefundBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
-		)?
-			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry)
-			.path(path);
+		let builder = $self.flow.create_refund_builder(amount_msats, absolute_expiry, payment_id, nonce)?
+			.path(path);	
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
 
@@ -10272,15 +10264,10 @@ where
 			return Err(Bolt12SemanticError::MissingPaths)
 		}
 
-		let node_id = self.get_our_node_id();
-		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let mut builder = OfferBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx
-		).chain_hash(self.chain_hash);
+		let mut builder = self.flow.create_offer_builder(nonce)?;
 
 		for path in message_paths_to_always_online_node {
 			builder = builder.path(path);
@@ -10330,7 +10317,7 @@ where
 		let context = MessageContext::AsyncPayments(
 			AsyncPaymentsContext::InboundPayment { nonce, hmac, path_absolute_expiry }
 		);
-		let async_receive_message_paths = self.create_blinded_paths(context)
+		let async_receive_message_paths = self.flow.create_blinded_paths(self.peer_for_blinded_path(), context)
 			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
 
 		StaticInvoiceBuilder::for_offer_using_derived_keys(
@@ -10420,44 +10407,23 @@ where
 	) -> Result<(), Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
-		let secp_ctx = &self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let builder: InvoiceRequestBuilder<secp256k1::All> = offer
-			.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?
-			.into();
-		let builder = builder.chain_hash(self.chain_hash)?;
-
-		let builder = match quantity {
-			None => builder,
-			Some(quantity) => builder.quantity(quantity)?,
-		};
-		let builder = match amount_msats {
-			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
-		};
-		let builder = match payer_note {
-			None => builder,
-			Some(payer_note) => builder.payer_note(payer_note),
-		};
-		let builder = match human_readable_name {
-			None => builder,
-			Some(hrn) => builder.sourced_from_human_readable_name(hrn),
-		};
+		let builder = self.flow.create_invoice_request_builder(offer, nonce, quantity, amount_msats, payer_note, human_readable_name, payment_id)?;
 		let invoice_request = builder.build_and_sign()?;
 
 		let hmac = payment_id.hmac_for_offer_payment(nonce, expanded_key);
 		let context = MessageContext::Offers(
 			OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) }
 		);
-		let reply_paths = self.create_blinded_paths(context)
+		let reply_paths = self.flow.create_blinded_paths(self.peer_for_blinded_path(), context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
 		create_pending_payment(&invoice_request, nonce)?;
 
-		self.enqueue_invoice_request(invoice_request, reply_paths)
+		self.flow.enqueue_invoice_request(invoice_request, reply_paths)
 	}
 
 	fn enqueue_invoice_request(
@@ -10542,19 +10508,7 @@ where
 				)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				#[cfg(feature = "std")]
-				let builder = refund.respond_using_derived_keys(
-					payment_paths, payment_hash, expanded_key, entropy
-				)?;
-				#[cfg(not(feature = "std"))]
-				let created_at = Duration::from_secs(
-					self.highest_seen_timestamp.load(Ordering::Acquire) as u64
-				);
-				#[cfg(not(feature = "std"))]
-				let builder = refund.respond_using_derived_keys_no_std(
-					payment_paths, payment_hash, created_at, expanded_key, entropy
-				)?;
-				let builder: InvoiceBuilder<DerivedSigningPubkey> = builder.into();
+				let builder = self.flow.create_invoice_builder(refund, payment_paths, payment_hash)?;
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
 
 				let nonce = Nonce::from_entropy_source(entropy);
@@ -10562,33 +10516,10 @@ where
 				let context = MessageContext::Offers(OffersContext::InboundPayment {
 					payment_hash: invoice.payment_hash(), nonce, hmac
 				});
-				let reply_paths = self.create_blinded_paths(context)
+				let reply_paths = self.flow.create_blinded_paths(self.peer_for_blinded_path(), context)
 					.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-				let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-				if refund.paths().is_empty() {
-					for reply_path in reply_paths {
-						let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-							destination: Destination::Node(refund.payer_signing_pubkey()),
-							reply_path,
-						};
-						let message = OffersMessage::Invoice(invoice.clone());
-						pending_offers_messages.push((message, instructions));
-					}
-				} else {
-					reply_paths
-						.iter()
-						.flat_map(|reply_path| refund.paths().iter().map(move |path| (path, reply_path)))
-						.take(OFFERS_MESSAGE_REQUEST_LIMIT)
-						.for_each(|(path, reply_path)| {
-							let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-								destination: Destination::BlindedPath(path.clone()),
-								reply_path: reply_path.clone(),
-							};
-							let message = OffersMessage::Invoice(invoice.clone());
-							pending_offers_messages.push((message, instructions));
-						});
-				}
+				self.flow.enqueue_invoice(invoice.clone(), refund, reply_paths)?;
 
 				Ok(invoice)
 			},
@@ -10644,22 +10575,10 @@ where
 	) -> Result<(), ()> {
 		let (onion_message, context) =
 			self.hrn_resolver.resolve_name(payment_id, name, &*self.entropy_source)?;
-		let reply_paths = self.create_blinded_paths(MessageContext::DNSResolver(context))?;
+		let reply_paths = self.flow.create_blinded_paths(self.peer_for_blinded_path(), MessageContext::DNSResolver(context))?;
 		let expiration = StaleExpiration::TimerTicks(1);
 		self.pending_outbound_payments.add_new_awaiting_offer(payment_id, expiration, retry_strategy, route_params_config, amount_msats)?;
-		let message_params = dns_resolvers
-			.iter()
-			.flat_map(|destination| reply_paths.iter().map(move |path| (path, destination)))
-			.take(OFFERS_MESSAGE_REQUEST_LIMIT);
-		for (reply_path, destination) in message_params {
-			self.pending_dns_onion_messages.lock().unwrap().push((
-				DNSResolverMessage::DNSSECQuery(onion_message.clone()),
-				MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: destination.clone(),
-					reply_path: reply_path.clone(),
-				},
-			));
-		}
+		self.flow.enqueue_dns_onion_message(onion_message, dns_resolvers, reply_paths).map_err(|_| ())?;
 		Ok(())
 	}
 
@@ -11239,6 +11158,7 @@ where
 
 		self.transactions_confirmed(header, txdata, height);
 		self.best_block_updated(header, height);
+		self.flow.filtered_block_connected(header, txdata, height);
 	}
 
 	fn block_disconnected(&self, header: &Header, height: u32) {
@@ -12358,8 +12278,8 @@ where
 				nonce,
 				hmac: Some(hmac)
 			});
-			match self.create_blinded_paths(context) {
-				Ok(reply_paths) => match self.enqueue_invoice_request(invoice_request, reply_paths) {
+			match self.flow.create_blinded_paths(self.peer_for_blinded_path(), context) {
+				Ok(reply_paths) => match self.flow.enqueue_invoice_request(invoice_request, reply_paths) {
 					Ok(_) => {}
 					Err(_) => {
 						log_warn!(self.logger,
@@ -12609,7 +12529,9 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
+		let mut messages = core::mem::take(&mut *self.pending_offers_messages.lock().unwrap());
+		messages.extend(self.flow.get_and_clear_pending_offers_messages());
+		messages
 	}
 }
 
@@ -12665,7 +12587,9 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(AsyncPaymentsMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.pending_async_payments_messages.lock().unwrap())
+		let mut messages = core::mem::take(&mut *self.pending_async_payments_messages.lock().unwrap());
+		messages.extend(self.flow.get_and_clear_pending_async_messages());
+		messages
 	}
 }
 
@@ -12730,7 +12654,9 @@ where
 	}
 
 	fn release_pending_messages(&self) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
-		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+		let mut messages = core::mem::take(&mut *self.pending_dns_onion_messages.lock().unwrap());
+		messages.extend(self.flow.get_and_clear_pending_dns_messages());
+		messages
 	}
 }
 
