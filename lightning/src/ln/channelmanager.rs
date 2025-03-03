@@ -47,6 +47,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
+use crate::offers::flow::{Flow, OffersMessageFlow};
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelError, ChannelUpdateStatus, FundedChannel, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, ReconnectionMsg, InboundV1Channel, WithChannelContext};
 #[cfg(any(dual_funding, splicing))]
@@ -1531,6 +1532,22 @@ pub type SimpleArcChannelManager<M, T, F, L> = ChannelManager<
 		Arc<L>,
 		Arc<KeysManager>,
 	>>,
+	Arc<OffersMessageFlow<
+		Arc<KeysManager>,
+		Arc<DefaultMessageRouter<
+			Arc<NetworkGraph<Arc<L>>>,
+			Arc<L>,
+			Arc<KeysManager>,
+		>>,
+		Arc<DefaultRouter<
+			Arc<NetworkGraph<Arc<L>>>,
+			Arc<L>,
+			Arc<KeysManager>,
+			Arc<RwLock<ProbabilisticScorer<Arc<NetworkGraph<Arc<L>>>, Arc<L>>>>,
+			ProbabilisticScoringFeeParameters,
+			ProbabilisticScorer<Arc<NetworkGraph<Arc<L>>>, Arc<L>>,
+		>>,
+	>>,
 	Arc<L>
 >;
 
@@ -1566,6 +1583,22 @@ pub type SimpleRefChannelManager<'a, 'b, 'c, 'd, 'e, 'f, 'g, 'h, 'i, M, T, F, L>
 			&'f NetworkGraph<&'g L>,
 			&'g L,
 			&'c KeysManager,
+		>,
+		&'d OffersMessageFlow<
+			&'c KeysManager,
+			&'i DefaultMessageRouter<
+				&'f NetworkGraph<&'g L>,
+				&'g L,
+				&'c KeysManager,
+			>,
+			&'e DefaultRouter<
+				&'f NetworkGraph<&'g L>,
+				&'g L,
+				&'c KeysManager,
+				&'h RwLock<ProbabilisticScorer<&'f NetworkGraph<&'g L>, &'g L>>,
+				ProbabilisticScoringFeeParameters,
+				ProbabilisticScorer<&'f NetworkGraph<&'g L>, &'g L>
+			>,
 		>,
 		&'g L
 	>;
@@ -1609,16 +1642,20 @@ pub trait AChannelManager {
 	type MessageRouter: MessageRouter + ?Sized;
 	/// A type that may be dereferenced to [`Self::MessageRouter`].
 	type MR: Deref<Target = Self::MessageRouter>;
+	/// A type implementing [`MessageRouter`].
+	type Flow: Flow + ?Sized;
+	/// A type that may be dereferenced to [`Self::MessageRouter`].
+	type FW: Deref<Target = Self::Flow>;
 	/// A type implementing [`Logger`].
 	type Logger: Logger + ?Sized;
 	/// A type that may be dereferenced to [`Self::Logger`].
 	type L: Deref<Target = Self::Logger>;
 	/// Returns a reference to the actual [`ChannelManager`] object.
-	fn get_cm(&self) -> &ChannelManager<Self::M, Self::T, Self::ES, Self::NS, Self::SP, Self::F, Self::R, Self::MR, Self::L>;
+	fn get_cm(&self) -> &ChannelManager<Self::M, Self::T, Self::ES, Self::NS, Self::SP, Self::F, Self::R, Self::MR, Self::FW, Self::L>;
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> AChannelManager
-for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> AChannelManager
+for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -1628,6 +1665,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	type Watch = M::Target;
@@ -1647,9 +1685,11 @@ where
 	type R = R;
 	type MessageRouter = MR::Target;
 	type MR = MR;
+	type Flow = FW::Target;
+	type FW = FW;
 	type Logger = L::Target;
 	type L = L;
-	fn get_cm(&self) -> &ChannelManager<M, T, ES, NS, SP, F, R, MR, L> { self }
+	fn get_cm(&self) -> &ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L> { self }
 }
 
 /// A lightning node's channel state machine and payment management logic, which facilitates
@@ -1728,6 +1768,7 @@ where
 /// #     tx_broadcaster: &dyn lightning::chain::chaininterface::BroadcasterInterface,
 /// #     router: &lightning::routing::router::DefaultRouter<&NetworkGraph<&'a L>, &'a L, &ES, &S, SP, SL>,
 /// #     message_router: &lightning::onion_message::messenger::DefaultMessageRouter<&NetworkGraph<&'a L>, &'a L, &ES>,
+///		  flow: &lightning::offers::flow::OffersMessageFlow<&ES,&lightning::onion_message::messenger::DefaultMessageRouter<&NetworkGraph<&'a L>, &'a L, &ES>, &lightning::routing::router::DefaultRouter<&NetworkGraph<&'a L>, &'a L, &ES, &S, SP, SL>>,
 /// #     logger: &L,
 /// #     entropy_source: &ES,
 /// #     node_signer: &dyn lightning::sign::NodeSigner,
@@ -1743,7 +1784,7 @@ where
 /// };
 /// let default_config = UserConfig::default();
 /// let channel_manager = ChannelManager::new(
-///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, logger,
+///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, flow, logger,
 ///     entropy_source, node_signer, signer_provider, default_config, params, current_timestamp,
 /// );
 ///
@@ -1751,10 +1792,10 @@ where
 /// let mut channel_monitors = read_channel_monitors();
 /// let args = ChannelManagerReadArgs::new(
 ///     entropy_source, node_signer, signer_provider, fee_estimator, chain_monitor, tx_broadcaster,
-///     router, message_router, logger, default_config, channel_monitors.iter().collect(),
+///     router, message_router, flow, logger, default_config, channel_monitors.iter().collect(),
 /// );
 /// let (block_hash, channel_manager) =
-///     <(BlockHash, ChannelManager<_, _, _, _, _, _, _, _, _>)>::read(&mut reader, args)?;
+///     <(BlockHash, ChannelManager<_, _, _, _, _, _, _, _, _, _>)>::read(&mut reader, args)?;
 ///
 /// // Update the ChannelManager and ChannelMonitors with the latest chain data
 /// // ...
@@ -2440,7 +2481,7 @@ where
 //               |
 //               |__`pending_background_events`
 //
-pub struct ChannelManager<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
+pub struct ChannelManager<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -2450,6 +2491,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	default_configuration: UserConfig,
@@ -2459,6 +2501,8 @@ where
 	tx_broadcaster: T,
 	router: R,
 	message_router: MR,
+
+	pub(crate) flow: FW,
 
 	/// See `ChannelManager` struct-level documentation for lock order requirements.
 	#[cfg(test)]
@@ -3535,7 +3579,7 @@ macro_rules! process_events_body {
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -3545,6 +3589,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// Constructs a new `ChannelManager` to hold several channels and route between them.
@@ -3565,7 +3610,7 @@ where
 	/// [`block_disconnected`]: chain::Listen::block_disconnected
 	/// [`params.best_block.block_hash`]: chain::BestBlock::block_hash
 	pub fn new(
-		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR, logger: L,
+		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR, flow: FW, logger: L,
 		entropy_source: ES, node_signer: NS, signer_provider: SP, config: UserConfig,
 		params: ChainParameters, current_timestamp: u32,
 	) -> Self {
@@ -3580,6 +3625,7 @@ where
 			tx_broadcaster,
 			router,
 			message_router,
+			flow,
 
 			best_block: RwLock::new(params.best_block),
 
@@ -10204,7 +10250,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 /// even if multiple invoices are received.
 pub const OFFERS_MESSAGE_REQUEST_LIMIT: usize = 10;
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -10214,6 +10260,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	#[cfg(not(c_bindings))]
@@ -11066,7 +11113,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> MessageSendEventsProvider for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> MessageSendEventsProvider
+	for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11076,6 +11124,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// Returns `MessageSendEvent`s strictly ordered per-peer, in the order they were generated.
@@ -11142,7 +11191,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> EventsProvider for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> EventsProvider
+	for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11152,6 +11202,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// Processes events that must be periodically handled.
@@ -11164,7 +11215,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> chain::Listen for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> chain::Listen
+	for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11174,6 +11226,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn filtered_block_connected(&self, header: &Header, txdata: &TransactionData, height: u32) {
@@ -11207,7 +11260,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> chain::Confirm for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> chain::Confirm
+	for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11217,6 +11271,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn transactions_confirmed(&self, header: &Header, txdata: &TransactionData, height: u32) {
@@ -11340,7 +11395,7 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11350,6 +11405,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// Calls a function which handles an on-chain event (blocks dis/connected, transactions
@@ -11625,8 +11681,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-	ChannelMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	ChannelMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -11636,6 +11692,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn handle_open_channel(&self, counterparty_node_id: PublicKey, msg: &msgs::OpenChannel) {
@@ -12324,8 +12381,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-OffersMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	OffersMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -12335,6 +12392,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn handle_message(
@@ -12556,8 +12614,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-AsyncPaymentsMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	AsyncPaymentsMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -12567,6 +12625,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn handle_held_htlc_available(
@@ -12612,8 +12671,8 @@ where
 }
 
 #[cfg(feature = "dnssec")]
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-DNSResolverMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+DNSResolverMessageHandler for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -12623,6 +12682,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn handle_dnssec_query(
@@ -12675,8 +12735,8 @@ where
 	}
 }
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-NodeIdLookUp for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	NodeIdLookUp for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -12686,6 +12746,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn next_node_id(&self, short_channel_id: u64) -> Option<PublicKey> {
@@ -13173,7 +13234,7 @@ impl_writeable_tlv_based!(PendingInboundPayment, {
 	(8, min_value_msat, required),
 });
 
-impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref> Writeable for ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+impl<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref> Writeable for ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13183,6 +13244,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
@@ -13491,7 +13553,7 @@ impl Readable for VecDeque<(Event, Option<EventCompletionAction>)> {
 /// which you've already broadcasted the transaction.
 ///
 /// [`ChainMonitor`]: crate::chain::chainmonitor::ChainMonitor
-pub struct ChannelManagerReadArgs<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
+pub struct ChannelManagerReadArgs<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13501,6 +13563,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// A cryptographically secure source of entropy.
@@ -13537,6 +13600,8 @@ where
 	/// The [`MessageRouter`] used for constructing [`BlindedMessagePath`]s for [`Offer`]s,
 	/// [`Refund`]s, and any reply paths.
 	pub message_router: MR,
+	/// Implement Offers utilities
+	pub flow: FW,
 	/// The Logger for use in the ChannelManager and which may be used to log information during
 	/// deserialization.
 	pub logger: L,
@@ -13558,8 +13623,8 @@ where
 	pub channel_monitors: HashMap<ChannelId, &'a ChannelMonitor<<SP::Target as SignerProvider>::EcdsaSigner>>,
 }
 
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-		ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+		ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, FW, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13569,6 +13634,7 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
 	/// Simple utility function to create a ChannelManagerReadArgs which creates the monitor
@@ -13576,13 +13642,13 @@ where
 	/// populate a HashMap directly from C.
 	pub fn new(
 		entropy_source: ES, node_signer: NS, signer_provider: SP, fee_estimator: F,
-		chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR, logger: L,
+		chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR, flow: FW, logger: L,
 		default_config: UserConfig,
 		mut channel_monitors: Vec<&'a ChannelMonitor<<SP::Target as SignerProvider>::EcdsaSigner>>,
 	) -> Self {
 		Self {
 			entropy_source, node_signer, signer_provider, fee_estimator, chain_monitor,
-			tx_broadcaster, router, message_router, logger, default_config,
+			tx_broadcaster, router, message_router, flow, logger, default_config,
 			channel_monitors: hash_map_from_iter(
 				channel_monitors.drain(..).map(|monitor| { (monitor.channel_id(), monitor) })
 			),
@@ -13592,8 +13658,8 @@ where
 
 // Implement ReadableArgs for an Arc'd ChannelManager to make it a bit easier to work with the
 // SipmleArcChannelManager type:
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>> for (BlockHash, Arc<ChannelManager<M, T, ES, NS, SP, F, R, MR, L>>)
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, FW, L>> for (BlockHash, Arc<ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>>)
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13603,16 +13669,17 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
-	fn read<Reader: io::Read>(reader: &mut Reader, args: ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>) -> Result<Self, DecodeError> {
-		let (blockhash, chan_manager) = <(BlockHash, ChannelManager<M, T, ES, NS, SP, F, R, MR, L>)>::read(reader, args)?;
+	fn read<Reader: io::Read>(reader: &mut Reader, args: ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, FW, L>) -> Result<Self, DecodeError> {
+		let (blockhash, chan_manager) = <(BlockHash, ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>)>::read(reader, args)?;
 		Ok((blockhash, Arc::new(chan_manager)))
 	}
 }
 
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
-	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>> for (BlockHash, ChannelManager<M, T, ES, NS, SP, F, R, MR, L>)
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, FW: Deref, L: Deref>
+	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, FW, L>> for (BlockHash, ChannelManager<M, T, ES, NS, SP, F, R, MR, FW, L>)
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13622,9 +13689,10 @@ where
 	F::Target: FeeEstimator,
 	R::Target: Router,
 	MR::Target: MessageRouter,
+	FW::Target: Flow,
 	L::Target: Logger,
 {
-	fn read<Reader: io::Read>(reader: &mut Reader, mut args: ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>) -> Result<Self, DecodeError> {
+	fn read<Reader: io::Read>(reader: &mut Reader, mut args: ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, FW, L>) -> Result<Self, DecodeError> {
 		let _ver = read_ver_prefix!(reader, SERIALIZATION_VERSION);
 
 		let chain_hash: ChainHash = Readable::read(reader)?;
@@ -14612,6 +14680,7 @@ where
 			tx_broadcaster: args.tx_broadcaster,
 			router: args.router,
 			message_router: args.message_router,
+			flow: args.flow,
 
 			best_block: RwLock::new(BestBlock::new(best_block_hash, best_block_height)),
 
