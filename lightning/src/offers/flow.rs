@@ -16,7 +16,7 @@ use bitcoin::{secp256k1, Network};
 use types::payment::PaymentHash;
 use crate::blinded_path::message::{BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext};
 use crate::blinded_path::payment::BlindedPaymentPath;
-use crate::ln::channelmanager::{PaymentId, MAX_SHORT_LIVED_RELATIVE_EXPIRY};
+use crate::ln::channelmanager::{PaymentId, MAX_SHORT_LIVED_RELATIVE_EXPIRY, OFFERS_MESSAGE_REQUEST_LIMIT};
 use crate::ln::inbound_payment;
 use crate::onion_message::dns_resolution::{DNSSECQuery, HumanReadableName};
 use crate::sign::EntropySource;
@@ -26,7 +26,7 @@ use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
-use crate::onion_message::messenger::{MessageRouter, MessageSendInstructions};
+use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
 use crate::sync::Mutex;
@@ -63,11 +63,11 @@ pub trait Flow {
 	) -> Result<(), Bolt12SemanticError>;
 
     fn enqueue_invoice(
-        &self, invoice: Bolt12Invoice, paths: &[BlindedMessagePath], reply_paths: Vec<BlindedMessagePath>
+        &self, invoice: Bolt12Invoice, refund: &Refund, reply_paths: Vec<BlindedMessagePath>
     ) -> Result<(), Bolt12SemanticError>;
 
     fn enqueue_dns_onion_message(
-        &self, message: DNSSECQuery, reply_paths: Vec<BlindedMessagePath>
+        &self, message: DNSSECQuery, dns_resolvers: Vec<Destination>, reply_paths: Vec<BlindedMessagePath>
     ) -> Result<(), Bolt12SemanticError>;
 }
 
