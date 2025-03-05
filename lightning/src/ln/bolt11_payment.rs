@@ -87,12 +87,17 @@ fn params_from_invoice(
 #[cfg(test)]
 mod tests {
 	use super::*;
-	use crate::routing::router::Payee;
+	use std::time::SystemTime;
+	use crate::events::Event;
+	use crate::ln::channelmanager::{PaymentId, Retry};
+	use crate::ln::functional_test_utils::*;
+	use crate::ln::msgs::ChannelMessageHandler;
+	use crate::ln::outbound_payment::Bolt11PaymentError;
+	use crate::routing::router::{Payee, RouteParametersConfig};
 	use crate::types::payment::PaymentSecret;
 	use bitcoin::hashes::sha256::Hash as Sha256;
 	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 	use lightning_invoice::{Currency, InvoiceBuilder};
-	use std::time::SystemTime;
 
 	#[test]
 	fn invoice_test() {
@@ -159,12 +164,7 @@ mod tests {
 	}
 
 	#[test]
-	fn payment_metadata_end_to_end() {
-		use crate::events::Event;
-		use crate::ln::channelmanager::{PaymentId, Retry};
-		use crate::ln::functional_test_utils::*;
-		use crate::ln::msgs::ChannelMessageHandler;
-
+	fn payment_metadata_end_to_end_for_invoice_with_amount() {
 		// Test that a payment metadata read from an invoice passed to `pay_invoice` makes it all
 		// the way out through the `PaymentClaimable` event.
 		let chanmon_cfgs = create_chanmon_cfgs(2);
@@ -192,11 +192,77 @@ mod tests {
 			.build_signed(|hash| secp_ctx.sign_ecdsa_recoverable(hash, &node_secret))
 			.unwrap();
 
-		let (hash, onion, params) = payment_parameters_from_invoice(&invoice).unwrap();
-		nodes[0]
-			.node
-			.send_payment(hash, onion, PaymentId(hash.0), params, Retry::Attempts(0))
+		match nodes[0].node.pay_for_bolt11_invoice(
+			&invoice, PaymentId(payment_hash.0), Some(100),
+			RouteParametersConfig::default(), Retry::Attempts(0)
+		) {
+			Err(Bolt11PaymentError::InvalidAmount) => (),
+			_ => panic!("Unexpected result")
+		};
+
+		nodes[0].node.pay_for_bolt11_invoice(
+			&invoice, PaymentId(payment_hash.0), None,
+			RouteParametersConfig::default(), Retry::Attempts(0)
+		).unwrap();
+
+		check_added_monitors(&nodes[0], 1);
+		let send_event = SendEvent::from_node(&nodes[0]);
+		nodes[1].node.handle_update_add_htlc(nodes[0].node.get_our_node_id(), &send_event.msgs[0]);
+		commitment_signed_dance!(nodes[1], nodes[0], &send_event.commitment_msg, false);
+
+		expect_pending_htlcs_forwardable!(nodes[1]);
+
+		let mut events = nodes[1].node.get_and_clear_pending_events();
+		assert_eq!(events.len(), 1);
+		match events.pop().unwrap() {
+			Event::PaymentClaimable { onion_fields, .. } => {
+				assert_eq!(Some(payment_metadata), onion_fields.unwrap().payment_metadata);
+			},
+			_ => panic!("Unexpected event"),
+		}
+	}
+
+	#[test]
+	fn payment_metadata_end_to_end_for_invoice_with_no_amount() {
+		// Test that a payment metadata read from an invoice passed to `pay_invoice` makes it all
+		// the way out through the `PaymentClaimable` event.
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+		create_announced_chan_between_nodes(&nodes, 0, 1);
+
+		let payment_metadata = vec![42, 43, 44, 45, 46, 47, 48, 49, 42];
+
+		let (payment_hash, payment_secret) =
+			nodes[1].node.create_inbound_payment(None, 7200, None).unwrap();
+
+		let secp_ctx = Secp256k1::new();
+		let node_secret = nodes[1].keys_manager.backing.get_node_secret_key();
+		let timestamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+		let invoice = InvoiceBuilder::new(Currency::Bitcoin)
+			.description("test".into())
+			.payment_hash(Sha256::from_slice(&payment_hash.0).unwrap())
+			.payment_secret(payment_secret)
+			.duration_since_epoch(timestamp)
+			.min_final_cltv_expiry_delta(144)
+			.payment_metadata(payment_metadata.clone())
+			.build_signed(|hash| secp_ctx.sign_ecdsa_recoverable(hash, &node_secret))
 			.unwrap();
+
+		match nodes[0].node.pay_for_bolt11_invoice(
+			&invoice, PaymentId(payment_hash.0), None,
+			RouteParametersConfig::default(), Retry::Attempts(0)
+		) {
+			Err(Bolt11PaymentError::InvalidAmount) => (),
+			_ => panic!("Unexpected result")
+		};
+
+		nodes[0].node.pay_for_bolt11_invoice(
+			&invoice, PaymentId(payment_hash.0), Some(50_000),
+			RouteParametersConfig::default(), Retry::Attempts(0)
+		).unwrap();
+
 		check_added_monitors(&nodes[0], 1);
 		let send_event = SendEvent::from_node(&nodes[0]);
 		nodes[1].node.handle_update_add_htlc(nodes[0].node.get_our_node_id(), &send_event.msgs[0]);
