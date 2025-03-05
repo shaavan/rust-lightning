@@ -14,6 +14,7 @@ use crate::blinded_path::message::{
 	BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext,
 };
 use crate::blinded_path::payment::BlindedPaymentPath;
+use crate::chain;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
@@ -40,7 +41,7 @@ use core::time::Duration;
 #[cfg(feature = "dnssec")]
 use crate::onion_message::dns_resolution::DNSResolverMessage;
 
-pub trait Flow {
+pub trait Flow: chain::Listen {
 	fn create_offer_builder(
 		&self, nonce: Nonce,
 	) -> Result<OfferBuilder<DerivedMetadata, secp256k1::All>, Bolt12SemanticError>;
