@@ -15,6 +15,7 @@ use crate::blinded_path::message::{
 };
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::chain;
+use crate::chain::transaction::TransactionData;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
@@ -29,13 +30,14 @@ use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendIns
 use crate::onion_message::offers::OffersMessage;
 use crate::sign::EntropySource;
 use crate::sync::Mutex;
+use bitcoin::block::Header;
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::{PublicKey, Secp256k1};
 use bitcoin::{secp256k1, Network};
 use types::payment::PaymentHash;
 
 use core::ops::Deref;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 #[cfg(feature = "dnssec")]
@@ -164,4 +166,37 @@ where
 	pub fn get_our_node_id(&self) -> PublicKey {
 		self.our_network_pubkey
 	}
+
+	fn best_block_updated(&self, header: &Header) {
+		macro_rules! max_time {
+			($timestamp: expr) => {
+				loop {
+					// Update $timestamp to be the max of its current value and the block
+					// timestamp. This should keep us close to the current time without relying on
+					// having an explicit local time source.
+					// Just in case we end up in a race, we loop until we either successfully
+					// update $timestamp or decide we don't need to.
+					let old_serial = $timestamp.load(Ordering::Acquire);
+					if old_serial >= header.time as usize { break; }
+					if $timestamp.compare_exchange(old_serial, header.time as usize, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+						break;
+					}
+				}
+			}
+		}
+
+		max_time!(self.highest_seen_timestamp);
+	}
+}
+
+impl<ES: Deref, MR: Deref> chain::Listen for OffersMessageFlow<ES, MR>
+where
+	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+{
+	fn filtered_block_connected(&self, header: &Header, _txdata: &TransactionData, _height: u32) {
+		self.best_block_updated(header);
+	}
+
+	fn block_disconnected(&self, _header: &Header, _height: u32) {}
 }
