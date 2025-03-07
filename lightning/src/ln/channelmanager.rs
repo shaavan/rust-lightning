@@ -924,6 +924,18 @@ impl ClaimablePayment {
 			self.htlcs.iter().map(|htlc| (htlc.prev_hop.channel_id, htlc.prev_hop.htlc_id))
 		)
 	}
+
+	/// Returns the inbound `channel_id`s for all HTLCs associated with the payment.
+	fn get_channel_ids(&self) -> Vec<ChannelId> {
+		self.htlcs.iter().map(|htlc| htlc.prev_hop.channel_id).collect()
+	}
+
+	/// Returns the inbound `user_channel_id`s for all HTLCs associated with the payment.
+	///
+	/// Note: This list will be incomplete for HTLCs created using LDK version 0.0.112 or earlier.
+	fn get_user_channel_ids(&self) -> Vec<u128> {
+		self.htlcs.iter().filter_map(|htlc| htlc.prev_hop.user_channel_id).collect()
+	}
 }
 
 /// Represent the channel funding transaction type.
