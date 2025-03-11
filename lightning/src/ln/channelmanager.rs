@@ -69,7 +69,7 @@ use crate::ln::outbound_payment;
 use crate::ln::outbound_payment::{OutboundPayments, PendingOutboundPayment, RetryableInvoiceRequest, SendAlongPathArgs, StaleExpiration};
 use crate::offers::invoice::{Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder};
+use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
@@ -10426,42 +10426,6 @@ where
 		self.flow.enqueue_invoice_request(invoice_request, reply_paths)
 	}
 
-	fn enqueue_invoice_request(
-		&self,
-		invoice_request: InvoiceRequest,
-		reply_paths: Vec<BlindedMessagePath>,
-	) -> Result<(), Bolt12SemanticError> {
-		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
-		if !invoice_request.paths().is_empty() {
-			reply_paths
-				.iter()
-				.flat_map(|reply_path| invoice_request.paths().iter().map(move |path| (path, reply_path)))
-				.take(OFFERS_MESSAGE_REQUEST_LIMIT)
-				.for_each(|(path, reply_path)| {
-					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-						destination: Destination::BlindedPath(path.clone()),
-						reply_path: reply_path.clone(),
-					};
-					let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-					pending_offers_messages.push((message, instructions));
-				});
-		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
-			for reply_path in reply_paths {
-				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: Destination::Node(node_id),
-					reply_path,
-				};
-				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
-				pending_offers_messages.push((message, instructions));
-			}
-		} else {
-			debug_assert!(false);
-			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
-		}
-
-		Ok(())
-	}
-
 	/// Creates a [`Bolt12Invoice`] for a [`Refund`] and enqueues it to be sent via an onion
 	/// message.
 	///
@@ -10680,25 +10644,6 @@ where
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
 	}
 
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
-	}
-
 	pub(super) fn duration_since_epoch(&self) -> Duration {
 		#[cfg(not(feature = "std"))]
 		let now = Duration::from_secs(
@@ -10710,55 +10655,6 @@ where
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 
 		now
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_blinded_paths(&self, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| *node_id)
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.per_peer_state.read().unwrap()
-			.iter()
-			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
-			.filter(|(_, peer)| peer.is_connected)
-			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, peer)| MessageForwardNode {
-				node_id: *node_id,
-				short_channel_id: peer.channel_by_id
-					.iter()
-					.filter(|(_, channel)| channel.context().is_usable())
-					.min_by_key(|(_, channel)| channel.context().channel_creation_height)
-					.and_then(|(_, channel)| channel.context().get_short_channel_id()),
-			})
-			.collect::<Vec<_>>();
-
-		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
 	fn peer_for_blinded_path(&self) -> Vec<MessageForwardNode> {
