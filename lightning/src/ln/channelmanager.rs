@@ -4824,7 +4824,8 @@ where
 				invoice, payment_id, &self.router, self.list_usable_channels(), features,
 				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
 				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
-				|args| self.send_payment_along_path(args)
+				|args| self.send_payment_along_path(args),
+				self.default_configuration.manually_handle_bolt12_invoices
 			)
 	}
 
@@ -12477,6 +12478,25 @@ where
 				);
 
 				if self.default_configuration.manually_handle_bolt12_invoices {
+					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
+					// This ensures that event generation remains idempotent in case we receive
+					// the same invoice multiple times.
+					match self.pending_outbound_payments.pending_outbound_payments.lock().unwrap().entry(payment_id) {
+						hash_map::Entry::Occupied(entry) => match entry.get() {
+							PendingOutboundPayment::AwaitingInvoice {
+								retry_strategy, route_params_config, ..
+							} => {
+								*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
+									payment_hash: invoice.payment_hash(),
+									retry_strategy: *retry_strategy,
+									route_params_config: *route_params_config,
+								};
+							},
+							_ => return None
+						},
+						hash_map::Entry::Vacant(_) => return None,
+					}
+
 					let event = Event::InvoiceReceived {
 						payment_id, invoice, context, responder,
 					};
