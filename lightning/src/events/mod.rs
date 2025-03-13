@@ -774,15 +774,11 @@ pub enum Event {
 		/// Information for claiming this received payment, based on whether the purpose of the
 		/// payment is to pay an invoice or to send a spontaneous payment.
 		purpose: PaymentPurpose,
-		/// The `channel_id`(s) indicating over which channel(s) we received the payment.
-		/// - In a non-MPP scenario, this will contain a single `channel_id` where the payment was received.
-		/// - In an MPP scenario, this will contain multiple `channel_id`s corresponding to the channels over
-		///   which the payment parts were received.
+		/// The `channel_id`(s) over which the payment was received.
+		/// This will be an empty vector for events created/serialised using LDK version 0.0.112 and prior.
 		via_channel_ids: Vec<ChannelId>,
-		/// The `user_channel_id`(s) indicating over which channel(s) we received the payment.
-		/// - In a non-MPP scenario, this will contain a single `user_channel_id`.
-		/// - In an MPP scenario, this will contain multiple `user_channel_id`s corresponding to the channels
-		///   over which the payment parts were received.
+		/// The `user_channel_id`(s) corresponding to the channels over which the payment was received.
+		/// This will be an empty vector for HTLC events created/serialised using LDK version 0.0.112 and prior.
 		via_user_channel_ids: Vec<u128>,
 		/// The block height at which this payment will be failed back and will no longer be
 		/// eligible for claiming.
@@ -1546,15 +1542,16 @@ impl Writeable for Event {
 				}
 				let skimmed_fee_opt = if counterparty_skimmed_fee_msat == 0 { None }
 					else { Some(counterparty_skimmed_fee_msat) };
+
+				let via_channel_id_legacy = via_channel_ids.last().cloned();
+				let via_user_channel_id_legacy = via_user_channel_ids.last().cloned();
 				write_tlv_fields!(writer, {
 					(0, payment_hash, required),
 					(1, receiver_node_id, option),
 					(2, payment_secret, option),
-					// legacy field
-					// (3, via_channel_id, option),
+					(3, via_channel_id_legacy, option),
 					(4, amount_msat, required),
-					// legacy field
-					// (5, via_user_channel_id, option),
+					(5, via_user_channel_id_legacy, option),
 					// Type 6 was `user_payment_id` on 0.0.103 and earlier
 					(7, claim_deadline, option),
 					(8, payment_preimage, option),
@@ -1859,9 +1856,9 @@ impl MaybeReadable for Event {
 					let mut counterparty_skimmed_fee_msat_opt = None;
 					let mut receiver_node_id = None;
 					let mut _user_payment_id = None::<u64>; // Used in 0.0.103 and earlier, no longer written in 0.0.116+.
-					let mut via_channel_id = None;
+					let mut via_channel_id_legacy = None;
 					let mut claim_deadline = None;
-					let mut via_user_channel_id = None;
+					let mut via_user_channel_id_legacy = None;
 					let mut onion_fields = None;
 					let mut payment_context = None;
 					let mut payment_id = None;
@@ -1871,9 +1868,9 @@ impl MaybeReadable for Event {
 						(0, payment_hash, required),
 						(1, receiver_node_id, option),
 						(2, payment_secret, option),
-						(3, via_channel_id, option),
+						(3, via_channel_id_legacy, option),
 						(4, amount_msat, required),
-						(5, via_user_channel_id, option),
+						(5, via_user_channel_id_legacy, option),
 						(6, _user_payment_id, option),
 						(7, claim_deadline, option),
 						(8, payment_preimage, option),
@@ -1892,11 +1889,11 @@ impl MaybeReadable for Event {
 					};
 
 					let via_channel_ids = via_channel_ids_opt
-						.or_else(|| via_channel_id.map(|id| vec![id]))
+						.or_else(|| via_channel_id_legacy.map(|id| vec![id]))
 						.unwrap_or_default();
 
 					let via_user_channel_ids = via_user_channel_ids_opt
-						.or_else(|| via_user_channel_id.map(|id| vec![id]))
+						.or_else(|| via_user_channel_id_legacy.map(|id| vec![id]))
 						.unwrap_or_default();
 
 					Ok(Some(Event::PaymentClaimable {
