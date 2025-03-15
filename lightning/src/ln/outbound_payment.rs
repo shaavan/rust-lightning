@@ -868,9 +868,11 @@ impl OutboundPayments {
 		// is already updated at the time the invoice is received. This ensures that `InvoiceReceived`
 		// event generation remains idempotent, even if the same invoice is received again before the
 		// current one is handled by the user.
-		if !with_manual_handling { self.mark_invoice_received(payment_id, payment_hash)? }
-
-		let (retry_strategy, params_config) = self.received_invoice_details(payment_id)?;
+		let (retry_strategy, params_config) = if with_manual_handling {
+			self.received_invoice_details(payment_id)?
+		} else {
+			self.mark_invoice_received_and_get_details(payment_id, payment_hash)?
+		};
 
 		if invoice.invoice_features().requires_unknown_bits_from(&features) {
 			self.abandon_payment(
@@ -1778,21 +1780,23 @@ impl OutboundPayments {
 		}
 	}
 
-	pub(super) fn mark_invoice_received(
+	pub(super) fn mark_invoice_received_and_get_details(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash
-	) -> Result<(), Bolt12PaymentError> {
+	) -> Result<(Retry, RouteParametersConfig), Bolt12PaymentError> {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
 				PendingOutboundPayment::AwaitingInvoice {
 					retry_strategy: retry, route_params_config, ..
 				} => {
+					let retry = *retry;
+					let config = *route_params_config;
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
-						retry_strategy: *retry,
-						route_params_config: *route_params_config,
+						retry_strategy: retry,
+						route_params_config: config,
 					};
 
-					Ok(())
+					Ok((retry, config))
 				},
 				_ => Err(Bolt12PaymentError::DuplicateInvoice),
 			},
