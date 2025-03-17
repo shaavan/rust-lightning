@@ -13,12 +13,17 @@
 
 use core::ops::Deref;
 use core::time::Duration;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
-use bitcoin::secp256k1;
+use bitcoin::block::Header;
+use bitcoin::constants::ChainHash;
+use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
+use bitcoin::network::Network;
 
 use crate::blinded_path::message::{AsyncPaymentsContext, BlindedMessagePath, OffersContext};
 use crate::blinded_path::payment::{BlindedPaymentPath, PaymentContext};
 use crate::chain;
+use crate::chain::transaction::TransactionData;
 use crate::ln::channelmanager::PaymentId;
 use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
 use crate::offers::invoice_error::InvoiceError;
@@ -32,6 +37,9 @@ use crate::onion_message::messenger::{Destination, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
 use crate::sign::NodeSigner;
 use crate::types::payment::{PaymentHash, PaymentSecret};
+use crate::sign::EntropySource;
+use crate::sync::Mutex;
+use crate::ln::inbound_payment;
 
 #[cfg(async_payments)]
 use {
@@ -130,4 +138,97 @@ pub trait Flow: chain::Listen {
 	fn get_and_clear_pending_dns_messages(
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)>;
+}
+
+
+pub struct OffersMessageFlow<ES: Deref>
+where
+	ES::Target: EntropySource,
+{
+	chain_hash: ChainHash,
+
+	our_network_pubkey: PublicKey,
+	highest_seen_timestamp: AtomicUsize,
+	inbound_payment_key: inbound_payment::ExpandedKey,
+
+	secp_ctx: Secp256k1<secp256k1::All>,
+	entropy_source: ES,
+
+	#[cfg(not(any(test, feature = "_test_utils")))]
+	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+	#[cfg(any(test, feature = "_test_utils"))]
+	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+
+	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
+
+	#[cfg(feature = "dnssec")]
+	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+}
+
+impl<ES: Deref> OffersMessageFlow<ES>
+where
+	ES::Target: EntropySource,
+{
+	/// Creates a new [`OffersMessageFlow`]
+	pub fn new(
+		network: Network, our_network_pubkey: PublicKey,
+		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
+		entropy_source: ES,
+	) -> Self {
+		let mut secp_ctx = Secp256k1::new();
+		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
+
+		Self {
+			chain_hash: ChainHash::using_genesis_block(network),
+
+			our_network_pubkey,
+			highest_seen_timestamp: AtomicUsize::new(current_timestamp as usize),
+			inbound_payment_key,
+
+			secp_ctx,
+			entropy_source,
+
+			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_async_payments_messages: Mutex::new(Vec::new()),
+			#[cfg(feature = "dnssec")]
+			pending_dns_onion_messages: Mutex::new(Vec::new()),
+		}
+	}
+
+	/// Gets the node_id held by this OffersMessageFlow
+	pub fn get_our_node_id(&self) -> PublicKey {
+		self.our_network_pubkey
+	}
+
+    fn best_block_updated(&self, header: &Header) {
+		macro_rules! max_time {
+			($timestamp: expr) => {
+				loop {
+					// Update $timestamp to be the max of its current value and the block
+					// timestamp. This should keep us close to the current time without relying on
+					// having an explicit local time source.
+					// Just in case we end up in a race, we loop until we either successfully
+					// update $timestamp or decide we don't need to.
+					let old_serial = $timestamp.load(Ordering::Acquire);
+					if old_serial >= header.time as usize { break; }
+					if $timestamp.compare_exchange(old_serial, header.time as usize, Ordering::AcqRel, Ordering::Relaxed).is_ok() {
+						break;
+					}
+				}
+			}
+		}
+
+		max_time!(self.highest_seen_timestamp);
+	}
+}
+
+impl<ES: Deref> chain::Listen for OffersMessageFlow<ES>
+where
+	ES::Target: EntropySource,
+{
+	fn filtered_block_connected(&self, header: &Header, _txdata: &TransactionData, _height: u32) {
+		self.best_block_updated(header);
+	}
+
+	fn block_disconnected(&self, _header: &Header, _height: u32) {}
 }
