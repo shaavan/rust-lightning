@@ -878,6 +878,8 @@ pub struct UserConfig {
 	/// [`ChannelManager::send_payment_for_bolt12_invoice`]: crate::ln::channelmanager::ChannelManager::send_payment_for_bolt12_invoice
 	/// [`ChannelManager::abandon_payment`]: crate::ln::channelmanager::ChannelManager::abandon_payment
 	pub manually_handle_bolt12_invoices: bool,
+	/// Indicates that the counterparty is LSP which user trust.
+	pub my_counterparty_is_trusted_lsp: bool,
 }
 
 impl Default for UserConfig {
@@ -891,6 +893,7 @@ impl Default for UserConfig {
 			manually_accept_inbound_channels: false,
 			accept_intercept_htlcs: false,
 			manually_handle_bolt12_invoices: false,
+			my_counterparty_is_trusted_lsp: false,
 		}
 	}
 }
@@ -910,6 +913,7 @@ impl Readable for UserConfig {
 			manually_accept_inbound_channels: Readable::read(reader)?,
 			accept_intercept_htlcs: Readable::read(reader)?,
 			manually_handle_bolt12_invoices: Readable::read(reader)?,
+			my_counterparty_is_trusted_lsp: Readable::read(reader)?,
 		})
 	}
 }
