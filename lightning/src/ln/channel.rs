@@ -2434,7 +2434,7 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 		if msg_push_msat > full_channel_value_msat {
 			return Err(ChannelError::close(format!("push_msat {} was larger than channel amount minus reserve ({})", msg_push_msat, full_channel_value_msat)));
 		}
-		if open_channel_fields.dust_limit_satoshis > channel_value_satoshis {
+		if open_channel_fields.dust_limit_satoshis > channel_value_satoshis { // May ignore by user config?
 			return Err(ChannelError::close(format!("dust_limit_satoshis {} was larger than channel_value_satoshis {}. Peer never wants payout outputs?", open_channel_fields.dust_limit_satoshis, channel_value_satoshis)));
 		}
 		if open_channel_fields.htlc_minimum_msat >= full_channel_value_msat {
@@ -2469,10 +2469,10 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 		if open_channel_fields.max_accepted_htlcs < config.channel_handshake_limits.min_max_accepted_htlcs {
 			return Err(ChannelError::close(format!("max_accepted_htlcs ({}) is less than the user specified limit ({})", open_channel_fields.max_accepted_htlcs, config.channel_handshake_limits.min_max_accepted_htlcs)));
 		}
-		if open_channel_fields.dust_limit_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS {
+		if open_channel_fields.dust_limit_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			return Err(ChannelError::close(format!("dust_limit_satoshis ({}) is less than the implementation limit ({})", open_channel_fields.dust_limit_satoshis, MIN_CHAN_DUST_LIMIT_SATOSHIS)));
 		}
-		if open_channel_fields.dust_limit_satoshis >  MAX_CHAN_DUST_LIMIT_SATOSHIS {
+		if open_channel_fields.dust_limit_satoshis >  MAX_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			return Err(ChannelError::close(format!("dust_limit_satoshis ({}) is greater than the implementation limit ({})", open_channel_fields.dust_limit_satoshis, MAX_CHAN_DUST_LIMIT_SATOSHIS)));
 		}
 
@@ -2484,7 +2484,7 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 			}
 		}
 
-		if holder_selected_channel_reserve_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS {
+		if holder_selected_channel_reserve_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			// Protocol level safety check in place, although it should never happen because
 			// of `MIN_THEIR_CHAN_RESERVE_SATOSHIS`
 			return Err(ChannelError::close(format!("Suitable channel reserve not found. remote_channel_reserve was ({}). dust_limit_satoshis is ({}).", holder_selected_channel_reserve_satoshis, MIN_CHAN_DUST_LIMIT_SATOSHIS)));
@@ -2492,11 +2492,11 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 		if holder_selected_channel_reserve_satoshis * 1000 >= full_channel_value_msat {
 			return Err(ChannelError::close(format!("Suitable channel reserve not found. remote_channel_reserve was ({})msats. Channel value is ({} - {})msats.", holder_selected_channel_reserve_satoshis * 1000, full_channel_value_msat, msg_push_msat)));
 		}
-		if msg_channel_reserve_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS {
+		if msg_channel_reserve_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			log_debug!(logger, "channel_reserve_satoshis ({}) is smaller than our dust limit ({}). We can broadcast stale states without any risk, implying this channel is very insecure for our counterparty.",
 				msg_channel_reserve_satoshis, MIN_CHAN_DUST_LIMIT_SATOSHIS);
 		}
-		if holder_selected_channel_reserve_satoshis < open_channel_fields.dust_limit_satoshis {
+		if holder_selected_channel_reserve_satoshis < open_channel_fields.dust_limit_satoshis { // May ignore by user config?
 			return Err(ChannelError::close(format!("Dust limit ({}) too high for the channel reserve we require the remote to keep ({})", open_channel_fields.dust_limit_satoshis, holder_selected_channel_reserve_satoshis)));
 		}
 
@@ -3170,13 +3170,13 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 		if !matches!(self.channel_state, ChannelState::NegotiatingFunding(flags) if flags == NegotiatingFundingFlags::OUR_INIT_SENT) {
 			return Err(ChannelError::close("Got an accept_channel message at a strange time".to_owned()));
 		}
-		if common_fields.dust_limit_satoshis > 21000000 * 100000000 {
+		if common_fields.dust_limit_satoshis > 21000000 * 100000000 { // May ignore by user config?
 			return Err(ChannelError::close(format!("Peer never wants payout outputs? dust_limit_satoshis was {}", common_fields.dust_limit_satoshis)));
 		}
 		if channel_reserve_satoshis > funding.get_value_satoshis() {
 			return Err(ChannelError::close(format!("Bogus channel_reserve_satoshis ({}). Must not be greater than ({})", channel_reserve_satoshis, funding.get_value_satoshis())));
 		}
-		if common_fields.dust_limit_satoshis > funding.holder_selected_channel_reserve_satoshis {
+		if common_fields.dust_limit_satoshis > funding.holder_selected_channel_reserve_satoshis { // May ignore by user config?
 			return Err(ChannelError::close(format!("Dust limit ({}) is bigger than our channel reserve ({})", common_fields.dust_limit_satoshis, funding.holder_selected_channel_reserve_satoshis)));
 		}
 		if channel_reserve_satoshis > funding.get_value_satoshis() - funding.holder_selected_channel_reserve_satoshis {
@@ -3211,10 +3211,10 @@ impl<SP: Deref> ChannelContext<SP> where SP::Target: SignerProvider {
 		if common_fields.max_accepted_htlcs < peer_limits.min_max_accepted_htlcs {
 			return Err(ChannelError::close(format!("max_accepted_htlcs ({}) is less than the user specified limit ({})", common_fields.max_accepted_htlcs, peer_limits.min_max_accepted_htlcs)));
 		}
-		if common_fields.dust_limit_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS {
+		if common_fields.dust_limit_satoshis < MIN_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			return Err(ChannelError::close(format!("dust_limit_satoshis ({}) is less than the implementation limit ({})", common_fields.dust_limit_satoshis, MIN_CHAN_DUST_LIMIT_SATOSHIS)));
 		}
-		if common_fields.dust_limit_satoshis > MAX_CHAN_DUST_LIMIT_SATOSHIS {
+		if common_fields.dust_limit_satoshis > MAX_CHAN_DUST_LIMIT_SATOSHIS { // May ignore by user config?
 			return Err(ChannelError::close(format!("dust_limit_satoshis ({}) is greater than the implementation limit ({})", common_fields.dust_limit_satoshis, MAX_CHAN_DUST_LIMIT_SATOSHIS)));
 		}
 		if common_fields.minimum_depth > peer_limits.max_minimum_depth {
@@ -4778,9 +4778,9 @@ impl<SP: Deref> FundedChannel<SP> where
 			ConfirmationTarget::MinAllowedNonAnchorChannelRemoteFee
 		};
 		let lower_limit = fee_estimator.bounded_sat_per_1000_weight(lower_limit_conf_target);
-		if feerate_per_kw < lower_limit {
+		if feerate_per_kw < lower_limit { // May ignore by UserConfig
 			if let Some(cur_feerate) = cur_feerate_per_kw {
-				if feerate_per_kw > cur_feerate {
+				if feerate_per_kw > cur_feerate { // May ignore by UserConfig
 					log_warn!(logger,
 						"Accepting feerate that may prevent us from closing this channel because it's higher than what we have now. Had {} s/kW, now {} s/kW.",
 						cur_feerate, feerate_per_kw);
@@ -5358,7 +5358,7 @@ impl<SP: Deref> FundedChannel<SP> where
 			// Check that they won't violate our local required channel reserve by adding this HTLC.
 			let htlc_candidate = HTLCCandidate::new(msg.amount_msat, HTLCInitiator::RemoteOffered);
 			let local_commit_tx_fee_msat = self.context.next_local_commit_tx_fee_msat(&self.funding, htlc_candidate, None);
-			if self.funding.value_to_self_msat < self.funding.counterparty_selected_channel_reserve_satoshis.unwrap() * 1000 + local_commit_tx_fee_msat + anchor_outputs_value_msat {
+			if self.funding.value_to_self_msat < self.funding.counterparty_selected_channel_reserve_satoshis.unwrap() * 1000 + local_commit_tx_fee_msat + anchor_outputs_value_msat { // May ignore this for UserConfig
 				return Err(ChannelError::close("Cannot accept HTLC that would put our balance under counterparty-announced channel reserve value".to_owned()));
 			}
 		}
@@ -5507,7 +5507,7 @@ impl<SP: Deref> FundedChannel<SP> where
 		if self.context.channel_state.is_peer_disconnected() {
 			return Err(ChannelError::close("Peer sent commitment_signed when we needed a channel_reestablish".to_owned()));
 		}
-		if self.context.channel_state.is_both_sides_shutdown() && self.context.last_sent_closing_fee.is_some() {
+		if self.context.channel_state.is_both_sides_shutdown() && self.context.last_sent_closing_fee.is_some() { // May ignore this for UserConfig
 			return Err(ChannelError::close("Peer sent commitment_signed after we'd started exchanging closing_signeds".to_owned()));
 		}
 
@@ -5540,7 +5540,7 @@ impl<SP: Deref> FundedChannel<SP> where
 		if update_fee {
 			debug_assert!(!self.funding.is_outbound());
 			let counterparty_reserve_we_require_msat = self.funding.holder_selected_channel_reserve_satoshis * 1000;
-			if commitment_stats.remote_balance_msat < commitment_stats.total_fee_sat * 1000 + counterparty_reserve_we_require_msat {
+			if commitment_stats.remote_balance_msat < commitment_stats.total_fee_sat * 1000 + counterparty_reserve_we_require_msat { // May ignore this for UserConfig
 				return Err(ChannelError::close("Funding remote cannot afford proposed new fee".to_owned()));
 			}
 		}
@@ -5906,7 +5906,7 @@ impl<SP: Deref> FundedChannel<SP> where
 		if self.context.channel_state.is_peer_disconnected() {
 			return Err(ChannelError::close("Peer sent revoke_and_ack when we needed a channel_reestablish".to_owned()));
 		}
-		if self.context.channel_state.is_both_sides_shutdown() && self.context.last_sent_closing_fee.is_some() {
+		if self.context.channel_state.is_both_sides_shutdown() && self.context.last_sent_closing_fee.is_some() { // May ignore this for UserConfig
 			return Err(ChannelError::close("Peer sent revoke_and_ack after we'd started exchanging closing_signeds".to_owned()));
 		}
 
@@ -6538,7 +6538,7 @@ impl<SP: Deref> FundedChannel<SP> where
 			// unable to increase the fee, we don't try to force-close directly here.
 			return Ok(());
 		}
-		if self.context.feerate_per_kw < min_feerate {
+		if self.context.feerate_per_kw < min_feerate { // May ignore by UserConfig
 			log_info!(logger,
 				"Closing channel as feerate of {} is below required {} (the minimum required rate over the past day)",
 				self.context.feerate_per_kw, min_feerate
@@ -7351,11 +7351,11 @@ impl<SP: Deref> FundedChannel<SP> where
 		if !self.context.pending_inbound_htlcs.is_empty() || !self.context.pending_outbound_htlcs.is_empty() {
 			return Err(ChannelError::close("Remote end sent us a closing_signed while there were still pending HTLCs".to_owned()));
 		}
-		if msg.fee_satoshis > TOTAL_BITCOIN_SUPPLY_SATOSHIS { // this is required to stop potential overflow in build_closing_transaction
+		if msg.fee_satoshis > TOTAL_BITCOIN_SUPPLY_SATOSHIS { // this is required to stop potential overflow in build_closing_transaction // May ignore by UserConfig
 			return Err(ChannelError::close("Remote tried to send us a closing tx with > 21 million BTC fee".to_owned()));
 		}
 
-		if self.funding.is_outbound() && self.context.last_sent_closing_fee.is_none() {
+		if self.funding.is_outbound() && self.context.last_sent_closing_fee.is_none() { // May ignore this for UserConfig
 			return Err(ChannelError::close("Remote tried to send a closing_signed when we were supposed to propose the first one".to_owned()));
 		}
 
@@ -7367,7 +7367,7 @@ impl<SP: Deref> FundedChannel<SP> where
 		let funding_redeemscript = self.funding.get_funding_redeemscript();
 		let mut skip_remote_output = false;
 		let (mut closing_tx, used_total_fee) = self.build_closing_transaction(msg.fee_satoshis, skip_remote_output)?;
-		if used_total_fee != msg.fee_satoshis {
+		if used_total_fee != msg.fee_satoshis { // May ignore by UserConfig
 			return Err(ChannelError::close(format!("Remote sent us a closing_signed with a fee other than the value they can claim. Fee in message: {}. Actual closing tx fee: {}", msg.fee_satoshis, used_total_fee)));
 		}
 		let sighash = closing_tx.trust().get_sighash_all(&funding_redeemscript, self.funding.get_value_satoshis());
@@ -7432,13 +7432,13 @@ impl<SP: Deref> FundedChannel<SP> where
 		}
 
 		if let Some(msgs::ClosingSignedFeeRange { min_fee_satoshis, max_fee_satoshis }) = msg.fee_range {
-			if msg.fee_satoshis < min_fee_satoshis || msg.fee_satoshis > max_fee_satoshis {
+			if msg.fee_satoshis < min_fee_satoshis || msg.fee_satoshis > max_fee_satoshis { // May ignore by UserConfig
 				return Err(ChannelError::close(format!("Peer sent a bogus closing_signed - suggested fee of {} sat was not in their desired range of {} sat - {} sat", msg.fee_satoshis, min_fee_satoshis, max_fee_satoshis)));
 			}
-			if max_fee_satoshis < our_min_fee {
+			if max_fee_satoshis < our_min_fee { // May ignore by UserConfig
 				return Err(ChannelError::Warn(format!("Unable to come to consensus about closing feerate, remote's max fee ({} sat) was smaller than our min fee ({} sat)", max_fee_satoshis, our_min_fee)));
 			}
-			if min_fee_satoshis > our_max_fee {
+			if min_fee_satoshis > our_max_fee { // May ignore by UserConfig
 				return Err(ChannelError::Warn(format!("Unable to come to consensus about closing feerate, remote's min fee ({} sat) was greater than our max fee ({} sat)", min_fee_satoshis, our_max_fee)));
 			}
 
@@ -7448,7 +7448,7 @@ impl<SP: Deref> FundedChannel<SP> where
 				debug_assert_eq!(our_max_fee, self.funding.get_value_satoshis() - (self.funding.value_to_self_msat + 999) / 1000);
 				propose_fee!(cmp::min(max_fee_satoshis, our_max_fee));
 			} else {
-				if msg.fee_satoshis < our_min_fee || msg.fee_satoshis > our_max_fee {
+				if msg.fee_satoshis < our_min_fee || msg.fee_satoshis > our_max_fee { // May ignore by UserConfig
 					return Err(ChannelError::close(format!("Peer sent a bogus closing_signed - suggested fee of {} sat was not in our desired range of {} sat - {} sat after we informed them of our range.",
 						msg.fee_satoshis, our_min_fee, our_max_fee)));
 				}
@@ -7460,7 +7460,7 @@ impl<SP: Deref> FundedChannel<SP> where
 			// with the "making progress" requirements, we just comply and hope for the best.
 			if let Some((last_fee, _, _, _)) = self.context.last_sent_closing_fee {
 				if msg.fee_satoshis > last_fee {
-					if msg.fee_satoshis < our_max_fee {
+					if msg.fee_satoshis < our_max_fee { // May ignore by UserConfig
 						propose_fee!(msg.fee_satoshis);
 					} else if last_fee < our_max_fee {
 						propose_fee!(our_max_fee);
@@ -7468,7 +7468,7 @@ impl<SP: Deref> FundedChannel<SP> where
 						return Err(ChannelError::close(format!("Unable to come to consensus about closing feerate, remote wants something ({} sat) higher than our max fee ({} sat)", msg.fee_satoshis, our_max_fee)));
 					}
 				} else {
-					if msg.fee_satoshis > our_min_fee {
+					if msg.fee_satoshis > our_min_fee { // May ignore by UserConfig
 						propose_fee!(msg.fee_satoshis);
 					} else if last_fee > our_min_fee {
 						propose_fee!(our_min_fee);
@@ -7477,9 +7477,9 @@ impl<SP: Deref> FundedChannel<SP> where
 					}
 				}
 			} else {
-				if msg.fee_satoshis < our_min_fee {
+				if msg.fee_satoshis < our_min_fee { // May ignore by UserConfig
 					propose_fee!(our_min_fee);
-				} else if msg.fee_satoshis > our_max_fee {
+				} else if msg.fee_satoshis > our_max_fee { // May ignore by UserConfig
 					propose_fee!(our_max_fee);
 				} else {
 					propose_fee!(msg.fee_satoshis);
@@ -7493,7 +7493,7 @@ impl<SP: Deref> FundedChannel<SP> where
 	) -> Result<(), (&'static str, u16)> {
 		let fee = amt_to_forward.checked_mul(config.forwarding_fee_proportional_millionths as u64)
 			.and_then(|prop_fee| (prop_fee / 1000000).checked_add(config.forwarding_fee_base_msat as u64));
-		if fee.is_none() || htlc.amount_msat < fee.unwrap() ||
+		if fee.is_none() || htlc.amount_msat < fee.unwrap() ||  // May ignore this for UserConfig
 			(htlc.amount_msat - fee.unwrap()) < amt_to_forward {
 			return Err((
 				"Prior hop has deviated from specified fees parameters or origin node has obsolete ones",
