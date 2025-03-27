@@ -545,7 +545,7 @@ where
 		Self { network_graph, entropy_source }
 	}
 
-	fn create_blinded_paths_from_iter<
+	pub(crate) fn create_blinded_paths_from_iter<
 		I: ExactSizeIterator<Item = MessageForwardNode>,
 		T: secp256k1::Signing + secp256k1::Verification,
 	>(
@@ -659,36 +659,6 @@ where
 			}
 		}
 	}
-
-	pub(crate) fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		network_graph: &G, recipient: PublicKey, context: MessageContext,
-		peers: Vec<MessageForwardNode>, entropy_source: &ES, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths_from_iter(
-			network_graph,
-			recipient,
-			context,
-			peers.into_iter(),
-			entropy_source,
-			secp_ctx,
-			false,
-		)
-	}
-
-	pub(crate) fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		network_graph: &G, recipient: PublicKey, context: MessageContext,
-		peers: Vec<MessageForwardNode>, entropy_source: &ES, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths_from_iter(
-			network_graph,
-			recipient,
-			context,
-			peers.into_iter(),
-			entropy_source,
-			secp_ctx,
-			true,
-		)
-	}
 }
 
 impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref> MessageRouter
@@ -707,13 +677,14 @@ where
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths(
+		Self::create_blinded_paths_from_iter(
 			&self.network_graph,
 			recipient,
 			context,
-			peers,
+			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
+			false,
 		)
 	}
 
@@ -721,13 +692,14 @@ where
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_compact_blinded_paths(
+		Self::create_blinded_paths_from_iter(
 			&self.network_graph,
 			recipient,
 			context,
-			peers,
+			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
+			true,
 		)
 	}
 }
