@@ -394,7 +394,7 @@ mod test {
 		let name = HumanReadableName::from_encoded("matt@mattcorallo.com").unwrap();
 
 		// When we get the proof back, override its contents to an offer from nodes[1]
-		let bs_offer = nodes[1].node.create_offer_builder(None).unwrap().build().unwrap();
+		let bs_offer = nodes[1].node.create_offer_builder().unwrap().build().unwrap();
 		let proof_override = &nodes[0].node.testing_dnssec_proof_offer_resolution_override;
 		proof_override.lock().unwrap().insert(name.clone(), bs_offer);
 
