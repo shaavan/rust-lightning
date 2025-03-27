@@ -454,10 +454,11 @@ fn creates_short_lived_refund() {
 	let bob = &nodes[1];
 	let bob_id = bob.node.get_our_node_id();
 
+	let router = CompactMessageRouter::new(alice.network_graph, alice.node.entropy_source);
 	let absolute_expiry = bob.node.duration_since_epoch() + MAX_SHORT_LIVED_RELATIVE_EXPIRY;
 	let payment_id = PaymentId([1; 32]);
 	let refund = bob.node
-		.create_refund_builder(10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), RouteParametersConfig::default())
+		.create_refund_builder_using_router(router, 10_000_000, absolute_expiry, payment_id, Retry::Attempts(0), RouteParametersConfig::default())
 		.unwrap()
 		.build().unwrap();
 	assert_eq!(refund.absolute_expiry(), Some(absolute_expiry));
