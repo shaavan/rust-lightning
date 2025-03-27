@@ -217,7 +217,7 @@ where
 /// #         })
 /// #     }
 /// #     fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-/// #         &self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>, _secp_ctx: &Secp256k1<T>
+/// #         &self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<MessageForwardNode>, _secp_ctx: &Secp256k1<T>
 /// #     ) -> Result<Vec<BlindedMessagePath>, ()> {
 /// #         unreachable!()
 /// #     }
@@ -501,7 +501,7 @@ pub trait MessageRouter {
 	/// Creates [`BlindedMessagePath`]s to the `recipient` node. The nodes in `peers` are assumed to
 	/// be direct peers with the `recipient`.
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
+		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()>;
 
@@ -522,10 +522,6 @@ pub trait MessageRouter {
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let peers = peers
-			.into_iter()
-			.map(|MessageForwardNode { node_id, short_channel_id: _ }| node_id)
-			.collect();
 		self.create_blinded_paths(recipient, context, peers, secp_ctx)
 	}
 }
@@ -557,7 +553,7 @@ where
 		Self { network_graph, entropy_source }
 	}
 
-	fn create_blinded_paths_from_iter<
+	pub(crate) fn create_blinded_paths_from_iter<
 		I: ExactSizeIterator<Item = MessageForwardNode>,
 		T: secp256k1::Signing + secp256k1::Verification,
 	>(
@@ -671,38 +667,6 @@ where
 			}
 		}
 	}
-
-	pub(crate) fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		network_graph: &G, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
-		entropy_source: &ES, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let peers =
-			peers.into_iter().map(|node_id| MessageForwardNode { node_id, short_channel_id: None });
-		Self::create_blinded_paths_from_iter(
-			network_graph,
-			recipient,
-			context,
-			peers.into_iter(),
-			entropy_source,
-			secp_ctx,
-			false,
-		)
-	}
-
-	pub(crate) fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		network_graph: &G, recipient: PublicKey, context: MessageContext,
-		peers: Vec<MessageForwardNode>, entropy_source: &ES, secp_ctx: &Secp256k1<T>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths_from_iter(
-			network_graph,
-			recipient,
-			context,
-			peers.into_iter(),
-			entropy_source,
-			secp_ctx,
-			true,
-		)
-	}
 }
 
 impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref> MessageRouter
@@ -718,16 +682,17 @@ where
 	}
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
-		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
+		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_blinded_paths(
+		Self::create_blinded_paths_from_iter(
 			&self.network_graph,
 			recipient,
 			context,
-			peers,
+			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
+			false,
 		)
 	}
 
@@ -735,13 +700,14 @@ where
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
-		Self::create_compact_blinded_paths(
+		Self::create_blinded_paths_from_iter(
 			&self.network_graph,
 			recipient,
 			context,
-			peers,
+			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
+			true,
 		)
 	}
 }
@@ -1430,7 +1396,10 @@ where
 			message_recipients
 				.iter()
 				.filter(|(_, peer)| matches!(peer, OnionMessageRecipient::ConnectedPeer(_)))
-				.map(|(node_id, _)| *node_id)
+				.map(|(node_id, _)| MessageForwardNode {
+					node_id: *node_id,
+					short_channel_id: None,
+				})
 				.collect::<Vec<_>>()
 		};
 
