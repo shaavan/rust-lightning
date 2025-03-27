@@ -10287,8 +10287,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 	///
 	/// # Privacy
 	///
-	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the refund based on the given
-	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
+	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the refund. See those docs for
 	/// privacy implications as well as those of the parameterized [`Router`], which implements
 	/// [`MessageRouter`].
 	///
@@ -10320,8 +10319,8 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let secp_ctx = &$self.secp_ctx;
 
 		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
+		let context = MessageContext::Offers(OffersContext::OutboundPayment { payment_id, nonce, hmac: None });
+		let path = $self.create_blinded_paths(context)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
