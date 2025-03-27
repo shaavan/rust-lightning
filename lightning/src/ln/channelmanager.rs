@@ -2868,18 +2868,24 @@ const MAX_PEER_STORAGE_SIZE: usize = 1024;
 /// many peers we reject new (inbound) connections.
 const MAX_NO_CHANNEL_PEERS: usize = 250;
 
+#[cfg(test)]
 /// The maximum expiration from the current time where an [`Offer`] or [`Refund`] is considered
 /// short-lived, while anything with a greater expiration is considered long-lived.
 ///
 /// Using [`ChannelManager::create_offer_builder`] or [`ChannelManager::create_refund_builder`],
-/// will included a [`BlindedMessagePath`] created using:
-/// - [`MessageRouter::create_compact_blinded_paths`] when short-lived, and
-/// - [`MessageRouter::create_blinded_paths`] when long-lived.
+/// will included a [`BlindedMessagePath`] created using [`MessageRouter::create_blinded_paths`].
+///
+/// To generate compact [`BlindedMessagePath`]s:
+/// 1. Parameterize [`ChannelManager`] with a [`MessageRouter`] implementation that always creates
+///    compact paths via [`MessageRouter::create_blinded_paths`].
+/// 2. Use [`ChannelManager::create_offer_builder_using_router`] or
+///    [`ChannelManager::create_refund_builder_using_router`] to provide a custom router that
+///    generates compact paths.
 ///
 /// Using compact [`BlindedMessagePath`]s may provide better privacy as the [`MessageRouter`] could select
 /// more hops. However, since they use short channel ids instead of pubkeys, they are more likely to
 /// become invalid over time as channels are closed. Thus, they are only suitable for short-term use.
-pub const MAX_SHORT_LIVED_RELATIVE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24);
+pub(super) const MAX_SHORT_LIVED_RELATIVE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24);
 
 /// Used by [`ChannelManager::list_recent_payments`] to express the status of recent payments.
 /// These include payments that have yet to find a successful path, or have unresolved HTLCs.
@@ -10971,25 +10977,7 @@ where
 		inbound_payment::get_payment_preimage(payment_hash, payment_secret, &self.inbound_payment_key)
 	}
 
-	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
-	/// the path's intended lifetime.
-	///
-	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
-	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
-	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
-	fn create_blinded_paths_using_absolute_expiry(
-		&self, context: OffersContext, absolute_expiry: Option<Duration>,
-	) -> Result<Vec<BlindedMessagePath>, ()> {
-		let now = self.duration_since_epoch();
-		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
-
-		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
-			self.create_compact_blinded_paths(context)
-		} else {
-			self.create_blinded_paths(MessageContext::Offers(context))
-		}
-	}
-
+	#[cfg(any(test, async_payments))]
 	pub(super) fn duration_since_epoch(&self) -> Duration {
 		#[cfg(not(feature = "std"))]
 		let now = Duration::from_secs(
@@ -11032,21 +11020,6 @@ where
 
 		self.message_router
 			.create_blinded_paths(recipient, context, peers, secp_ctx)
-			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
-	}
-
-	/// Creates a collection of blinded paths by delegating to
-	/// [`MessageRouter::create_compact_blinded_paths`].
-	///
-	/// Errors if the `MessageRouter` errors.
-	fn create_compact_blinded_paths(&self, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
-		let recipient = self.get_our_node_id();
-		let secp_ctx = &self.secp_ctx;
-
-		let peers = self.get_peers_for_blinded_path();
-
-		self.message_router
-			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
 			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
 	}
 
