@@ -10883,7 +10883,10 @@ where
 			.map(|(node_id, peer_state)| (node_id, peer_state.lock().unwrap()))
 			.filter(|(_, peer)| peer.is_connected)
 			.filter(|(_, peer)| peer.latest_features.supports_onion_messages())
-			.map(|(node_id, _)| *node_id)
+			.map(|(node_id, _)| MessageForwardNode {
+				node_id: *node_id,
+				short_channel_id: None
+			})
 			.collect::<Vec<_>>();
 
 		self.message_router
