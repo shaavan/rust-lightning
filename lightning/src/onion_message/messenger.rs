@@ -704,6 +704,117 @@ where
 	}
 }
 
+/// A [`MessageRouter`] that can only route to a directly connected [`Destination`],
+/// and tries to create compact blinded path for that purpose.
+///
+/// # Privacy
+///
+/// Creating [`BlindedMessagePath`]s may affect privacy since, if a suitable path cannot be found,
+/// it will create a one-hop path using the recipient as the introduction node if it is a announced
+/// node. Otherwise, there is no way to find a path to the introduction node in order to send a
+/// message, and thus an `Err` is returned.
+///
+/// # On Compact Paths
+///
+/// Like any other router, [`CompactMessageRouter`] operates on a best-effort basis.
+/// While it attempts to construct compact blinded paths, it may fall back to a full-length
+/// blinded path if the necessary information—such as `short_channel_id`s in
+/// [`MessageForwardNode`]—is unavailable.
+pub struct CompactMessageRouter<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref>
+where
+	L::Target: Logger,
+	ES::Target: EntropySource,
+{
+	network_graph: G,
+	entropy_source: ES,
+}
+
+impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref> CompactMessageRouter<G, L, ES>
+where
+	L::Target: Logger,
+	ES::Target: EntropySource,
+{
+	/// Creates a [`DefaultMessageRouter`] using the given [`NetworkGraph`].
+	pub fn new(network_graph: G, entropy_source: ES) -> Self {
+		Self { network_graph, entropy_source }
+	}
+}
+
+impl<G: Deref<Target = NetworkGraph<L>>, L: Deref, ES: Deref> MessageRouter
+	for CompactMessageRouter<G, L, ES>
+where
+	L::Target: Logger,
+	ES::Target: EntropySource,
+{
+	fn find_path(
+		&self, sender: PublicKey, peers: Vec<PublicKey>, destination: Destination,
+	) -> Result<OnionMessagePath, ()> {
+		DefaultMessageRouter::<G, L, ES>::find_path(&self.network_graph, sender, peers, destination)
+	}
+
+	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
+		secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		DefaultMessageRouter::create_blinded_paths_from_iter(
+			&self.network_graph,
+			recipient,
+			context,
+			peers.into_iter(),
+			&self.entropy_source,
+			secp_ctx,
+			true,
+		)
+	}
+
+	fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
+		secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		DefaultMessageRouter::create_blinded_paths_from_iter(
+			&self.network_graph,
+			recipient,
+			context,
+			peers.into_iter(),
+			&self.entropy_source,
+			secp_ctx,
+			true,
+		)
+	}
+}
+
+/// A special [`MessageRouter`] implementation that performs no routing.
+///
+/// # Note
+/// [`NullMessageRouter`] **must not** be used with [`ChannelManager`] as a parameter.
+///
+/// # Reason
+/// [`ChannelManager`] requires a functioning [`MessageRouter`] to create blinded paths,
+/// which are necessary for constructing reply paths in onion message communication.
+pub struct NullMessageRouter {}
+
+impl MessageRouter for NullMessageRouter {
+	fn find_path(
+		&self, _sender: PublicKey, _peers: Vec<PublicKey>, _destination: Destination,
+	) -> Result<OnionMessagePath, ()> {
+		unreachable!()
+	}
+
+	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<MessageForwardNode>,
+		_secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		Ok(vec![])
+	}
+
+	fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<MessageForwardNode>,
+		_secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		Ok(vec![])
+	}
+}
+
 /// A path for sending an [`OnionMessage`].
 #[derive(Clone)]
 pub struct OnionMessagePath {
