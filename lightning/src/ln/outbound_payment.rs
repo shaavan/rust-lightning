@@ -73,9 +73,8 @@ pub(crate) enum PendingOutboundPayment {
 		route_params_config: RouteParametersConfig,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>
 	},
-	// This state will never be persisted to disk because we transition from `AwaitingInvoice` to
-	// `Retryable` atomically within the `ChannelManager::total_consistency_lock`. Useful to avoid
-	// holding the `OutboundPayments::pending_outbound_payments` lock during pathfinding.
+	// Represents the state after the invoice has been received, transitioning from the corresponding AwaitingInvoice state.
+	// Helps avoid holding the `OutboundPayments::pending_outbound_payments` lock during pathfinding.
 	InvoiceReceived {
 		payment_hash: PaymentHash,
 		retry_strategy: Retry,
@@ -851,7 +850,7 @@ impl OutboundPayments {
 		entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
 		secp_ctx: &Secp256k1<secp256k1::All>, best_block_height: u32, logger: &L,
 		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>,
-		send_payment_along_path: SP, with_manual_handling: bool
+		send_payment_along_path: SP,
 	) -> Result<(), Bolt12PaymentError>
 	where
 		R::Target: Router,
@@ -862,15 +861,9 @@ impl OutboundPayments {
 		IH: Fn() -> InFlightHtlcs,
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
-		// When manual invoice handling is enabled, the corresponding `PendingOutboundPayment` entry
-		// is already updated at the time the invoice is received. This ensures that `InvoiceReceived`
-		// event generation remains idempotent, even if the same invoice is received again before the
-		// event is handled by the user.
-		let (payment_hash, retry_strategy, params_config) = if with_manual_handling {
-			self.received_invoice_details(invoice, payment_id)?
-		} else {
-			self.mark_invoice_received_and_get_details(invoice, payment_id)?
-		};
+
+		let (payment_hash, retry_strategy, params_config) = self
+			.mark_invoice_received_and_get_details(invoice, payment_id)?;
 
 		if invoice.invoice_features().requires_unknown_bits_from(&features) {
 			self.abandon_payment(
@@ -1803,17 +1796,10 @@ impl OutboundPayments {
 
 					Ok((payment_hash, retry, config))
 				},
-				_ => Err(Bolt12PaymentError::DuplicateInvoice),
-			},
-			hash_map::Entry::Vacant(_) => Err(Bolt12PaymentError::UnexpectedInvoice),
-		}
-	}
-
-	fn received_invoice_details(
-		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
-	) -> Result<(PaymentHash, Retry, RouteParametersConfig), Bolt12PaymentError> {
-		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
-			hash_map::Entry::Occupied(entry) => match entry.get() {
+				// When manual invoice handling is enabled, the corresponding `PendingOutboundPayment` entry
+				// is already updated at the time the invoice is received. This ensures that `InvoiceReceived`
+				// event generation remains idempotent, even if the same invoice is received again before the
+				// event is handled by the user.
 				PendingOutboundPayment::InvoiceReceived {
 					retry_strategy, route_params_config, ..
 				} => {
@@ -2904,7 +2890,7 @@ mod tests {
 			outbound_payments.send_payment_for_bolt12_invoice(
 				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
-				&secp_ctx, 0, &&logger, &pending_events, |_| panic!(), false
+				&secp_ctx, 0, &&logger, &pending_events, |_| panic!()
 			),
 			Err(Bolt12PaymentError::SendingFailed(RetryableSendFailure::PaymentExpired)),
 		);
@@ -2966,7 +2952,7 @@ mod tests {
 			outbound_payments.send_payment_for_bolt12_invoice(
 				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
-				&secp_ctx, 0, &&logger, &pending_events, |_| panic!(), false
+				&secp_ctx, 0, &&logger, &pending_events, |_| panic!()
 			),
 			Err(Bolt12PaymentError::SendingFailed(RetryableSendFailure::RouteNotFound)),
 		);
@@ -3041,7 +3027,7 @@ mod tests {
 			outbound_payments.send_payment_for_bolt12_invoice(
 				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
-				&secp_ctx, 0, &&logger, &pending_events, |_| panic!(), false
+				&secp_ctx, 0, &&logger, &pending_events, |_| panic!()
 			),
 			Err(Bolt12PaymentError::UnexpectedInvoice),
 		);
@@ -3061,7 +3047,7 @@ mod tests {
 			outbound_payments.send_payment_for_bolt12_invoice(
 				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
-				&secp_ctx, 0, &&logger, &pending_events, |_| Ok(()), false
+				&secp_ctx, 0, &&logger, &pending_events, |_| Ok(())
 			),
 			Ok(()),
 		);
@@ -3072,7 +3058,7 @@ mod tests {
 			outbound_payments.send_payment_for_bolt12_invoice(
 				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
-				&secp_ctx, 0, &&logger, &pending_events, |_| panic!(), false
+				&secp_ctx, 0, &&logger, &pending_events, |_| panic!()
 			),
 			Err(Bolt12PaymentError::DuplicateInvoice),
 		);

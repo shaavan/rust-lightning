@@ -4824,8 +4824,7 @@ where
 				invoice, payment_id, &self.router, self.list_usable_channels(), features,
 				|| self.compute_inflight_htlcs(), &self.entropy_source, &self.node_signer, &self,
 				&self.secp_ctx, best_block_height, &self.logger, &self.pending_events,
-				|args| self.send_payment_along_path(args),
-				self.default_configuration.manually_handle_bolt12_invoices
+				|args| self.send_payment_along_path(args)
 			)
 	}
 
