@@ -10172,6 +10172,28 @@ impl Default for Bolt11InvoiceParameters {
 }
 
 macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
+	fn create_offer_builder_intern<PF>(&$self, make_path: PF) -> Result<$builder, Bolt12SemanticError>
+	where
+		PF: FnOnce(PublicKey, MessageContext, &secp256k1::Secp256k1<secp256k1::All>) -> Result<Option<BlindedMessagePath>, Bolt12SemanticError>,
+	{
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
+
+		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
+			.chain_hash($self.chain_hash);
+
+		if let Some(path) = make_path(node_id, context, secp_ctx)? {
+			builder = builder.path(path)
+		}
+
+		Ok(builder.into())
+	}
+
 	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
 	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer. The offer's
 	/// expiration will be `absolute_expiry` if `Some`, otherwise it will not expire.
@@ -10197,21 +10219,12 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(&$self) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
-		let path = $self.create_blinded_paths(context)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-		let builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash)
-			.path(path);
-
-		Ok(builder.into())
+		$self.create_offer_builder_intern(|_, context, _| {
+			$self.create_blinded_paths(context)
+				.and_then(|paths| paths.into_iter().next().ok_or(()))
+				.map(Some)
+				.map_err(|_| Bolt12SemanticError::MissingPaths)
+		})
 	}
 
 	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
@@ -10240,28 +10253,12 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 		&$self,
 		router: ME,
 	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
-
-		let peers = $self.get_peers_for_blinded_path();
-
-		let path = router.create_blinded_paths(node_id, context, peers, secp_ctx)
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?
-			.into_iter().next();
-
-		let mut builder = OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-			.chain_hash($self.chain_hash);
-
-		if let Some(path) = path {
-			builder = builder.path(path)
-		}
-
-		Ok(builder.into())
+		$self.create_offer_builder_intern(|node_id, context, secp_ctx| {
+			let peers = $self.get_peers_for_blinded_path();
+			router.create_blinded_paths(node_id, context, peers, secp_ctx)
+				.map(|paths| paths.into_iter().next())
+				.map_err(|_| Bolt12SemanticError::MissingPaths)
+		})
 	}
 } }
 
