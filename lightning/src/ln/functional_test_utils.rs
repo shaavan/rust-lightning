@@ -3354,7 +3354,7 @@ pub fn create_node_chanmgrs<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg<'b>
 			network,
 			best_block: BestBlock::from_network(network),
 		};
-		let flow = Arc::new(TestOffersMessageFlow::new(network, cfgs[i].keys_manager.get_node_id(Recipient::Node).unwrap(), genesis_block.header.time, cfgs[i].keys_manager.get_inbound_payment_key(), cfgs[i].keys_manager, &cfgs[i].message_router, &cfgs[i].router));
+		let flow = Arc::new(TestOffersMessageFlow::new(params, cfgs[i].keys_manager.get_node_id(Recipient::Node).unwrap(), genesis_block.header.time, cfgs[i].keys_manager.get_inbound_payment_key(), cfgs[i].keys_manager, &cfgs[i].message_router, &cfgs[i].router));
 		let node = ChannelManager::new(cfgs[i].fee_estimator, &cfgs[i].chain_monitor, cfgs[i].tx_broadcaster, &cfgs[i].router, &cfgs[i].message_router, flow, cfgs[i].logger, cfgs[i].keys_manager,
 			cfgs[i].keys_manager, cfgs[i].keys_manager, if node_config[i].is_some() { node_config[i].clone().unwrap() } else { test_default_channel_config() }, params, genesis_block.header.time);
 		chanmgrs.push(node);
@@ -3387,7 +3387,12 @@ pub fn create_network<'a, 'b: 'a, 'c: 'b>(node_count: usize, cfgs: &'b Vec<NodeC
 			IgnoringMessageHandler {},
 		);
 
-		let flow = Arc::new(TestOffersMessageFlow::new(network, cfgs[i].keys_manager.get_node_id(Recipient::Node).unwrap(), genesis_block.header.time, cfgs[i].keys_manager.get_inbound_payment_key(), &cfgs[i].keys_manager, &cfgs[i].message_router, &cfgs[i].router));
+		let params = ChainParameters {
+			network,
+			best_block: BestBlock::from_network(network),
+		};
+
+		let flow = Arc::new(TestOffersMessageFlow::new(params, cfgs[i].keys_manager.get_node_id(Recipient::Node).unwrap(), genesis_block.header.time, cfgs[i].keys_manager.get_inbound_payment_key(), &cfgs[i].keys_manager, &cfgs[i].message_router, &cfgs[i].router));
 
 		let gossip_sync = P2PGossipSync::new(cfgs[i].network_graph.as_ref(), None, cfgs[i].logger);
 		let wallet_source = Arc::new(test_utils::TestWalletSource::new(SecretKey::from_slice(&[i as u8 + 1; 32]).unwrap()));

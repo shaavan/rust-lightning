@@ -444,8 +444,12 @@ pub(crate) fn create_liquidity_node(
 	));
 	let msg_router =
 		Arc::new(DefaultMessageRouter::new(Arc::clone(&network_graph), Arc::clone(&keys_manager)));
+
+	let best_block = BestBlock::from_network(network);
+	let chain_params = ChainParameters { network, best_block };
+
 	let flow = Arc::new(OffersMessageFlow::new(
-		network,
+		chain_params,
 		keys_manager.get_node_id(Recipient::Node).unwrap(),
 		genesis_block.header.time,
 		keys_manager.get_inbound_payment_key(),
@@ -463,8 +467,6 @@ pub(crate) fn create_liquidity_node(
 		fee_estimator.clone(),
 		kv_store.clone(),
 	));
-	let best_block = BestBlock::from_network(network);
-	let chain_params = ChainParameters { network, best_block };
 	let channel_manager = Arc::new(ChannelManager::new(
 		fee_estimator.clone(),
 		chain_monitor.clone(),

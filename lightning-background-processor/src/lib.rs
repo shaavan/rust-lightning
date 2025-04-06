@@ -1584,8 +1584,10 @@ mod tests {
 				network_graph.clone(),
 				Arc::clone(&keys_manager),
 			));
+			let best_block = BestBlock::from_network(network);
+			let params = ChainParameters { network, best_block };
 			let flow = Arc::new(OffersMessageFlow::new(
-				network,
+				params,
 				keys_manager.get_node_id(Recipient::Node).unwrap(),
 				genesis_block.header.time,
 				keys_manager.get_inbound_payment_key(),
@@ -1605,8 +1607,6 @@ mod tests {
 				fee_estimator.clone(),
 				kv_store.clone(),
 			));
-			let best_block = BestBlock::from_network(network);
-			let params = ChainParameters { network, best_block };
 			let manager = Arc::new(ChannelManager::new(
 				fee_estimator.clone(),
 				chain_monitor.clone(),

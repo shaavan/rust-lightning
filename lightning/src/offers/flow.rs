@@ -14,17 +14,19 @@
 use core::ops::Deref;
 use core::time::Duration;
 use core::sync::atomic::{AtomicUsize, Ordering};
+use crate::sync::RwLock;
 
 use bitcoin::block::Header;
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
-use bitcoin::network::Network;
 
-use crate::blinded_path::message::{AsyncPaymentsContext, BlindedMessagePath, MessageContext, OffersContext};
-use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentContext};
-use crate::chain;
+use crate::blinded_path::message::{AsyncPaymentsContext, BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext};
+use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, PaymentContext, UnauthenticatedReceiveTlvs};
+use crate::chain::{self, BestBlock};
+use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 use crate::chain::transaction::TransactionData;
-use crate::ln::channelmanager::{PaymentId, Verification, OFFERS_MESSAGE_REQUEST_LIMIT};
+use crate::ln::channel_state::ChannelDetails;
+use crate::ln::channelmanager::{ChainParameters, PaymentId, Verification, CLTV_FAR_FAR_AWAY, MAX_SHORT_LIVED_RELATIVE_EXPIRY, OFFERS_MESSAGE_REQUEST_LIMIT};
 use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest};
@@ -153,6 +155,7 @@ where
 	R::Target: Router,
 {
 	chain_hash: ChainHash,
+	best_block: RwLock<BestBlock>,
 
 	our_network_pubkey: PublicKey,
 	highest_seen_timestamp: AtomicUsize,
@@ -183,7 +186,7 @@ where
 {
 	/// Creates a new [`OffersMessageFlow`]
 	pub fn new(
-		network: Network, our_network_pubkey: PublicKey,
+		params: ChainParameters, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
 		entropy_source: ES, message_router: MR, router: R,
 	) -> Self {
@@ -191,7 +194,8 @@ where
 		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
 
 		Self {
-			chain_hash: ChainHash::using_genesis_block(network),
+			chain_hash: ChainHash::using_genesis_block(params.network),
+			best_block: RwLock::new(params.best_block),
 
 			our_network_pubkey,
 			highest_seen_timestamp: AtomicUsize::new(current_timestamp as usize),
@@ -245,6 +249,101 @@ where
 		}
 
 		max_time!(self.highest_seen_timestamp);
+	}
+}
+
+impl<ES: Deref, MR: Deref, R: Deref> OffersMessageFlow<ES, MR, R>
+where
+	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+	R::Target: Router,
+{
+	/// Creates a collection of blinded paths by delegating to [`MessageRouter`] based on
+	/// the path's intended lifetime.
+	///
+	/// Whether or not the path is compact depends on whether the path is short-lived or long-lived,
+	/// respectively, based on the given `absolute_expiry` as seconds since the Unix epoch. See
+	/// [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`].
+	fn create_blinded_paths_using_absolute_expiry(
+		&self, context: OffersContext, absolute_expiry: Option<Duration>, peers: Vec<MessageForwardNode>
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		let now = self.duration_since_epoch();
+		let max_short_lived_absolute_expiry = now.saturating_add(MAX_SHORT_LIVED_RELATIVE_EXPIRY);
+
+		if absolute_expiry.unwrap_or(Duration::MAX) <= max_short_lived_absolute_expiry {
+			self.create_compact_blinded_paths(peers, context)
+		} else {
+			self.create_blinded_paths(peers, MessageContext::Offers(context))
+		}
+	}
+
+	/// Creates a collection of blinded paths by delegating to
+	/// [`MessageRouter::create_blinded_paths`].
+	///
+	/// Errors if the `MessageRouter` errors.
+	fn create_blinded_paths(&self, peers: Vec<MessageForwardNode>, context: MessageContext) -> Result<Vec<BlindedMessagePath>, ()> {
+		let recipient = self.get_our_node_id();
+		let secp_ctx = &self.secp_ctx;
+
+		let peers = peers
+			.into_iter()
+			.map(|node| node.node_id)
+			.collect();
+
+		self.message_router
+			.create_blinded_paths(recipient, context, peers, secp_ctx)
+			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
+	}
+
+	/// Creates a collection of blinded paths by delegating to
+	/// [`MessageRouter::create_compact_blinded_paths`].
+	///
+	/// Errors if the `MessageRouter` errors.
+	fn create_compact_blinded_paths(&self, peers: Vec<MessageForwardNode>, context: OffersContext) -> Result<Vec<BlindedMessagePath>, ()> {
+		let recipient = self.get_our_node_id();
+		let secp_ctx = &self.secp_ctx;
+
+		let peers = peers;
+
+		self.message_router
+			.create_compact_blinded_paths(recipient, MessageContext::Offers(context), peers, secp_ctx)
+			.and_then(|paths| (!paths.is_empty()).then(|| paths).ok_or(()))
+	}
+
+	/// Creates multi-hop blinded payment paths for the given `amount_msats` by delegating to
+	/// [`Router::create_blinded_payment_paths`].
+	fn create_blinded_payment_paths(
+		&self, usable_channels: Vec<ChannelDetails>, amount_msats: Option<u64>, payment_secret: PaymentSecret,
+		payment_context: PaymentContext, relative_expiry_seconds: u32
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		let expanded_key = &self.inbound_payment_key;
+		let entropy = &*self.entropy_source;
+		let secp_ctx = &self.secp_ctx;
+
+		let first_hops = usable_channels;
+		let payee_node_id = self.get_our_node_id();
+
+		// Assume shorter than usual block times to avoid spuriously failing payments too early.
+		const SECONDS_PER_BLOCK: u32 = 9 * 60;
+		let relative_expiry_blocks = relative_expiry_seconds / SECONDS_PER_BLOCK;
+		let max_cltv_expiry = core::cmp::max(relative_expiry_blocks, CLTV_FAR_FAR_AWAY)
+			.saturating_add(LATENCY_GRACE_PERIOD_BLOCKS)
+			.saturating_add(self.best_block.read().unwrap().height);
+
+		let payee_tlvs = UnauthenticatedReceiveTlvs {
+			payment_secret,
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry,
+				htlc_minimum_msat: 1,
+			},
+			payment_context,
+		};
+		let nonce = Nonce::from_entropy_source(entropy);
+		let payee_tlvs = payee_tlvs.authenticate(nonce, expanded_key);
+
+		self.router.create_blinded_payment_paths(
+			payee_node_id, first_hops, payee_tlvs, amount_msats, secp_ctx
+		)
 	}
 }
 
