@@ -34,8 +34,9 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
 use crate::onion_message::dns_resolution::HumanReadableName;
-use crate::onion_message::messenger::{Destination, MessageSendInstructions};
+use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendInstructions};
 use crate::onion_message::offers::OffersMessage;
+use crate::routing::router::Router;
 use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::sign::{EntropySource, NodeSigner};
 use crate::sync::Mutex;
@@ -145,9 +146,11 @@ pub trait Flow: chain::Listen {
 }
 
 
-pub struct OffersMessageFlow<ES: Deref>
+pub struct OffersMessageFlow<ES: Deref, MR: Deref, R: Deref>
 where
 	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+	R::Target: Router,
 {
 	chain_hash: ChainHash,
 
@@ -157,6 +160,9 @@ where
 
 	secp_ctx: Secp256k1<secp256k1::All>,
 	entropy_source: ES,
+
+	message_router: MR,
+	router: R,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
@@ -169,15 +175,17 @@ where
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 }
 
-impl<ES: Deref> OffersMessageFlow<ES>
+impl<ES: Deref, MR: Deref, R: Deref> OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+	R::Target: Router,
 {
 	/// Creates a new [`OffersMessageFlow`]
 	pub fn new(
 		network: Network, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
-		entropy_source: ES,
+		entropy_source: ES, message_router: MR, router: R,
 	) -> Self {
 		let mut secp_ctx = Secp256k1::new();
 		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
@@ -191,6 +199,9 @@ where
 
 			secp_ctx,
 			entropy_source,
+
+			message_router,
+			router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -237,9 +248,11 @@ where
 	}
 }
 
-impl<ES: Deref> chain::Listen for OffersMessageFlow<ES>
+impl<ES: Deref, MR: Deref, R: Deref> chain::Listen for OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+	R::Target: Router,
 {
 	fn filtered_block_connected(&self, header: &Header, _txdata: &TransactionData, _height: u32) {
 		self.best_block_updated(header);
@@ -248,9 +261,11 @@ where
 	fn block_disconnected(&self, _header: &Header, _height: u32) {}
 }
 
-impl<ES: Deref> Flow for OffersMessageFlow<ES>
+impl<ES: Deref, MR: Deref, R: Deref> Flow for OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
+	MR::Target: MessageRouter,
+	R::Target: Router,
 {
 	fn verify_invoice_request(&self, invoice_request: InvoiceRequest, context: Option<OffersContext>) -> Result<VerifiedInvoiceRequest, ()> {
 		let secp_ctx = &self.secp_ctx;
@@ -298,7 +313,7 @@ where
 		match context {
 			AsyncPaymentsContext::InboundPayment { nonce, hmac, path_absolute_expiry } => {
 				signer::verify_held_htlc_available_context(nonce, hmac, &self.inbound_payment_key)?;
-	
+
 				if self.duration_since_epoch() > path_absolute_expiry {
 					return Err(())
 				}

@@ -95,6 +95,23 @@ type ChannelManager = channelmanager::ChannelManager<
 	Arc<
 		OffersMessageFlow<
 			Arc<KeysManager>,
+			Arc<
+				DefaultMessageRouter<
+					Arc<NetworkGraph<Arc<test_utils::TestLogger>>>,
+					Arc<test_utils::TestLogger>,
+					Arc<KeysManager>,
+				>,
+			>,
+			Arc<
+				DefaultRouter<
+					Arc<NetworkGraph<Arc<test_utils::TestLogger>>>,
+					Arc<test_utils::TestLogger>,
+					Arc<KeysManager>,
+					Arc<LockingWrapper<TestScorer>>,
+					(),
+					TestScorer,
+				>,
+			>,
 		>,
 	>,
 	Arc<test_utils::TestLogger>,
@@ -433,6 +450,8 @@ pub(crate) fn create_liquidity_node(
 		genesis_block.header.time,
 		keys_manager.get_inbound_payment_key(),
 		keys_manager.clone(),
+		msg_router.clone(),
+		router.clone(),
 	));
 	let chain_source = Arc::new(test_utils::TestChainSource::new(Network::Bitcoin));
 	let kv_store =
