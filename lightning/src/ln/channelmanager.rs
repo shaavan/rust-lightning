@@ -4885,9 +4885,7 @@ where
 				}
 			};
 
-			if self.flow.enqueue_async_payment_messages(invoice, payment_id, |context| {
-				self.create_blinded_paths(context)
-			}).is_err() {
+			if self.flow.enqueue_async_payment_messages(invoice, payment_id, self.get_peers_for_blinded_path()).is_err() {
 				self.abandon_payment_with_reason(payment_id, PaymentFailureReason::BlindedPathCreationFailed);
 					res = Err(Bolt12PaymentError::BlindedPathCreationFailed);
 					return NotifyOption::DoPersist
@@ -10102,9 +10100,7 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	pub fn create_offer_builder(
 		&$self, absolute_expiry: Option<Duration>
 	) -> Result<$builder, Bolt12SemanticError> {
-		let builder = $self.flow.create_offer_builder(absolute_expiry, None, |context| {
-			$self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry)
-		})?;
+		let builder = $self.flow.create_offer_builder(absolute_expiry, None, $self.get_peers_for_blinded_path())?;
 
 		Ok(builder.into())
 	}
@@ -10160,9 +10156,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
 		retry_strategy: Retry, route_params_config: RouteParametersConfig
 	) -> Result<$builder, Bolt12SemanticError> {
-		let builder = $self.flow.create_refund_builder(amount_msats, absolute_expiry, payment_id, |context| {
-			$self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-		})?;
+		let builder = $self.flow.create_refund_builder(amount_msats, absolute_expiry, payment_id, $self.get_peers_for_blinded_path())?;
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
 
@@ -10226,7 +10220,7 @@ where
 		let entropy = &*self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
 
-		let mut builder = self.flow.create_offer_builder(None, Some(nonce), |_| {Ok(Vec::new())})?;
+		let mut builder = self.flow.create_offer_builder(None, Some(nonce), Vec::new())?;
 		for path in message_paths_to_always_online_node {
 			builder = builder.path(path);
 		}
@@ -10241,13 +10235,7 @@ where
 	pub fn create_static_invoice_builder<'a>(
 		&'a self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>
 	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError> {
-		self.flow.create_static_invoice_builder(offer, offer_nonce, relative_expiry, |amount_msats, payment_secret, payment_context, relative_expiry| {
-			self.create_blinded_payment_paths(
-				amount_msats, payment_secret, payment_context, relative_expiry
-			)
-		}, |context| {
-			self.create_blinded_paths(context)
-		})
+		self.flow.create_static_invoice_builder(offer, offer_nonce, relative_expiry, self.list_usable_channels(), self.get_peers_for_blinded_path())
 	}
 
 	/// Pays for an [`Offer`] using the given parameters by creating an [`InvoiceRequest`] and
@@ -10337,9 +10325,7 @@ where
 		let invoice_request = builder.build_and_sign()?;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
-		self.flow.enqueue_invoice_request(invoice_request.clone(), payment_id, Some(nonce), |context| {
-			self.create_blinded_paths(context)
-		})?;
+		self.flow.enqueue_invoice_request(invoice_request.clone(), payment_id, Some(nonce), self.get_peers_for_blinded_path())?;
 
 		create_pending_payment(&invoice_request, nonce)
 	}
@@ -10383,17 +10369,11 @@ where
 		match self.create_inbound_payment(Some(amount_msats), relative_expiry, None) {
 			Ok((payment_hash, payment_secret)) => {
 
-				let builder = self.flow.create_invoice_builder_from_refund(refund, payment_hash, |payment_context| {
-					self.create_blinded_payment_paths(
-						Some(amount_msats), payment_secret, payment_context, relative_expiry
-					)
-				})?;
+				let builder = self.flow.create_invoice_builder_from_refund(refund, payment_hash, payment_secret, self.list_usable_channels())?;
 
 				let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
 
-				self.flow.enqueue_invoice(invoice.clone(), refund, payment_hash, |context| {
-					self.create_blinded_paths(context)
-				})?;
+				self.flow.enqueue_invoice(invoice.clone(), refund, payment_hash, self.get_peers_for_blinded_path())?;
 
 				Ok(invoice)
 			},
@@ -10453,9 +10433,7 @@ where
 			let expiration = StaleExpiration::TimerTicks(1);
 			self.pending_outbound_payments.add_new_awaiting_offer(payment_id, expiration, retry_strategy, route_params_config, amount_msats)?;
 
-		self.flow.enqueue_dns_onion_message(onion_message, context, dns_resolvers, |context| {
-			self.create_blinded_paths(MessageContext::DNSResolver(context))
-		}).map_err(|_| ())
+		self.flow.enqueue_dns_onion_message(onion_message, context, dns_resolvers, self.get_peers_for_blinded_path()).map_err(|_| ())
 	}
 
 	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
@@ -12132,19 +12110,7 @@ where
 		{
 			let RetryableInvoiceRequest { invoice_request, nonce, .. } = retryable_invoice_request;
 
-			if self.flow.enqueue_invoice_request(invoice_request, payment_id, Some(nonce), |context| {
-				match self.create_blinded_paths(context) {
-					Ok(paths) => Ok(paths),
-					Err(err) => {
-						log_warn!(self.logger,
-							"Retry failed for an invoice request with payment_id: {}. \
-								Reason: router could not find a blinded path to include as the reply path",
-							payment_id
-						);
-						Err(err)
-					}
-				}
-			}).is_err() {
+			if self.flow.enqueue_invoice_request(invoice_request, payment_id, Some(nonce), self.get_peers_for_blinded_path()).is_err() {
 				log_warn!(
 					self.logger,
 					"Retry failed for invoice request with payment_id {}",
@@ -12239,9 +12205,7 @@ where
 					},
 				};
 
-				let response = self.flow.create_invoice_from_invoice_request(&self.node_signer, invoice_request, payment_hash, |payment_context| {
-					self.create_blinded_payment_paths(Some(amount_msats), payment_secret, payment_context, relative_expiry)
-				});
+				let response = self.flow.create_invoice_from_invoice_request(&self.node_signer, invoice_request, amount_msats, payment_hash, payment_secret, self.list_usable_channels());
 
 				match response {
 					Ok(invoice) => {

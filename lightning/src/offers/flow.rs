@@ -44,6 +44,8 @@ use crate::sign::{EntropySource, NodeSigner};
 use crate::sync::Mutex;
 use crate::ln::inbound_payment;
 
+use super::invoice::DEFAULT_RELATIVE_EXPIRY;
+
 #[cfg(async_payments)]
 use {
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
@@ -67,17 +69,13 @@ pub trait Flow: chain::Listen {
 	#[cfg(async_payments)]
 	fn verify_async_context(&self, context: AsyncPaymentsContext) -> Result<Option<PaymentId>, ()>;
 
-	fn create_offer_builder<F>(
-		&self, absolute_expiry: Option<Duration>, nonce: Option<Nonce>, paths: F,
-	) -> Result<OfferBuilder<DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
-	where
-		F: Fn(OffersContext) -> Result<Vec<BlindedMessagePath>, ()>;
+	fn create_offer_builder(
+		&self, absolute_expiry: Option<Duration>, nonce: Option<Nonce>, peers: Vec<MessageForwardNode>,
+	) -> Result<OfferBuilder<DerivedMetadata, secp256k1::All>, Bolt12SemanticError>;
 
-	fn create_refund_builder<F>(
-		&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, paths: F,
-	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>
-	where
-		F: Fn(OffersContext) -> Result<Vec<BlindedMessagePath>, ()>;
+	fn create_refund_builder(
+		&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, peers: Vec<MessageForwardNode>,
+	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>;
 
 	fn create_invoice_request_builder<'a>(
 		&'a self, offer: &'a Offer, nonce: Nonce, quantity: Option<u64>, amount_msats: Option<u64>,
@@ -86,52 +84,38 @@ pub trait Flow: chain::Listen {
 	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError>;
 
 	#[cfg(async_payments)]
-	fn create_static_invoice_builder<'a, F1, F2>(
-		&'a self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>, payment_paths: F1, receive_paths: F2
-	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError>
-	where
-		F1: Fn(Option<u64>, PaymentSecret, PaymentContext, u32) -> Result<Vec<BlindedPaymentPath>, ()>,
-		F2: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+	fn create_static_invoice_builder<'a>(
+		&'a self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>, usable_channels: Vec<ChannelDetails>, peers: Vec<MessageForwardNode>
+	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError>;
 
-	fn create_invoice_builder_from_refund<'a, F>(
-		&'a self, refund: &'a Refund, payment_hash: PaymentHash, payment_paths: F,
-	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
-	where
-		F: Fn(PaymentContext) -> Result<Vec<BlindedPaymentPath>, ()>;
+	fn create_invoice_builder_from_refund<'a>(
+		&'a self, refund: &'a Refund, payment_hash: PaymentHash, payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
+	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>;
 
-	fn create_invoice_from_invoice_request<NS: Deref, F>(
-		&self, signer: &NS, invoice_request: VerifiedInvoiceRequest, payment_hash: PaymentHash, payment_paths: F,
+	fn create_invoice_from_invoice_request<NS: Deref>(
+		&self, signer: &NS, invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>
 	) -> Result<Bolt12Invoice, InvoiceError>
 	where
-		NS::Target: NodeSigner,
-		F: Fn(PaymentContext) -> Result<Vec<BlindedPaymentPath>, ()>;
+		NS::Target: NodeSigner;
 
-	fn enqueue_invoice_request<F>(
-		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Option<Nonce>, reply_paths: F,
-	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+	fn enqueue_invoice_request(
+		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Option<Nonce>, peers: Vec<MessageForwardNode>
+	) -> Result<(), Bolt12SemanticError>;
 
-	fn enqueue_invoice<F>(
-		&self, invoice: Bolt12Invoice, refund: &Refund, payment_hash: PaymentHash, reply_paths: F,
-	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+	fn enqueue_invoice(
+		&self, invoice: Bolt12Invoice, refund: &Refund, payment_hash: PaymentHash, peers: Vec<MessageForwardNode>
+	) -> Result<(), Bolt12SemanticError>;
 
    #[cfg(async_payments)]
-   fn enqueue_async_payment_messages<F>(
-		 &self, invoice: &StaticInvoice, payment_id: PaymentId, reply_paths: F,
-	) -> Result<(), Bolt12SemanticError>
-	where
-		 F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>;
+   fn enqueue_async_payment_messages(
+		 &self, invoice: &StaticInvoice, payment_id: PaymentId, peers: Vec<MessageForwardNode>
+	) -> Result<(), Bolt12SemanticError>;
 
 	#[cfg(feature = "dnssec")]
-	fn enqueue_dns_onion_message<F>(
+	fn enqueue_dns_onion_message(
 		&self, message: DNSSECQuery, context: DNSResolverContext, dns_resolvers: Vec<Destination>,
-		reply_paths: F,
-	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(DNSResolverContext) -> Result<Vec<BlindedMessagePath>, ()>;
+		peers: Vec<MessageForwardNode>
+	) -> Result<(), Bolt12SemanticError>;
 
 	fn get_and_clear_pending_offers_messages(
 		&self,
@@ -425,11 +409,9 @@ where
 		}
 	}
 
-	fn create_offer_builder<F>(
-		&self, absolute_expiry: Option<Duration>, nonce: Option<Nonce>, paths: F,
+	fn create_offer_builder(
+		&self, absolute_expiry: Option<Duration>, nonce: Option<Nonce>, peers: Vec<MessageForwardNode>
 	) -> Result<OfferBuilder<DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
-	where
-		F: Fn(OffersContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 		let node_id = self.get_our_node_id();
 		let expanded_key = &self.inbound_payment_key;
@@ -439,7 +421,7 @@ where
 		let nonce = nonce.unwrap_or(Nonce::from_entropy_source(entropy));
 		let context = OffersContext::InvoiceRequest { nonce };
 
-		let path = paths(context)
+		let path = self.create_blinded_paths_using_absolute_expiry(context, absolute_expiry, peers)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
@@ -455,11 +437,9 @@ where
 		Ok(builder)
 	}
 
-	fn create_refund_builder<F>(
-		&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, paths: F,
+	fn create_refund_builder(
+		&self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId, peers: Vec<MessageForwardNode>
 	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>
-	where
-		F: Fn(OffersContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 		let node_id = self.get_our_node_id();
 		let expanded_key = &self.inbound_payment_key;
@@ -469,9 +449,10 @@ where
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
 
-		let path = paths(context)
+		let path = self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry), peers)
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
 
 		let builder = RefundBuilder::deriving_signing_pubkey(
 			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
@@ -517,12 +498,9 @@ where
 	}
 
 	#[cfg(async_payments)]
-	fn create_static_invoice_builder<'a, F1, F2>(
-		&'a self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>, payment_paths: F1, receive_paths: F2
+	fn create_static_invoice_builder<'a>(
+		&'a self, offer: &'a Offer, offer_nonce: Nonce, relative_expiry: Option<Duration>, usable_channels: Vec<ChannelDetails>, peers: Vec<MessageForwardNode>
 	) -> Result<StaticInvoiceBuilder<'a>, Bolt12SemanticError>
-	where
-		F1: Fn(Option<u64>, PaymentSecret, PaymentContext, u32) -> Result<Vec<BlindedPaymentPath>, ()>,
-		F2: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
@@ -546,8 +524,9 @@ where
 			&self.inbound_payment_key, amount_msat, relative_expiry_secs, created_at.as_secs(), None
 		).map_err(|()| Bolt12SemanticError::InvalidAmount)?;
 
-		let payment_paths = payment_paths(amount_msat, payment_secret, payment_context, relative_expiry_secs)
-			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
+		let payment_paths = self.create_blinded_payment_paths(
+			usable_channels, amount_msat, payment_secret, payment_context, relative_expiry_secs
+		).map_err(|()| Bolt12SemanticError::MissingPaths)?;
 
 		let nonce = Nonce::from_entropy_source(entropy);
 		let hmac = signer::hmac_for_held_htlc_available_context(nonce, expanded_key);
@@ -559,7 +538,7 @@ where
 			AsyncPaymentsContext::InboundPayment { nonce, hmac, path_absolute_expiry }
 		);
 
-		let async_receive_message_paths = receive_paths(context)
+		let async_receive_message_paths = self.create_blinded_paths(peers, context)
 			.map_err(|()| Bolt12SemanticError::MissingPaths)?;
 
 		StaticInvoiceBuilder::for_offer_using_derived_keys(
@@ -568,18 +547,20 @@ where
 		).map(|inv| inv.allow_mpp().relative_expiry(relative_expiry_secs))
 	}
 
-	fn create_invoice_builder_from_refund<'a, F>(
-		&'a self, refund: &'a Refund, payment_hash: PaymentHash, payment_paths: F,
+	fn create_invoice_builder_from_refund<'a>(
+		&'a self, refund: &'a Refund, payment_hash: PaymentHash, payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
-	where
-		F: Fn(PaymentContext) -> Result<Vec<BlindedPaymentPath>, ()>
 	{
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
 
+		let amount_msats = refund.amount_msats();
+		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+
 		let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
-		let payment_paths = payment_paths(payment_context)
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+		let payment_paths = self.create_blinded_payment_paths(
+			usable_channels, Some(amount_msats), payment_secret, payment_context, relative_expiry
+		).map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
 		let builder = refund.respond_using_derived_keys(
@@ -598,21 +579,21 @@ where
 		Ok(builder)
 	}
 
-	fn create_invoice_from_invoice_request<NS: Deref, F>(
-		&self, signer: &NS, invoice_request: VerifiedInvoiceRequest, payment_hash: PaymentHash, payment_paths: F,
+	fn create_invoice_from_invoice_request<NS: Deref>(
+		&self, signer: &NS, invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>
 	) -> Result<Bolt12Invoice, InvoiceError>
 	where
 		NS::Target: NodeSigner,
-		F: Fn(PaymentContext) -> Result<Vec<BlindedPaymentPath>, ()>
 	{
 		let secp_ctx = &self.secp_ctx;
+		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
 			invoice_request: invoice_request.fields(),
 		});
 
-		let payment_paths = payment_paths(context)
+		let payment_paths = self.create_blinded_payment_paths(usable_channels, Some(amount_msats), payment_secret, context, relative_expiry)
 			.map_err(|_| {
 				InvoiceError::from(Bolt12SemanticError::MissingPaths)
 			})?;
@@ -660,11 +641,9 @@ where
 		response
 	}
 
-	fn enqueue_invoice_request<F>(
-		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Option<Nonce>, reply_paths: F,
+	fn enqueue_invoice_request(
+		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Option<Nonce>, peers: Vec<MessageForwardNode>
 	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
@@ -675,7 +654,7 @@ where
 		let context = MessageContext::Offers(
 			OffersContext::OutboundPayment { payment_id, nonce, hmac: Some(hmac) }
 		);
-		let reply_paths = reply_paths(context)
+		let reply_paths = self.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -711,11 +690,9 @@ where
 		Ok(())
 	}
 
-	fn enqueue_invoice<F>(
-		&self, invoice: Bolt12Invoice, refund: &Refund, payment_hash: PaymentHash, reply_paths: F,
+	fn enqueue_invoice(
+		&self, invoice: Bolt12Invoice, refund: &Refund, payment_hash: PaymentHash, peers: Vec<MessageForwardNode>
 	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*self.entropy_source;
@@ -726,7 +703,7 @@ where
 			payment_hash: invoice.payment_hash(), nonce, hmac
 		});
 
-		let reply_paths = reply_paths(context)
+		let reply_paths = self.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
@@ -759,11 +736,9 @@ where
 	}
 
 	#[cfg(async_payments)]
-	fn enqueue_async_payment_messages<F>(
-		 &self, invoice: &StaticInvoice, payment_id: PaymentId, reply_paths: F,
+	fn enqueue_async_payment_messages(
+		 &self, invoice: &StaticInvoice, payment_id: PaymentId, peers: Vec<MessageForwardNode>
 	) -> Result<(), Bolt12SemanticError>
-	where
-		 F: Fn(MessageContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
 
 		let expanded_key = &self.inbound_payment_key;
@@ -775,7 +750,7 @@ where
 			AsyncPaymentsContext::OutboundPayment { payment_id, nonce, hmac }
 		);
 
-		let reply_paths = reply_paths(context)
+		let reply_paths = self.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let mut pending_async_payments_messages = self.pending_async_payments_messages.lock().unwrap();
@@ -798,14 +773,12 @@ where
 	}
 
 	#[cfg(feature = "dnssec")]
-	fn enqueue_dns_onion_message<F>(
+	fn enqueue_dns_onion_message(
 		&self, message: DNSSECQuery, context: DNSResolverContext, dns_resolvers: Vec<Destination>,
-		reply_paths: F,
+		peers: Vec<MessageForwardNode>
 	) -> Result<(), Bolt12SemanticError>
-	where
-		F: Fn(DNSResolverContext) -> Result<Vec<BlindedMessagePath>, ()>
 	{
-		let reply_paths = reply_paths(context)
+		let reply_paths = self.create_blinded_paths(peers, MessageContext::DNSResolver(context))
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		let message_params = dns_resolvers
