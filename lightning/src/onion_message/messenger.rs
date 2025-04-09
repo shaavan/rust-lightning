@@ -1104,11 +1104,6 @@ where
 			})),
 			Some((next_hop_hmac, new_packet_bytes)),
 		)) => {
-			// TODO: we need to check whether `next_hop` is our node, in which case this is a dummy
-			// blinded hop and this onion message is destined for us. In this situation, we should keep
-			// unwrapping the onion layers to get to the final payload. Since we don't have the option
-			// of creating blinded paths with dummy hops currently, we should be ok to not handle this
-			// for now.
 			let packet_pubkey = msg.onion_routing_packet.public_key;
 			let new_pubkey_opt =
 				onion_utils::next_hop_pubkey(&secp_ctx, packet_pubkey, &onion_decode_ss);
@@ -1145,7 +1140,18 @@ where
 				onion_routing_packet: outgoing_packet,
 			};
 
-			Ok(PeeledOnion::Forward(next_hop, onion_message))
+			let our_node_id = node_signer.get_node_id(Recipient::Node).unwrap();
+
+			match next_hop {
+				NextMessageHop::NodeId(ref id) if id == &our_node_id => peel_onion_message(
+					&onion_message,
+					secp_ctx,
+					node_signer,
+					logger,
+					custom_handler,
+				),
+				_ => Ok(PeeledOnion::Forward(next_hop, onion_message)),
+			}
 		},
 		Err(e) => {
 			log_trace!(logger, "Errored decoding onion message packet: {:?}", e);
