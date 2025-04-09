@@ -17055,7 +17055,7 @@ pub mod bench {
 		let scorer = RwLock::new(test_utils::TestScorer::new());
 		let entropy = test_utils::TestKeysInterface::new(&[0u8; 32], network);
 		let router = test_utils::TestRouter::new(Arc::new(NetworkGraph::new(network, &logger_a)), &logger_a, &scorer);
-		let message_router = test_utils::TestMessageRouter::new(Arc::new(NetworkGraph::new(network, &logger_a)), &entropy);
+		let message_router = test_utils::TestMessageRouter::new(Arc::new(NetworkGraph::new(network, &logger_a)), &keys_manager, keys_manager.get_expanded_key());
 
 		let mut config: UserConfig = Default::default();
 		config.channel_config.max_dust_htlc_exposure = MaxDustHTLCExposure::FeeRateMultiplier(5_000_000 / 253);
