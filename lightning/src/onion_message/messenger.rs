@@ -15,6 +15,8 @@ use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
+use rand::Rng;
+
 #[cfg(async_payments)]
 use super::async_payments::AsyncPaymentsMessage;
 use super::async_payments::AsyncPaymentsMessageHandler;
@@ -563,6 +565,10 @@ where
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
 
+		// Add a random number (1 to 5) of dummy hops to each blinded path
+		// to make it harder to infer the recipient's position.
+		let dummy_hops_count = rand::thread_rng().gen_range(1..5);
+
 		let network_graph = network_graph.deref().read_only();
 		let is_recipient_announced =
 			network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient));
@@ -602,8 +608,15 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedMessagePath::new(&[], recipient, context, &**entropy_source, secp_ctx)
-						.map(|path| vec![path])
+					BlindedMessagePath::new_with_dummy_hops(
+						&[],
+						dummy_hops_count,
+						recipient,
+						context,
+						&**entropy_source,
+						secp_ctx,
+					)
+					.map(|path| vec![path])
 				} else {
 					Err(())
 				}
