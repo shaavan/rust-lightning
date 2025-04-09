@@ -563,6 +563,9 @@ where
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
 
+		// Add dummy hops to each blinded path to make it more difficult to infer the recipient's position.
+		const DUMMY_HOPS_COUNT: u8 = 3;
+
 		let network_graph = network_graph.deref().read_only();
 		let is_recipient_announced =
 			network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient));
@@ -602,7 +605,7 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedMessagePath::new(&[], recipient, context, &**entropy_source, secp_ctx)
+					BlindedMessagePath::new_with_dummy_hops(&[], DUMMY_HOPS_COUNT, recipient, context, &**entropy_source, secp_ctx)
 						.map(|path| vec![path])
 				} else {
 					Err(())
