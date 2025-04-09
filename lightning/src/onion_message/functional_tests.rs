@@ -279,8 +279,11 @@ fn create_nodes_using_cfgs(cfgs: Vec<MessengerCfg>) -> Vec<MessengerNode> {
 		let node_signer = Arc::new(TestNodeSigner::new(secret_key));
 
 		let node_id_lookup = Arc::new(EmptyNodeIdLookUp {});
-		let message_router =
-			Arc::new(DefaultMessageRouter::new(network_graph.clone(), entropy_source.clone()));
+		let message_router = Arc::new(DefaultMessageRouter::new(
+			network_graph.clone(),
+			entropy_source.clone(),
+			node_signer.get_expanded_key(),
+		));
 		let offers_message_handler = Arc::new(TestOffersMessageHandler {});
 		let async_payments_message_handler = Arc::new(TestAsyncPaymentsMessageHandler {});
 		let dns_resolver_message_handler = Arc::new(TestDNSResolverMessageHandler {});
