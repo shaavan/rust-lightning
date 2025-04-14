@@ -63,7 +63,7 @@ use core::iter::Iterator;
 /// [`MIN_FINAL_CLTV_EXPIRY_DETLA`]: crate::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA
 #[cfg_attr(feature = "std", doc = "")]
 #[cfg_attr(feature = "std", doc = "This can be used in a `no_std` environment, where [`std::time::SystemTime`] is not available and the current time is supplied by the caller.")]
-pub fn create_phantom_invoice<ES: Deref, NS: Deref, L: Deref>(
+pub fn create_phantom_invoice<ES: Deref + Clone, NS: Deref, L: Deref>(
 	amt_msat: Option<u64>, payment_hash: Option<PaymentHash>, description: String,
 	invoice_expiry_delta_secs: u32, phantom_route_hints: Vec<PhantomRouteHints>, entropy_source: ES,
 	node_signer: NS, logger: L, network: Currency, min_final_cltv_expiry_delta: Option<u16>, duration_since_epoch: Duration,
@@ -118,7 +118,7 @@ where
 /// [`PhantomRouteHints::channels`]: crate::ln::channelmanager::PhantomRouteHints::channels
 #[cfg_attr(feature = "std", doc = "")]
 #[cfg_attr(feature = "std", doc = "This version can be used in a `no_std` environment, where [`std::time::SystemTime`] is not available and the current time is supplied by the caller.")]
-pub fn create_phantom_invoice_with_description_hash<ES: Deref, NS: Deref, L: Deref>(
+pub fn create_phantom_invoice_with_description_hash<ES: Deref + Clone, NS: Deref, L: Deref>(
 	amt_msat: Option<u64>, payment_hash: Option<PaymentHash>, invoice_expiry_delta_secs: u32,
 	description_hash: Sha256, phantom_route_hints: Vec<PhantomRouteHints>, entropy_source: ES,
 	node_signer: NS, logger: L, network: Currency, min_final_cltv_expiry_delta: Option<u16>, duration_since_epoch: Duration,
@@ -137,7 +137,7 @@ where
 
 const MAX_CHANNEL_HINTS: usize = 3;
 
-fn _create_phantom_invoice<ES: Deref, NS: Deref, L: Deref>(
+fn _create_phantom_invoice<ES: Deref + Clone, NS: Deref, L: Deref>(
 	amt_msat: Option<u64>, payment_hash: Option<PaymentHash>, description: Bolt11InvoiceDescription,
 	invoice_expiry_delta_secs: u32, phantom_route_hints: Vec<PhantomRouteHints>, entropy_source: ES,
 	node_signer: NS, logger: L, network: Currency, min_final_cltv_expiry_delta: Option<u16>, duration_since_epoch: Duration,
@@ -328,7 +328,7 @@ fn rotate_through_iterators<T, I: Iterator<Item = T>>(mut vecs: Vec<I>) -> impl 
 /// confirmations during routing.
 ///
 /// [`MIN_FINAL_CLTV_EXPIRY_DETLA`]: crate::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA
-pub fn create_invoice_from_channelmanager<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
+pub fn create_invoice_from_channelmanager<M: Deref, T: Deref, ES: Deref + Clone, NS: Deref, SP: Deref, F: Deref, R: Deref + Clone, MR: Deref + Clone, L: Deref>(
 	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
 	description: String, invoice_expiry_delta_secs: u32, min_final_cltv_expiry_delta: Option<u16>,
 ) -> Result<Bolt11Invoice, SignOrCreationError<()>>
@@ -371,7 +371,7 @@ where
 /// confirmations during routing.
 ///
 /// [`MIN_FINAL_CLTV_EXPIRY_DETLA`]: crate::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA
-pub fn create_invoice_from_channelmanager_with_description_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
+pub fn create_invoice_from_channelmanager_with_description_hash<M: Deref, T: Deref, ES: Deref + Clone, NS: Deref, SP: Deref, F: Deref, R: Deref + Clone, MR: Deref + Clone, L: Deref>(
 	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
 	description_hash: Sha256, invoice_expiry_delta_secs: u32,
 	min_final_cltv_expiry_delta: Option<u16>,
@@ -405,7 +405,7 @@ where
 /// This may be useful if you're building an on-chain swap or involving another protocol where
 /// the payment hash is also involved outside the scope of lightning and want to set the
 /// description hash.
-pub fn create_invoice_from_channelmanager_with_description_hash_and_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
+pub fn create_invoice_from_channelmanager_with_description_hash_and_payment_hash<M: Deref, T: Deref, ES: Deref + Clone, NS: Deref, SP: Deref, F: Deref, R: Deref + Clone, MR: Deref + Clone, L: Deref>(
 	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
 	description_hash: Sha256, invoice_expiry_delta_secs: u32, payment_hash: PaymentHash,
 	min_final_cltv_expiry_delta: Option<u16>,
@@ -437,7 +437,7 @@ where
 /// This version allows for providing a custom [`PaymentHash`] for the invoice.
 /// This may be useful if you're building an on-chain swap or involving another protocol where
 /// the payment hash is also involved outside the scope of lightning.
-pub fn create_invoice_from_channelmanager_with_payment_hash<M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>(
+pub fn create_invoice_from_channelmanager_with_payment_hash<M: Deref, T: Deref, ES: Deref + Clone, NS: Deref, SP: Deref, F: Deref, R: Deref + Clone, MR: Deref + Clone, L: Deref>(
 	channelmanager: &ChannelManager<M, T, ES, NS, SP, F, R, MR, L>, amt_msat: Option<u64>,
 	description: String, invoice_expiry_delta_secs: u32, payment_hash: PaymentHash,
 	min_final_cltv_expiry_delta: Option<u16>,

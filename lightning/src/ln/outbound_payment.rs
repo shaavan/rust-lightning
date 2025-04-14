@@ -799,7 +799,7 @@ impl OutboundPayments {
 		}
 	}
 
-	pub(super) fn send_payment<R: Deref, ES: Deref, NS: Deref, IH, SP, L: Deref>(
+	pub(super) fn send_payment<R: Deref + Clone, ES: Deref, NS: Deref, IH, SP, L: Deref>(
 		&self, payment_hash: PaymentHash, recipient_onion: RecipientOnionFields, payment_id: PaymentId,
 		retry_strategy: Retry, route_params: RouteParameters, router: &R,
 		first_hops: Vec<ChannelDetails>, compute_inflight_htlcs: IH, entropy_source: &ES,
@@ -819,7 +819,7 @@ impl OutboundPayments {
 			best_block_height, logger, pending_events, &send_payment_along_path)
 	}
 
-	pub(super) fn send_spontaneous_payment<R: Deref, ES: Deref, NS: Deref, IH, SP, L: Deref>(
+	pub(super) fn send_spontaneous_payment<R: Deref + Clone, ES: Deref, NS: Deref, IH, SP, L: Deref>(
 		&self, payment_preimage: Option<PaymentPreimage>, recipient_onion: RecipientOnionFields,
 		payment_id: PaymentId, retry_strategy: Retry, route_params: RouteParameters, router: &R,
 		first_hops: Vec<ChannelDetails>, inflight_htlcs: IH, entropy_source: &ES,
@@ -844,7 +844,7 @@ impl OutboundPayments {
 	}
 
 	pub(super) fn send_payment_for_bolt12_invoice<
-		R: Deref, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
+		R: Deref + Clone, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
 	>(
 		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, router: &R,
 		first_hops: Vec<ChannelDetails>, features: Bolt12InvoiceFeatures, inflight_htlcs: IH,
@@ -905,7 +905,7 @@ impl OutboundPayments {
 	}
 
 	fn send_payment_for_bolt12_invoice_internal<
-		R: Deref, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
+		R: Deref + Clone, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
 	>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash,
 		keysend_preimage: Option<PaymentPreimage>, invoice_request: Option<&InvoiceRequest>,
@@ -1101,7 +1101,7 @@ impl OutboundPayments {
 
 	#[cfg(async_payments)]
 	pub(super) fn send_payment_for_static_invoice<
-		R: Deref, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
+		R: Deref + Clone, ES: Deref, NS: Deref, NL: Deref, IH, SP, L: Deref
 	>(
 		&self, payment_id: PaymentId, router: &R, first_hops: Vec<ChannelDetails>, inflight_htlcs: IH,
 		entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
@@ -1139,7 +1139,7 @@ impl OutboundPayments {
 		)
 	}
 
-	pub(super) fn check_retry_payments<R: Deref, ES: Deref, NS: Deref, SP, IH, FH, L: Deref>(
+	pub(super) fn check_retry_payments<R: Deref + Clone, ES: Deref, NS: Deref, SP, IH, FH, L: Deref>(
 		&self, router: &R, first_hops: FH, inflight_htlcs: IH, entropy_source: &ES, node_signer: &NS,
 		best_block_height: u32,
 		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>, logger: &L,
@@ -1203,7 +1203,7 @@ impl OutboundPayments {
 			!pmt.is_awaiting_invoice())
 	}
 
-	fn find_initial_route<R: Deref, NS: Deref, IH, L: Deref>(
+	fn find_initial_route<R: Deref + Clone, NS: Deref, IH, L: Deref>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash, recipient_onion: &RecipientOnionFields,
 		keysend_preimage: Option<PaymentPreimage>, invoice_request: Option<&InvoiceRequest>,
 		route_params: &mut RouteParameters, router: &R, first_hops: &Vec<ChannelDetails>,
@@ -1257,7 +1257,7 @@ impl OutboundPayments {
 	///
 	/// [`Event::PaymentPathFailed`]: crate::events::Event::PaymentPathFailed
 	/// [`Event::PaymentFailed`]: crate::events::Event::PaymentFailed
-	fn send_payment_internal<R: Deref, NS: Deref, ES: Deref, IH, SP, L: Deref>(
+	fn send_payment_internal<R: Deref + Clone, NS: Deref, ES: Deref, IH, SP, L: Deref>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash, recipient_onion: RecipientOnionFields,
 		keysend_preimage: Option<PaymentPreimage>, retry_strategy: Retry, mut route_params: RouteParameters,
 		router: &R, first_hops: Vec<ChannelDetails>, inflight_htlcs: IH, entropy_source: &ES,
@@ -1301,7 +1301,7 @@ impl OutboundPayments {
 		Ok(())
 	}
 
-	fn find_route_and_send_payment<R: Deref, NS: Deref, ES: Deref, IH, SP, L: Deref>(
+	fn find_route_and_send_payment<R: Deref + Clone, NS: Deref, ES: Deref, IH, SP, L: Deref>(
 		&self, payment_hash: PaymentHash, payment_id: PaymentId, route_params: RouteParameters,
 		router: &R, first_hops: Vec<ChannelDetails>, inflight_htlcs: &IH, entropy_source: &ES,
 		node_signer: &NS, best_block_height: u32, logger: &L,
@@ -1460,7 +1460,7 @@ impl OutboundPayments {
 		}
 	}
 
-	fn handle_pay_route_err<R: Deref, NS: Deref, ES: Deref, IH, SP, L: Deref>(
+	fn handle_pay_route_err<R: Deref + Clone, NS: Deref, ES: Deref, IH, SP, L: Deref>(
 		&self, err: PaymentSendFailure, payment_id: PaymentId, payment_hash: PaymentHash, route: Route,
 		mut route_params: RouteParameters, onion_session_privs: Vec<[u8; 32]>, router: &R,
 		first_hops: Vec<ChannelDetails>, inflight_htlcs: &IH, entropy_source: &ES, node_signer: &NS,

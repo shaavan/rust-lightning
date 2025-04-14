@@ -73,7 +73,7 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery},
 };
 
-pub struct OffersMessageFlow<ES: Deref, MR: Deref, R: Deref>
+pub struct OffersMessageFlow<ES: Deref, MR: Deref + Clone, R: Deref>
 where
 	ES::Target: EntropySource,
 	MR::Target: MessageRouter,
@@ -103,7 +103,7 @@ where
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 }
 
-impl<ES: Deref, MR: Deref, R: Deref> OffersMessageFlow<ES, MR, R>
+impl<ES: Deref, MR: Deref + Clone, R: Deref> OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
 	MR::Target: MessageRouter,
@@ -186,7 +186,7 @@ where
 	}
 }
 
-impl<ES: Deref, MR: Deref, R: Deref> OffersMessageFlow<ES, MR, R>
+impl<ES: Deref, MR: Deref + Clone, R: Deref> OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
 	MR::Target: MessageRouter,
@@ -290,7 +290,7 @@ where
 	}
 }
 
-impl<ES: Deref, MR: Deref, R: Deref> chain::Listen for OffersMessageFlow<ES, MR, R>
+impl<ES: Deref, MR: Deref + Clone, R: Deref> chain::Listen for OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
 	MR::Target: MessageRouter,
@@ -303,7 +303,7 @@ where
 	fn block_disconnected(&self, _header: &Header, _height: u32) {}
 }
 
-impl<ES: Deref, MR: Deref, R: Deref> OffersMessageFlow<ES, MR, R>
+impl<ES: Deref, MR: Deref + Clone, R: Deref> OffersMessageFlow<ES, MR, R>
 where
 	ES::Target: EntropySource,
 	MR::Target: MessageRouter,
