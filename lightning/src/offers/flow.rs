@@ -154,7 +154,7 @@ where
 		now
 	}
 
-	fn best_block_updated(&self, header: &Header) {
+	pub(crate) fn best_block_updated(&self, header: &Header) {
 		macro_rules! max_time {
 			($timestamp: expr) => {
 				loop {

@@ -39,7 +39,7 @@
 //! 	Arc::clone(&some_persister),
 //! ));
 //!
-//! let channel_manager = Arc::new(ChannelManager::new(
+//! let channel_manager = Arc::new(ChannelManager::new_with_flow(
 //! 	Arc::clone(&some_fee_estimator),
 //! 	Arc::clone(&chain_monitor),
 //! 	Arc::clone(&some_broadcaster),
