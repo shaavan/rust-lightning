@@ -15,7 +15,7 @@
 
 use bitcoin::amount::Amount;
 use bitcoin::consensus::encode::deserialize;
-use bitcoin::constants::genesis_block;
+use bitcoin::constants::{genesis_block, ChainHash};
 use bitcoin::locktime::absolute::LockTime;
 use bitcoin::network::Network;
 use bitcoin::opcodes;
@@ -49,6 +49,7 @@ use lightning::ln::peer_handler::{
 };
 use lightning::ln::script::ShutdownScript;
 use lightning::ln::types::ChannelId;
+use lightning::offers::flow::OffersMessageFlow;
 use lightning::offers::invoice::UnsignedBolt12Invoice;
 use lightning::onion_message::messenger::{Destination, MessageRouter, OnionMessagePath};
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
@@ -78,6 +79,7 @@ use bitcoin::secp256k1::{self, Message, PublicKey, Scalar, Secp256k1, SecretKey}
 use lightning::util::dyn_signer::DynSigner;
 use std::cell::RefCell;
 use std::cmp;
+use std::ops::Deref;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -145,7 +147,52 @@ impl FeeEstimator for FuzzEstimator {
 	}
 }
 
-struct FuzzRouter {}
+#[derive(Clone)]
+struct InnerRouter {}
+
+impl Router for InnerRouter {
+	fn find_route(
+		&self, _payer: &PublicKey, _params: &RouteParameters,
+		_first_hops: Option<&[&ChannelDetails]>, _inflight_htlcs: InFlightHtlcs,
+	) -> Result<Route, &'static str> {
+		Err("Not implemented")
+	}
+
+	fn create_blinded_payment_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, _recipient: PublicKey, _first_hops: Vec<ChannelDetails>, _tlvs: ReceiveTlvs,
+		_amount_msats: Option<u64>, _secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedPaymentPath>, ()> {
+		unreachable!()
+	}
+}
+
+impl MessageRouter for InnerRouter {
+	fn find_path(
+		&self, _sender: PublicKey, _peers: Vec<PublicKey>, _destination: Destination,
+	) -> Result<OnionMessagePath, ()> {
+		unreachable!()
+	}
+
+	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+		&self, _recipient: PublicKey, _context: MessageContext, _peers: Vec<PublicKey>,
+		_secp_ctx: &Secp256k1<T>,
+	) -> Result<Vec<BlindedMessagePath>, ()> {
+		unreachable!()
+	}
+}
+
+#[derive(Clone)]
+struct FuzzRouter {
+	inner: InnerRouter,
+}
+
+impl Deref for FuzzRouter {
+	type Target = InnerRouter;
+
+	fn deref(&self) -> &Self::Target {
+		&self.inner
+	}
+}
 
 impl Router for FuzzRouter {
 	fn find_route(
@@ -571,7 +618,7 @@ pub fn do_test(mut data: &[u8], logger: &Arc<dyn Logger>) {
 		halt_fee_est_reads: AtomicBool::new(false),
 	});
 	let fee_est = Arc::new(FuzzEstimator { input: input.clone() });
-	let router = FuzzRouter {};
+	let router = FuzzRouter { inner: InnerRouter {} };
 
 	macro_rules! get_slice {
 		($len: expr) => {
@@ -625,12 +672,26 @@ pub fn do_test(mut data: &[u8], logger: &Arc<dyn Logger>) {
 	let network = Network::Bitcoin;
 	let best_block_timestamp = genesis_block(network).header.time;
 	let params = ChainParameters { network, best_block: BestBlock::from_network(network) };
+	let chain_hash = ChainHash::using_genesis_block(network);
+
+	let flow = OffersMessageFlow::new(
+		chain_hash,
+		params.best_block,
+		keys_manager.get_node_id(Recipient::Node).unwrap(),
+		best_block_timestamp,
+		keys_manager.get_inbound_payment_key(),
+		keys_manager.clone(),
+		&router,
+		&router,
+	);
+
 	let channelmanager = Arc::new(ChannelManager::new(
 		fee_est.clone(),
 		monitor.clone(),
 		broadcast.clone(),
 		&router,
 		&router,
+		flow,
 		Arc::clone(&logger),
 		keys_manager.clone(),
 		keys_manager.clone(),
