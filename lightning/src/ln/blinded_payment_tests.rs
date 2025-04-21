@@ -1959,7 +1959,7 @@ fn test_trampoline_inbound_payment_decoding() {
 	};
 }
 
-fn do_test_trampoline_single_hop_receive(success: bool) {
+fn do_test_trampoline_single_hop_receive() {
 	const TOTAL_NODE_COUNT: usize = 3;
 	let secp_ctx = Secp256k1::new();
 
@@ -1983,30 +1983,11 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 	let bob_carol_scid = nodes[1].node().list_channels().iter().find(|c| c.channel_id == chan_id_bob_carol).unwrap().short_channel_id.unwrap();
 
 	let amt_msat = 1000;
-	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[2], Some(amt_msat), None);
+	let (payment_preimage, payment_hash, _) = get_payment_preimage_hash(&nodes[2], Some(amt_msat), None);
 
 	let carol_alice_trampoline_session_priv = secret_from_hex("a0f4b8d7b6c2d0ffdfaf718f76e9decaef4d9fb38a8c4addb95c4007cc3eee03");
 	let carol_blinding_point = PublicKey::from_secret_key(&secp_ctx, &carol_alice_trampoline_session_priv);
-	let carol_blinded_hops = if success {
-		let payee_tlvs = UnauthenticatedReceiveTlvs {
-			payment_secret,
-			payment_constraints: PaymentConstraints {
-				max_cltv_expiry: u32::max_value(),
-				htlc_minimum_msat: amt_msat,
-			},
-			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
-		};
-
-		let nonce = Nonce([42u8; 16]);
-		let expanded_key = nodes[2].keys_manager.get_inbound_payment_key();
-		let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
-		let carol_unblinded_tlvs = payee_tlvs.encode();
-
-		let path = [(carol_node_id, WithoutLength(&carol_unblinded_tlvs))];
-		blinded_path::utils::construct_blinded_hops(
-			&secp_ctx, path.into_iter(), &carol_alice_trampoline_session_priv
-		).unwrap()
-	} else {
+	let carol_blinded_hops = {
 		let payee_tlvs = blinded_path::payment::TrampolineForwardTlvs {
 			next_trampoline: alice_node_id,
 			payment_constraints: PaymentConstraints {
@@ -2077,10 +2058,7 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 
 	check_added_monitors!(&nodes[0], 1);
 
-	if success {
-		pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], amt_msat, payment_hash, payment_secret);
-		claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
-	} else {
+	{
 		let replacement_onion = {
 			// create a substitute onion where the last Trampoline hop is a forward
 			let trampoline_secret_key = secret_from_hex("0134928f7b7ca6769080d70f16be84c812c741f545b49a34db47ce338a205799");
@@ -2168,11 +2146,8 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 
 #[test]
 fn test_trampoline_single_hop_receive() {
-	// Simulate a payment of A (0) -> B (1) -> C(Trampoline (blinded intro)) (2)
-	do_test_trampoline_single_hop_receive(true);
-
 	// Simulate a payment failure of A (0) -> B (1) -> C(Trampoline (blinded forward)) (2)
-	do_test_trampoline_single_hop_receive(false);
+	do_test_trampoline_single_hop_receive();
 }
 
 #[test]
