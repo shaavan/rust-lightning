@@ -1564,6 +1564,8 @@ mod tests {
 			let params = ChainParameters { network, best_block };
 			let chain_hash = ChainHash::using_genesis_block(params.network);
 
+			// UNACCESSED CODE
+
 			let flow = OffersMessageFlow::new(
 				chain_hash,
 				params.best_block,

@@ -14714,6 +14714,7 @@ where
 		}
 
 		let best_block = BestBlock::new(best_block_hash, best_block_height);
+		// UNACCESSED CODE
 		let flow = OffersMessageFlow::new(chain_hash, best_block, our_network_pubkey, highest_seen_timestamp, expanded_inbound_key, args.entropy_source.clone(), args.message_router.clone(), args.router.clone());
 
 		let channel_manager = ChannelManager {

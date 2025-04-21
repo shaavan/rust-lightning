@@ -427,6 +427,8 @@ pub(crate) fn create_liquidity_node(
 	let chain_params = ChainParameters { network, best_block };
 	let chain_hash = ChainHash::using_genesis_block(chain_params.network);
 
+	// UNACCESSED CODE
+
 	let flow = OffersMessageFlow::new(
 		chain_hash,
 		chain_params.best_block,
