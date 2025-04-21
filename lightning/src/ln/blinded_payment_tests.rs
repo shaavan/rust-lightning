@@ -240,8 +240,28 @@ fn mpp_to_one_hop_blinded_path() {
 		Some(payment_secret), ev.clone(), false, None);
 
 	let ev = remove_first_msg_event_to_node(&nodes[2].node.get_our_node_id(), &mut events);
-	pass_along_path(&nodes[0], expected_route[1], amt_msat, payment_hash.clone(),
+	let event = pass_along_path(&nodes[0], expected_route[1], amt_msat, payment_hash.clone(),
 		Some(payment_secret), ev.clone(), true, None);
+
+	match event.unwrap() {
+		Event::PaymentClaimable { mut via_channel_id_pairs, .. } => {
+			let channels = nodes[3].node.list_channels();
+
+			// Convert to HashSets for order-agnostic comparison
+			let expected_chan_ids: HashSet<_> = channels.iter().map(|d| d.channel_id).collect();
+			let expected_user_chan_ids: HashSet<_> = channels.iter().map(|d| d.user_channel_id).collect();
+
+			let actual_chan_ids: HashSet<_> = via_channel_id_pairs.iter().map(|(chan_id, _)| *chan_id).collect();
+			let actual_user_chan_ids: HashSet<_> = via_channel_id_pairs.iter()
+				.filter_map(|(_, user_id_opt)| *user_id_opt)
+				.collect();
+
+			assert_eq!(actual_chan_ids, expected_chan_ids);
+			assert_eq!(actual_user_chan_ids, expected_user_chan_ids);
+		}
+		_ => panic!("Unexpected event"),
+	}
+
 	claim_payment_along_route(
 		ClaimAlongRouteArgs::new(&nodes[0], expected_route, payment_preimage)
 	);
