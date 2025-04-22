@@ -11,6 +11,7 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::offers::signer;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -19,9 +20,9 @@ use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode, 
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
-use crate::ln::channelmanager::PaymentId;
+use crate::ln::channelmanager::{PaymentId, Verification};
 use crate::ln::msgs::DecodeError;
-use crate::ln::onion_utils;
+use crate::ln::{inbound_payment, onion_utils};
 use crate::offers::nonce::Nonce;
 use crate::onion_message::packet::ControlTlvs;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
@@ -256,6 +257,63 @@ pub(crate) struct ForwardTlvs {
 	/// Senders to a blinded path use this value to concatenate the route they find to the
 	/// introduction node with the blinded path.
 	pub(crate) next_blinding_override: Option<PublicKey>,
+}
+
+/// A blank struct, representing dummy tlv prior to authentication.
+/// 
+/// For more details, see [`DummyTlv`].
+pub(crate) struct UnauthenticatedDummyTlv {}
+
+impl Writeable for UnauthenticatedDummyTlv {
+	fn write<W: Writer>(&self, _writer: &mut W) -> Result<(), io::Error> {
+		Ok(())
+	}
+}
+
+impl Verification for UnauthenticatedDummyTlv {
+	/// Constructs an HMAC to include in [`OffersContext`] for the data along with the given
+	/// [`Nonce`].
+	fn hmac_data(&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey) -> Hmac<Sha256> {
+		signer::hmac_for_dummy_tlv(self, nonce, expanded_key)
+	}
+
+	/// Authenticates the data using an HMAC and a [`Nonce`] taken from an [`OffersContext`].
+	fn verify_data(
+		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
+	) -> Result<(), ()> {
+		signer::verify_dummy_tlv(self, hmac, nonce, expanded_key)
+	}
+}
+
+/// Represents the dummy TLV encoded immediately before the actual [`ReceiveTlvs`] in a blinded path.
+/// These TLVs are intended for the final node and are recursively authenticated and verified until
+/// the real [`ReceiveTlvs`] is reached.
+/// 
+/// Their purpose is to arbitrarily extend the path length, obscuring the receiver's position in the
+/// route and thereby enhancing privacy.
+/// 
+/// ## Authentication
+/// Authentication provides an additional layer of security, ensuring that the path is legitimate
+/// and terminates in valid [`ReceiveTlvs`] data. Verification begins with the first dummy hop and
+/// continues recursively until the final [`ReceiveTlvs`] is reached.
+/// 
+/// This prevents an attacker from crafting a bogus blinded path consisting solely of dummy tlv
+/// without any valid payload, which could otherwise waste resources through recursive
+/// processing — a potential vector for DoS-like attacks.
+pub(crate) struct DummyTlv {
+	pub(crate) dummy_tlv: UnauthenticatedDummyTlv,
+	/// An HMAC of `tlvs` along with a nonce used to construct it.
+	pub(crate) authentication: (Hmac<Sha256>, Nonce),
+}
+
+impl Writeable for DummyTlv {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		encode_tlv_stream!(writer, {
+			(65539, self.authentication, required),
+		});
+
+		Ok(())
+	}
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
