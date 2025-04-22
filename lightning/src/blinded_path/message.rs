@@ -11,6 +11,7 @@
 
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::offers::signer;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -19,9 +20,9 @@ use crate::blinded_path::{BlindedHop, BlindedPath, Direction, IntroductionNode, 
 use crate::crypto::streams::ChaChaPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
-use crate::ln::channelmanager::PaymentId;
+use crate::ln::channelmanager::{PaymentId, Verification};
 use crate::ln::msgs::DecodeError;
-use crate::ln::onion_utils;
+use crate::ln::{inbound_payment, onion_utils};
 use crate::offers::nonce::Nonce;
 use crate::onion_message::packet::ControlTlvs;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
@@ -262,6 +263,94 @@ pub(crate) struct ForwardTlvs {
 	/// Senders to a blinded path use this value to concatenate the route they find to the
 	/// introduction node with the blinded path.
 	pub(crate) next_blinding_override: Option<PublicKey>,
+}
+
+/// Represents a dummy TLV that can be used in a blinded path to extend the path length.
+/// The first dummy TLV is authenticated and contains an HMAC, while subsequent dummy TLVs are
+/// empty and do not contain any data. This allows for the path length to be extended without
+/// adding any additional data, while still ensuring that the path is legitimate and terminates
+/// in valid [`ReceiveTlvs`] data.
+pub(crate) enum DummyTlv {
+	/// The first dummy TLV, which contains an HMAC and is authenticated.
+	/// This TLV is used to ensure that the path is legitimate and terminates in valid
+	/// [`ReceiveTlvs`] data.
+	Primary(PrimaryDummyTlv),
+	/// Subsequent dummy TLVs, which are empty and do not contain any data.
+	/// These TLVs are used to extend the path length without adding any additional data.
+	Subsequent,
+}
+
+impl Writeable for DummyTlv {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match self {
+			DummyTlv::Primary(primary) => primary.write(writer)?,
+			DummyTlv::Subsequent => {
+				// Subsequent dummy TLVs are empty, so we don't write anything.
+				// This is to ensure that the path length can be extended without
+				// adding any additional data.
+				encode_tlv_stream!(writer, {
+					(65541, (), required), // Represents that this is a Dummy Tlv variant
+				})
+			},
+		}
+		Ok(())
+	}
+}
+
+/// Represents the first dummy TLV in a blinded path, which is authenticated and contains an HMAC.
+/// These TLV are intended for the final node.
+///
+/// ## Authentication
+/// Authentication provides an additional layer of security, ensuring that the path is legitimate
+/// and terminates in valid [`ReceiveTlvs`] data. Verification begins with the first dummy hop and
+/// continues recursively until the final [`ReceiveTlvs`] is reached.
+///
+/// This prevents an attacker from crafting a bogus blinded path consisting solely of dummy tlv
+/// without any valid payload, which could otherwise waste resources through recursive
+/// processing — a potential vector for DoS-like attacks.
+pub(crate) struct PrimaryDummyTlv {
+	/// The dummy TLV that holds the empty data for the Dummy Hop.
+	pub(crate) dummy_tlv: UnauthenticatedDummyTlv,
+	/// An HMAC of `tlvs` along with a nonce used to construct it.
+	pub(crate) authentication: (Hmac<Sha256>, Nonce),
+}
+
+impl Writeable for PrimaryDummyTlv {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		encode_tlv_stream!(writer, {
+			(65539, self.authentication, required),
+			// The Some(()) represents that this is a Dummy Tlv variant
+			(65541, (), required),
+		});
+
+		Ok(())
+	}
+}
+
+/// A blank struct, representing a dummy TLV prior to authentication.
+///
+/// For more details, see [`PrimaryDummyTlv`].
+pub(crate) struct UnauthenticatedDummyTlv {}
+
+impl Writeable for UnauthenticatedDummyTlv {
+	fn write<W: Writer>(&self, _writer: &mut W) -> Result<(), io::Error> {
+		Ok(())
+	}
+}
+
+impl Verification for UnauthenticatedDummyTlv {
+	/// Constructs an HMAC to include in [`OffersContext`] for the data along with the given
+	/// [`Nonce`].
+	fn hmac_data(&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey) -> Hmac<Sha256> {
+		signer::hmac_for_dummy_tlv(self, nonce, expanded_key)
+	}
+
+	/// Authenticates the data using an HMAC and a [`Nonce`] taken from an [`OffersContext`].
+	fn verify_data(
+		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
+	) -> Result<(), ()> {
+		signer::verify_dummy_tlv(self, hmac, nonce, expanded_key)
+	}
 }
 
 /// Similar to [`ForwardTlvs`], but these TLVs are for the final node.
