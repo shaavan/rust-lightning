@@ -20,19 +20,20 @@ use super::async_payments::AsyncPaymentsMessage;
 use super::async_payments::AsyncPaymentsMessageHandler;
 use super::dns_resolution::{DNSResolverMessage, DNSResolverMessageHandler};
 use super::offers::OffersMessageHandler;
-use super::packet::OnionMessageContents;
 use super::packet::ParsedOnionMessageContents;
+use super::packet::{DummyControlTlvs, OnionMessageContents};
 use super::packet::{
 	ForwardControlTlvs, Packet, Payload, ReceiveControlTlvs, BIG_PACKET_HOP_DATA_LEN,
 	SMALL_PACKET_HOP_DATA_LEN,
 };
 use crate::blinded_path::message::{
-	BlindedMessagePath, ForwardTlvs, MessageContext, MessageForwardNode, NextMessageHop,
+	BlindedMessagePath, DummyTlvs, ForwardTlvs, MessageContext, MessageForwardNode, NextMessageHop,
 	ReceiveTlvs,
 };
 use crate::blinded_path::utils;
 use crate::blinded_path::{IntroductionNode, NodeIdLookUp};
 use crate::events::{Event, EventHandler, EventsProvider, ReplayEvent};
+use crate::ln::channelmanager::Verification;
 use crate::ln::msgs::{
 	self, BaseMessageHandler, MessageSendEvent, OnionMessage, OnionMessageHandler, SocketAddress,
 };
@@ -1123,17 +1124,51 @@ where
 			},
 		},
 		Ok((
+			Payload::Dummy(DummyControlTlvs::Unblinded(DummyTlvs { dummy_tlvs, authentication })),
+			Some((next_hop_hmac, new_packet_bytes)),
+		)) => {
+			let expanded_key = node_signer.get_inbound_payment_key();
+			dummy_tlvs.verify_data(authentication.0, authentication.1, &expanded_key)?;
+
+			let packet_pubkey = msg.onion_routing_packet.public_key;
+			let new_pubkey_opt =
+				onion_utils::next_hop_pubkey(&secp_ctx, packet_pubkey, &onion_decode_ss);
+			let new_pubkey = match new_pubkey_opt {
+				Ok(pk) => pk,
+				Err(e) => {
+					log_trace!(logger, "Failed to compute next hop packet pubkey: {}", e);
+					return Err(());
+				},
+			};
+			let outgoing_packet = Packet {
+				version: 0,
+				public_key: new_pubkey,
+				hop_data: new_packet_bytes,
+				hmac: next_hop_hmac,
+			};
+			let onion_message = OnionMessage {
+				blinding_point: match onion_utils::next_hop_pubkey(
+					&secp_ctx,
+					msg.blinding_point,
+					control_tlvs_ss.as_ref(),
+				) {
+					Ok(bp) => bp,
+					Err(e) => {
+						log_trace!(logger, "Failed to compute next blinding point: {}", e);
+						return Err(());
+					},
+				},
+				onion_routing_packet: outgoing_packet,
+			};
+			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
+		},
+		Ok((
 			Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
 				next_hop,
 				next_blinding_override,
 			})),
 			Some((next_hop_hmac, new_packet_bytes)),
 		)) => {
-			// TODO: we need to check whether `next_hop` is our node, in which case this is a dummy
-			// blinded hop and this onion message is destined for us. In this situation, we should keep
-			// unwrapping the onion layers to get to the final payload. Since we don't have the option
-			// of creating blinded paths with dummy hops currently, we should be ok to not handle this
-			// for now.
 			let packet_pubkey = msg.onion_routing_packet.public_key;
 			let new_pubkey_opt =
 				onion_utils::next_hop_pubkey(&secp_ctx, packet_pubkey, &onion_decode_ss);
