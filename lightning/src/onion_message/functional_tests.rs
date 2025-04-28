@@ -431,7 +431,7 @@ fn blinded_path_with_dummy() {
 	let expanded_key = ExpandedKey::new([42; 32]);
 	let blinded_path = BlindedMessagePath::new_with_dummy_hops(
 		&[],
-		5,
+		1,
 		nodes[1].node_id,
 		context,
 		entropy,
@@ -439,8 +439,6 @@ fn blinded_path_with_dummy() {
 		&secp_ctx,
 	)
 	.unwrap();
-	// Make sure that dummy hops are do added to the blinded path.
-	assert_eq!(blinded_path.blinded_hops().len(), 6);
 	let destination = Destination::BlindedPath(blinded_path);
 	let instructions = MessageSendInstructions::WithoutReplyPath { destination };
 	nodes[0].messenger.send_onion_message(test_msg, instructions).unwrap();

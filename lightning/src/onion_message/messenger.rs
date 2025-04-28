@@ -13,6 +13,7 @@
 use bitcoin::hashes::hmac::{Hmac, HmacEngine};
 use bitcoin::hashes::sha256::Hash as Sha256;
 use bitcoin::hashes::{Hash, HashEngine};
+use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{self, PublicKey, Scalar, Secp256k1, SecretKey};
 
 #[cfg(async_payments)]
@@ -1048,6 +1049,9 @@ where
 			return Err(());
 		},
 	};
+
+	println!("\nDummy Tlvs decoding:");
+	println!("Control TLVs SS: {:?}", control_tlvs_ss);
 	let onion_decode_ss = {
 		let blinding_factor = {
 			let mut hmac = HmacEngine::<Sha256>::new(b"blinded_node_id");
@@ -1064,7 +1068,8 @@ where
 			},
 		}
 	};
-	let next_hop = onion_utils::decode_next_untagged_hop(
+	println!("Onion Decode SS: {:?}\n", SharedSecret::from_bytes(onion_decode_ss));
+	let next_hop: Result<(Payload<ParsedOnionMessageContents<<<CMH as Deref>::Target as CustomOnionMessageHandler>::CustomMessage>>, Option<([u8; 32], Vec<u8>)>), onion_utils::OnionDecodeErr> = onion_utils::decode_next_untagged_hop(
 		onion_decode_ss,
 		&msg.onion_routing_packet.hop_data[..],
 		msg.onion_routing_packet.hmac,
@@ -1111,8 +1116,16 @@ where
 			let expanded_key = node_signer.get_inbound_payment_key();
 			dummy_tlvs.verify_data(authentication.0, authentication.1, &expanded_key)?;
 
-			let our_node_id = node_signer.get_node_id(Recipient::Node).unwrap();
-			let new_pubkey = our_node_id;
+			let packet_pubkey = msg.onion_routing_packet.public_key;
+			let new_pubkey_opt =
+				onion_utils::next_hop_pubkey(&secp_ctx, packet_pubkey, &onion_decode_ss);
+			let new_pubkey = match new_pubkey_opt {
+				Ok(pk) => pk,
+				Err(e) => {
+					log_trace!(logger, "Failed to compute next hop packet pubkey: {}", e);
+					return Err(());
+				},
+			};
 			let outgoing_packet = Packet {
 				version: 0,
 				public_key: new_pubkey,
@@ -1120,9 +1133,20 @@ where
 				hmac: next_hop_hmac,
 			};
 			let onion_message = OnionMessage {
-				blinding_point: our_node_id,
+				blinding_point: match onion_utils::next_hop_pubkey(
+					&secp_ctx,
+					msg.blinding_point,
+					control_tlvs_ss.as_ref(),
+				) {
+					Ok(bp) => bp,
+					Err(e) => {
+						log_trace!(logger, "Failed to compute next blinding point: {}", e);
+						return Err(());
+					},
+				},
 				onion_routing_packet: outgoing_packet,
 			};
+
 			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
 		}
 		Ok((

@@ -57,6 +57,9 @@ macro_rules! build_keys_helper {
 				};
 				let onion_packet_ss = SharedSecret::new(&blinded_hop_pk, &onion_packet_pubkey_priv);
 
+				println!("Onion Packet SS: {:?}", onion_packet_ss);
+				println!("Encrypted Data SS: {:?}\n", encrypted_data_ss);
+
 				let rho = onion_utils::gen_rho_from_shared_secret(encrypted_data_ss.as_ref());
 				let unblinded_hop_opt = if $blinded { None } else { Some($hop) };
 				$callback(

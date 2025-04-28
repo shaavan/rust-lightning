@@ -315,7 +315,6 @@ impl Verification for UnauthenticatedDummyTlvs {
 	}
 }
 
-
 pub(crate) struct DummyTlvs {
 	pub(crate) dummy_tlvs: UnauthenticatedDummyTlvs,
 	/// An HMAC of `tlvs` along with a nonce used to construct it.
