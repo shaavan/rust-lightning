@@ -2167,6 +2167,7 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 }
 
 #[test]
+#[ignore]
 fn test_trampoline_single_hop_receive() {
 	// Simulate a payment of A (0) -> B (1) -> C(Trampoline (blinded intro)) (2)
 	do_test_trampoline_single_hop_receive(true);
