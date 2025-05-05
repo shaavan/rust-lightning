@@ -673,7 +673,6 @@ pub fn do_test<Out: Output>(data: &[u8], underlying_out: Out, anchors: bool) {
 					monitor.clone(),
 					broadcast.clone(),
 					&router,
-					&router,
 					flow,
 					Arc::clone(&logger),
 					keys_manager.clone(),

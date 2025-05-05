@@ -1736,7 +1736,7 @@ where
 /// };
 /// let default_config = UserConfig::default();
 /// let channel_manager = ChannelManager::new(
-///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, flow, logger,
+///     fee_estimator, chain_monitor, tx_broadcaster, router, flow, logger,
 ///     entropy_source, node_signer, signer_provider, default_config.clone(), params, current_timestamp,
 /// );
 ///
@@ -2446,7 +2446,6 @@ where
 	chain_monitor: M,
 	tx_broadcaster: T,
 	router: R,
-	message_router: MR,
 
 	#[cfg(test)]
 	pub(super) flow: OffersMessageFlow<MR>,
@@ -3539,7 +3538,7 @@ where
 	/// [`block_disconnected`]: chain::Listen::block_disconnected
 	/// [`params.best_block.block_hash`]: chain::BestBlock::block_hash
 	pub fn new(
-		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR, flow: OffersMessageFlow<MR>,
+		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, flow: OffersMessageFlow<MR>,
 		logger: L, entropy_source: ES, node_signer: NS, signer_provider: SP, config: UserConfig,
 		params: ChainParameters, current_timestamp: u32,
 	) -> Self {
@@ -3553,7 +3552,6 @@ where
 			chain_monitor,
 			tx_broadcaster,
 			router,
-			message_router,
 			flow,
 
 			best_block: RwLock::new(params.best_block),
@@ -13243,7 +13241,7 @@ impl Readable for VecDeque<(Event, Option<EventCompletionAction>)> {
 /// which you've already broadcasted the transaction.
 ///
 /// [`ChainMonitor`]: crate::chain::chainmonitor::ChainMonitor
-pub struct ChannelManagerReadArgs<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref + Clone, L: Deref>
+pub struct ChannelManagerReadArgs<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
 	T::Target: BroadcasterInterface,
@@ -13311,7 +13309,7 @@ where
 	pub channel_monitors: HashMap<ChannelId, &'a ChannelMonitor<<SP::Target as SignerProvider>::EcdsaSigner>>,
 }
 
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref + Clone, L: Deref>
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
 		ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
@@ -13345,7 +13343,7 @@ where
 
 // Implement ReadableArgs for an Arc'd ChannelManager to make it a bit easier to work with the
 // SipmleArcChannelManager type:
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref + Clone, L: Deref>
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
 	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>> for (BlockHash, Arc<ChannelManager<M, T, ES, NS, SP, F, R, MR, L>>)
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
@@ -13364,7 +13362,7 @@ where
 	}
 }
 
-impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref + Clone, L: Deref>
+impl<'a, M: Deref, T: Deref, ES: Deref, NS: Deref, SP: Deref, F: Deref, R: Deref, MR: Deref, L: Deref>
 	ReadableArgs<ChannelManagerReadArgs<'a, M, T, ES, NS, SP, F, R, MR, L>> for (BlockHash, ChannelManager<M, T, ES, NS, SP, F, R, MR, L>)
 where
 	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
@@ -14347,7 +14345,7 @@ where
 		}
 
 		let best_block = BestBlock::new(best_block_hash, best_block_height);
-		let flow = OffersMessageFlow::new(chain_hash, best_block, our_network_pubkey, highest_seen_timestamp, expanded_inbound_key, secp_ctx.clone(), args.message_router.clone());
+		let flow = OffersMessageFlow::new(chain_hash, best_block, our_network_pubkey, highest_seen_timestamp, expanded_inbound_key, secp_ctx.clone(), args.message_router);
 
 		let channel_manager = ChannelManager {
 			chain_hash,
@@ -14355,7 +14353,6 @@ where
 			chain_monitor: args.chain_monitor,
 			tx_broadcaster: args.tx_broadcaster,
 			router: args.router,
-			message_router: args.message_router,
 			flow,
 
 			best_block: RwLock::new(best_block),
