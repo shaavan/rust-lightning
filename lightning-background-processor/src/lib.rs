@@ -1594,7 +1594,7 @@ mod tests {
 				chain_monitor.clone(),
 				tx_broadcaster.clone(),
 				router.clone(),
-				flow,
+				msg_router.clone(),
 				logger.clone(),
 				keys_manager.clone(),
 				keys_manager.clone(),
