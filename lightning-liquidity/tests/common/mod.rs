@@ -437,7 +437,7 @@ pub(crate) fn create_liquidity_node(
 		genesis_block.header.time,
 		keys_manager.get_inbound_payment_key(),
 		secp_ctx,
-		msg_router,
+		msg_router.clone(),
 	);
 
 	let chain_source = Arc::new(test_utils::TestChainSource::new(Network::Bitcoin));
@@ -455,7 +455,7 @@ pub(crate) fn create_liquidity_node(
 		chain_monitor.clone(),
 		tx_broadcaster.clone(),
 		router.clone(),
-		flow,
+		msg_router.clone(),
 		logger.clone(),
 		keys_manager.clone(),
 		keys_manager.clone(),

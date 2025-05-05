@@ -3398,7 +3398,7 @@ pub fn create_node_chanmgrs<'a, 'b>(node_count: usize, cfgs: &'a Vec<NodeCfg<'b>
 			secp_ctx, &cfgs[i].message_router
 		);
 
-		let node = ChannelManager::new(cfgs[i].fee_estimator, &cfgs[i].chain_monitor, cfgs[i].tx_broadcaster, &cfgs[i].router, flow, cfgs[i].logger, cfgs[i].keys_manager,
+		let node = ChannelManager::new(cfgs[i].fee_estimator, &cfgs[i].chain_monitor, cfgs[i].tx_broadcaster, &cfgs[i].router, &cfgs[i].message_router, cfgs[i].logger, cfgs[i].keys_manager,
 			cfgs[i].keys_manager, cfgs[i].keys_manager, if node_config[i].is_some() { node_config[i].clone().unwrap() } else { test_default_channel_config() }, params, genesis_block.header.time);
 		chanmgrs.push(node);
 	}

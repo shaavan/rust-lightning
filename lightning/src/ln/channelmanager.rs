@@ -1736,7 +1736,7 @@ where
 /// };
 /// let default_config = UserConfig::default();
 /// let channel_manager = ChannelManager::new(
-///     fee_estimator, chain_monitor, tx_broadcaster, router, flow, logger,
+///     fee_estimator, chain_monitor, tx_broadcaster, router, message_router, logger,
 ///     entropy_source, node_signer, signer_provider, default_config.clone(), params, current_timestamp,
 /// );
 ///
@@ -3538,6 +3538,99 @@ where
 	/// [`block_disconnected`]: chain::Listen::block_disconnected
 	/// [`params.best_block.block_hash`]: chain::BestBlock::block_hash
 	pub fn new(
+		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, message_router: MR,
+		logger: L, entropy_source: ES, node_signer: NS, signer_provider: SP, config: UserConfig,
+		params: ChainParameters, current_timestamp: u32,
+	) -> Self {
+		let mut secp_ctx = Secp256k1::new();
+		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
+		let expanded_inbound_key = node_signer.get_inbound_payment_key();
+		let chain_hash = ChainHash::using_genesis_block(params.network);
+		let best_block = params.best_block;
+		let our_network_pubkey = node_signer.get_node_id(Recipient::Node).unwrap();
+
+		let flow = OffersMessageFlow::new(
+			chain_hash, best_block, our_network_pubkey, current_timestamp,
+			expanded_inbound_key, secp_ctx.clone(), message_router
+		);
+
+		ChannelManager {
+			default_configuration: config.clone(),
+			chain_hash,
+			fee_estimator: LowerBoundedFeeEstimator::new(fee_est),
+			chain_monitor,
+			tx_broadcaster,
+			router,
+			flow,
+
+			best_block: RwLock::new(best_block),
+
+			outbound_scid_aliases: Mutex::new(new_hash_set()),
+			pending_outbound_payments: OutboundPayments::new(new_hash_map()),
+			forward_htlcs: Mutex::new(new_hash_map()),
+			decode_update_add_htlcs: Mutex::new(new_hash_map()),
+			claimable_payments: Mutex::new(ClaimablePayments { claimable_payments: new_hash_map(), pending_claiming_payments: new_hash_map() }),
+			pending_intercepted_htlcs: Mutex::new(new_hash_map()),
+			short_to_chan_info: FairRwLock::new(new_hash_map()),
+
+			our_network_pubkey,
+			secp_ctx,
+
+			inbound_payment_key: expanded_inbound_key,
+			fake_scid_rand_bytes: entropy_source.get_secure_random_bytes(),
+
+			probing_cookie_secret: entropy_source.get_secure_random_bytes(),
+			inbound_payment_id_secret: entropy_source.get_secure_random_bytes(),
+
+			highest_seen_timestamp: AtomicUsize::new(current_timestamp as usize),
+
+			per_peer_state: FairRwLock::new(new_hash_map()),
+
+			pending_events: Mutex::new(VecDeque::new()),
+			pending_events_processor: AtomicBool::new(false),
+			pending_background_events: Mutex::new(Vec::new()),
+			total_consistency_lock: RwLock::new(()),
+			background_events_processed_since_startup: AtomicBool::new(false),
+			event_persist_notifier: Notifier::new(),
+			needs_persist_flag: AtomicBool::new(false),
+			funding_batch_states: Mutex::new(BTreeMap::new()),
+
+			pending_broadcast_messages: Mutex::new(Vec::new()),
+
+			last_days_feerates: Mutex::new(VecDeque::new()),
+
+			entropy_source,
+			node_signer,
+			signer_provider,
+
+			logger,
+
+			#[cfg(feature = "dnssec")]
+			hrn_resolver: OMNameResolver::new(current_timestamp, params.best_block.height),
+
+			#[cfg(feature = "_test_utils")]
+			testing_dnssec_proof_offer_resolution_override: Mutex::new(new_hash_map()),
+		}
+	}
+
+	/// Constructs a new `ChannelManager` to hold several channels and route between them.
+	///
+	/// The current time or latest block header time can be provided as the `current_timestamp`.
+	///
+	/// This is the main "logic hub" for all channel-related actions, and implements
+	/// [`ChannelMessageHandler`].
+	///
+	/// Non-proportional fees are fixed according to our risk using the provided fee estimator.
+	///
+	/// Users need to notify the new `ChannelManager` when a new block is connected or
+	/// disconnected using its [`block_connected`] and [`block_disconnected`] methods, starting
+	/// from after [`params.best_block.block_hash`]. See [`chain::Listen`] and [`chain::Confirm`] for
+	/// more details.
+	///
+	/// [`block_connected`]: chain::Listen::block_connected
+	/// [`block_disconnected`]: chain::Listen::block_disconnected
+	/// [`params.best_block.block_hash`]: chain::BestBlock::block_hash
+	pub fn new_with_flow(
 		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, flow: OffersMessageFlow<MR>,
 		logger: L, entropy_source: ES, node_signer: NS, signer_provider: SP, config: UserConfig,
 		params: ChainParameters, current_timestamp: u32,

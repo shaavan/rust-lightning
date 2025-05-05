@@ -644,7 +644,7 @@ pub fn do_test(mut data: &[u8], logger: &Arc<dyn Logger>) {
 		monitor.clone(),
 		broadcast.clone(),
 		&router,
-		flow,
+		&router,
 		Arc::clone(&logger),
 		keys_manager.clone(),
 		keys_manager.clone(),
