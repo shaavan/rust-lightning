@@ -308,6 +308,29 @@ impl<MR: Deref> OffersMessageFlow<MR>
 where
 	MR::Target: MessageRouter,
 {
+	/// Gets a payment secret and payment hash for use in an invoice given to a third party wishing
+	/// to pay us.
+	///
+	/// See [`ChannelManager::create_inbound_payment`] for more details.
+	///
+	/// [`ChannelManager::create_inbound_payment`]: crate::ln::channelmanager::ChannelManager::create_inbound_payment
+	pub fn create_inbound_payment<ES: Deref>(
+		&self, entropy_source: ES, min_value_msat: Option<u64>, invoice_expiry_delta_secs: u32,
+		min_final_cltv_expiry_delta: Option<u16>,
+	) -> Result<(PaymentHash, PaymentSecret), ()>
+	where
+		ES::Target: EntropySource,
+	{
+		inbound_payment::create(
+			&self.inbound_payment_key,
+			min_value_msat,
+			invoice_expiry_delta_secs,
+			&entropy_source,
+			self.highest_seen_timestamp.load(Ordering::Acquire) as u64,
+			min_final_cltv_expiry_delta,
+		)
+	}
+
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the invoice request's own metadata.
 	///
 	/// - If an [`OffersContext::InvoiceRequest`] with a `nonce` is provided, verification is performed using recipient context data.
@@ -708,8 +731,8 @@ where
 	///
 	/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
 	pub fn create_invoice_builder_from_refund<'a, ES: Deref, R: Deref>(
-		&'a self, router: &R, entropy_source: ES, refund: &'a Refund, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
+		&'a self, router: &R, entropy_source: ES, refund: &'a Refund,
+		usable_channels: Vec<ChannelDetails>,
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
@@ -720,6 +743,10 @@ where
 
 		let amount_msats = refund.amount_msats();
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+
+		let (payment_hash, payment_secret) = self
+			.create_inbound_payment(entropy, Some(amount_msats), relative_expiry, None)
+			.map_err(|_| Bolt12SemanticError::InvalidAmount)?;
 
 		let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
 		let payment_paths = self
@@ -766,19 +793,27 @@ where
 	/// - We fail to generate a valid signed [`Bolt12Invoice`] for the [`InvoiceRequest`].
 	pub fn create_response_for_invoice_request<ES: Deref, NS: Deref, R: Deref>(
 		&self, signer: &NS, router: &R, entropy_source: ES,
-		invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
+		invoice_request: VerifiedInvoiceRequest, amount_msats: u64,
+		usable_channels: Vec<ChannelDetails>,
 	) -> (OffersMessage, Option<MessageContext>)
 	where
 		ES::Target: EntropySource,
 		NS::Target: NodeSigner,
 		R::Target: Router,
 	{
-		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*entropy_source;
+		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let (payment_hash, payment_secret) =
+			match self.create_inbound_payment(entropy, Some(amount_msats), relative_expiry, None) {
+				Ok((payment_hash, payment_secret)) => (payment_hash, payment_secret),
+				Err(()) => {
+					let error = Bolt12SemanticError::InvalidAmount;
+					return (OffersMessage::InvoiceError(error.into()), None);
+				},
+			};
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
