@@ -373,7 +373,7 @@ impl Readable for ControlTlvs {
 
 		let valid_fwd_fmt = next_hop.is_some();
 		let valid_recv_fmt = next_hop.is_none() && next_blinding_override.is_none() && authentication.is_none();
-		let valid_primary_dummy_fmt = next_hop.is_none() && next_blinding_override.is_none() && context.is_none() && authentication.is_some();
+		let valid_primary_dummy_fmt = next_hop.is_none() && next_blinding_override.is_none() && authentication.is_some();
 
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
