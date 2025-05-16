@@ -1487,7 +1487,7 @@ impl TestNodeSigner {
 }
 
 impl NodeSigner for TestNodeSigner {
-	fn get_inbound_payment_key(&self) -> ExpandedKey {
+	fn get_expanded_key(&self) -> ExpandedKey {
 		unreachable!()
 	}
 
@@ -1565,8 +1565,8 @@ impl NodeSigner for TestKeysInterface {
 		self.backing.ecdh(recipient, other_key, tweak)
 	}
 
-	fn get_inbound_payment_key(&self) -> ExpandedKey {
-		self.backing.get_inbound_payment_key()
+	fn get_expanded_key(&self) -> ExpandedKey {
+		self.backing.get_expanded_key()
 	}
 
 	fn sign_invoice(
