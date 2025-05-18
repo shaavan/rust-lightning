@@ -74,7 +74,7 @@ use {
 };
 
 /// Contains all the events that can be queued
-pub enum FlowEvents {
+pub enum FlowEvent {
 	Currency(CurrencyEvent),
 }
 
@@ -123,7 +123,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
-	pending_events: Mutex<Vec<FlowEvents>>,
+	pending_events: Mutex<Vec<FlowEvent>>,
 
 	configs: FlowConfig,
 }
@@ -1197,5 +1197,16 @@ where
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+	}
+
+	/// Enqueue manual and asyncly handled event.
+	pub fn enqueue_event(&self, event: FlowEvent) -> Result<(), ()> {
+		let mut events = self.pending_events.lock().map_err(|_| ())?;
+		events.push(event);
+		Ok(())
+	}
+
+	pub fn get_and_clear_pending_events(&self) -> Vec<FlowEvent> {
+		core::mem::take(&mut self.pending_events.lock().unwrap())
 	}
 }
