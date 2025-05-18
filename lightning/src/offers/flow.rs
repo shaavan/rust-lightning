@@ -75,7 +75,7 @@ use {
 
 /// Contains all the events that can be queued
 pub enum FlowEvents {
-	Currency(CurrencyEvent)
+	Currency(CurrencyEvent),
 }
 
 /// Contains all the events corresponding to all Offers, and Refund with amount in currency.
@@ -85,6 +85,10 @@ pub enum CurrencyEvent {
 	ReceivedInvoiceRequestWithoutAmountForOffer(VerifiedInvoiceRequest),
 	ReceivedInvoiceRequestWithAmountForOffer(VerifiedInvoiceRequest),
 	ReceivedInvoiceforInvoiceRequestWithoutAmount(Bolt12Invoice),
+}
+
+pub struct FlowConfig {
+	enable_currency: bool,
 }
 
 /// A Bolt12 Offers code and flow utility provider, which facilitates utilities for
@@ -120,6 +124,8 @@ where
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
 	pending_events: Mutex<Vec<FlowEvents>>,
+
+	configs: FlowConfig,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -152,7 +158,12 @@ where
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
 
 			pending_events: Mutex::new(Vec::new()),
+			configs: FlowConfig { enable_currency: false },
 		}
+	}
+
+	pub fn new_with_config(self, config: FlowConfig) -> Self {
+		Self { configs: config, ..self }
 	}
 
 	/// Gets the node_id held by this [`OffersMessageFlow`]`
@@ -198,6 +209,10 @@ where
 				break;
 			}
 		}
+	}
+
+	pub fn is_currency_enabled(&self) -> bool {
+		self.configs.enable_currency
 	}
 }
 
