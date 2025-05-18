@@ -45,7 +45,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
@@ -62,7 +62,6 @@ use crate::types::payment::{PaymentHash, PaymentSecret};
 use {
 	crate::blinded_path::message::AsyncPaymentsContext,
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::Amount,
 	crate::offers::signer,
 	crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder},
 	crate::onion_message::async_payments::HeldHtlcAvailable,
@@ -73,6 +72,44 @@ use {
 	crate::blinded_path::message::DNSResolverContext,
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
+
+/// Represents the nature of InvoiceRequest and the corresponding Offer's amount is set.
+pub enum IREventAmount {
+	/// Only the Offer amount is set, and the InvoiceRequest amount is not specified.
+	OfferOnly { offer_amount: Amount },
+	/// Only the InvoiceRequest amount is set, and the Offer amount is not specified.
+	InvoiceRequestOnly { invoice_request_amount_msats: u64 },
+	/// Both the InvoiceRequest amount and Offer amount are set.
+	InvoiceRequestAndOfferAmount {
+		invoice_request_amount_msats: u64,
+		offer_amount: Amount,
+	},
+}
+
+/// Contains OfferEvents that can optionally triggered for manual
+/// handling by user based on appropriate user_config.
+pub enum OfferEvents {
+	/// Notifies that an [`InvoiceRequest`] was received
+	InvoiceRequestReceived {
+		invoice_request: VerifiedInvoiceRequest,
+		amount: IREventAmount,
+	},
+
+	/// Notified that an [`Bolt12Invoice`] was received
+	Bolt12InvoiceReceived {
+		invoice: Bolt12Invoice,
+		payment_id: PaymentId,
+		invoice_amount: u64,
+		amount_source: Bolt12InvoiceAmountSource,
+	},
+}
+
+/// Contains [`OfferEvents::Bolt12InvoiceReceived`] data specific
+/// to [`Bolt12Invoice`] corresponds to Offer or Refund.
+pub enum Bolt12InvoiceAmountSource {
+	ForOffer { amount: IREventAmount },
+	ForRefund { refund_amount: u64 },
+}
 
 /// A Bolt12 Offers code and flow utility provider, which facilitates utilities for
 /// Bolt12 builder generation, and Onion message handling.
@@ -97,6 +134,8 @@ where
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
 	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+
+	pending_offers_events: Mutex<Vec<OfferEvents>>,
 
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
@@ -128,6 +167,7 @@ where
 			message_router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_offers_events: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			#[cfg(feature = "dnssec")]
@@ -1087,6 +1127,14 @@ where
 		Ok(())
 	}
 
+	pub fn enqueue_offers_event(
+		&self, event: OfferEvents
+	) -> Result<(), ()> {
+		let mut pending_offers_events = self.pending_offers_events.lock().unwrap();
+		pending_offers_events.push(event);
+		Ok(())
+	}
+
 	/// Gets the enqueued [`OffersMessage`] with their corresponding [`MessageSendInstructions`].
 	pub fn get_and_clear_pending_offers_messages(
 		&self,
@@ -1107,5 +1155,11 @@ where
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+	}
+
+	pub fn get_and_clear_pending_offers_events(
+		&self,
+	) -> Vec<OfferEvents> {
+		core::mem::take(&mut self.pending_offers_events.lock().unwrap())
 	}
 }
