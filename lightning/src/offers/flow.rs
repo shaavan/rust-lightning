@@ -73,6 +73,22 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
 
+/// Contains all the events that can be queued
+pub enum FlowEvents {
+	Currency(Currency)
+}
+
+/// Contains all the events corresponding to all Offers, and Refund with amount in currency.
+/// To enable set handle_currency_config to true.
+pub enum Currency {
+	ManualRefundAmountRequired(Refund),
+	ManualOfferAmountRequired(Offer),
+	ReceivedInvoiceRequestWithoutAmountForOffer(InvoiceRequest),
+	ReceivedInvoiceRequestWithAmountForOffer(InvoiceRequest),
+	ReceivedInvoiceForRefund(Bolt12Invoice),
+	ReceivedInvoiceforInvoiceRequestWithoutAmount(Bolt12Invoice),
+}
+
 /// A Bolt12 Offers code and flow utility provider, which facilitates utilities for
 /// Bolt12 builder generation, and Onion message handling.
 ///
@@ -104,6 +120,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	pending_events: Mutex<Vec<FlowEvents>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -134,6 +152,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			pending_events: Mutex::new(Vec::new()),
 		}
 	}
 
