@@ -45,7 +45,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
@@ -62,7 +62,6 @@ use crate::types::payment::{PaymentHash, PaymentSecret};
 use {
 	crate::blinded_path::message::AsyncPaymentsContext,
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::Amount,
 	crate::offers::signer,
 	crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder},
 	crate::onion_message::async_payments::HeldHtlcAvailable,
@@ -73,6 +72,31 @@ use {
 	crate::blinded_path::message::DNSResolverContext,
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
+
+/// Contains OfferEvents that can optionally triggered for manual
+/// handling by user based on appropriate user_config.
+pub enum OfferEvents {
+	/// Notifies that an [`InvoiceRequest`] was received
+	InvoiceRequestReceived {
+		invoice_request: VerifiedInvoiceRequest,
+		invoice_request_amount_msats: Option<u64>,
+		offer_amount: Amount,
+	},
+
+	/// Notified that an [`Bolt12Invoice`] was received
+	Bolt12InvoiceReceived {
+		invoice: Bolt12Invoice,
+		invoice_amount_msats: u64,
+		invoice_type: Bolt12InvoiceType,
+	},
+}
+
+/// Contains [`OfferEvents::Bolt12InvoiceReceived`] data specific
+/// to [`Bolt12Invoice`] corresponds to Offer or Refund.
+pub enum Bolt12InvoiceType {
+	ForOffer { invoice_request_amount_msats: Option<u64>, offer_amount: Amount },
+	ForRefund { refund_amount: u64 },
+}
 
 /// A Bolt12 Offers code and flow utility provider, which facilitates utilities for
 /// Bolt12 builder generation, and Onion message handling.
@@ -97,6 +121,8 @@ where
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
 	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+
+	pending_offers_events: Mutex<Vec<OfferEvents>>,
 
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
@@ -128,6 +154,7 @@ where
 			message_router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_offers_events: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			#[cfg(feature = "dnssec")]
