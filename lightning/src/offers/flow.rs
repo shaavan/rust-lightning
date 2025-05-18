@@ -44,7 +44,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
@@ -60,7 +60,6 @@ use crate::types::payment::{PaymentHash, PaymentSecret};
 use {
 	crate::blinded_path::message::AsyncPaymentsContext,
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::Amount,
 	crate::offers::signer,
 	crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder},
 	crate::onion_message::async_payments::HeldHtlcAvailable,
@@ -71,6 +70,120 @@ use {
 	crate::blinded_path::message::DNSResolverContext,
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
+
+/// Contains OfferEvents that can optionally triggered for manual
+/// handling by user based on appropriate user_config.
+pub enum OfferEvents {
+	/// Notifies that a verified [`InvoiceRequest`] has been received.
+	///
+	/// This event is triggered when a BOLT12 [`InvoiceRequest`] is received.  
+	/// The [`amount`] field describes how the amount is specified — in the offer, the invoice request, or both.
+	///
+	/// To respond, use [`Self::create_invoice_builder_from_invoice_request`], providing an amount based
+	/// on the structure described in [`InvoiceRequestAmountSource`].
+	///
+	/// See the [BOLT12 spec](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md#requirements-1)
+	/// for protocol-level details.
+	InvoiceRequestReceived {
+		/// The verified [`InvoiceRequest`] that was received.
+		invoice_request: VerifiedInvoiceRequest,
+
+		/// Indicates how the amount is specified across the [`InvoiceRequest`] and the associated [`Offer`] (if any).
+		///
+		/// Use this to determine what amount to pass when calling [`Self::create_invoice_builder_from_invoice_request`].
+		///
+		/// ### [`InvoiceRequestAmountSource::OfferOnly`]
+		/// The [`InvoiceRequest`] does not specify an amount. The amount is taken solely from the associated [`Offer`].
+		///
+		/// - If the amount is in [`Amount::Currency`], user must convert it manually into a Bitcoin-denominated amount
+		///   and then pass it to [`Self::create_invoice_builder_from_invoice_request`].
+		///
+		/// - If the amount is in [`Amount::Bitcoin`], user must provide an amount that is **greater than or equal to**
+		///   the offer amount when calling the builder function.
+		///
+		/// ### [`InvoiceRequestAmountSource::InvoiceRequestOnly`]
+		/// The [`InvoiceRequest`] specifies an amount, and the associated [`Offer`] does not.
+		///
+		/// - You must pass the exact request amount to [`Self::create_invoice_builder_from_invoice_request`] when responding.
+		///
+		/// ### [`InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount`]
+		/// Both the [`InvoiceRequest`] and the [`Offer`] specify amounts.
+		///
+		/// - If the offer uses [`Amount::Currency`], ensure that the request amount reasonably compensates
+		///   based on conversion rates.
+		///
+		/// - If the offer uses [`Amount::Bitcoin`], this implementation ensures the request amount is
+		///   **greater than or equal to** the offer amount before constructing this variant.
+		///
+		/// - In either case, use the exact request amount when calling [`Self::create_invoice_builder_from_invoice_request`].
+		amount: InvoiceRequestAmountSource,
+	},
+
+	/// Notified that an [`Bolt12Invoice`] was received
+	/// This event is triggered when a BOLT12 [`Bolt12Invoice`] is received.
+	/// 
+	/// User must use their custom logic to pay the invoice, using the exact amount specified in the invoice.
+	Bolt12InvoiceReceived {
+		/// The verified [`Bolt12Invoice`] that was received.
+		invoice: Bolt12Invoice,
+		/// The [`PaymentId`] associated with the invoice.
+		payment_id: PaymentId,
+		/// Indicates how the amount is specified in the invoice.
+		invoice_amount: u64,
+		/// Indicates the source of the amount: whether from Offer, Refund, or InvoiceRequest.
+		/// Useful to examine the invoice's amount before deciding to pay it.
+		amount_source: Bolt12InvoiceAmountSource,
+	},
+}
+
+/// Represents the nature of amount specified with an [`InvoiceRequest`].
+pub enum InvoiceRequestAmountSource {
+	/// Only the corresponding Offer amount is set; the [`InvoiceRequest`] amount is not specified.
+	OfferOnly { offer_amount: Amount },
+
+	/// Only the [`InvoiceRequest`] amount is set; the corresponding Offer amount is not specified.
+	InvoiceRequestOnly { invoice_request_amount_msats: u64 },
+
+	/// Both the [`InvoiceRequest`] amount and the corresponding Offer amount are set.
+	InvoiceRequestAndOfferAmount {
+		invoice_request_amount_msats: u64,
+		offer_amount: Amount,
+	},
+}
+
+/// Contains [`OfferEvents::Bolt12InvoiceReceived`] data specific
+/// to [`Bolt12Invoice`] corresponds to Offer or Refund.
+pub enum Bolt12InvoiceAmountSource {
+	/// The invoice corresponds to an [`Offer`] flow with the exact nature of amount specified by [`InvoiceRequestAmountSource`].
+	/// 
+	/// If the invoice is for an [`Offer`], it could be based on following cases:
+	/// 
+	/// ### [`InvoiceRequestAmountSource::OfferOnly`]:
+	/// 
+	/// - If the offer amount is in [`Amount::Currency`], the user must ensures that the invoice amount sufficiently compensates for the offer amount post conversion.
+	/// - If the offer amount is in [`Amount::Bitcoin`], the implementation ensures that the invoice amount is exactly equal to the offer amount.
+	/// 
+	/// ### [`InvoiceRequestAmountSource::InvoiceRequestOnly`]:
+	/// 
+	/// If only the [`InvoiceRequest`] amount is specified, implementation ensures that the invoice amount is exactly equal to the request amount abiding by the spec.
+	/// 
+	/// For more details, see the [BOLT12 spec](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md#requirements-1)
+	/// 
+	/// ### [`InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount`]:
+	/// 
+	/// - If the offer uses [`Amount::Currency`], ensure that the request amount reasonably compensates
+	///   based on conversion rates.
+	/// 
+	/// - If the offer uses [`Amount::Bitcoin`], this implementation ensures the request amount is
+	///   **greater than or equal to** the offer amount before constructing this variant.
+	///
+	/// In both cases, the implementation ensures that the invoice amount is exactly equal to the request amount. 
+	ForOffer { amount: InvoiceRequestAmountSource },
+	/// The invoice corresponds to a [`Refund`] flow, with the amount specified in the [`Refund`].
+	/// 
+	/// The amount is specified in the [`Refund`] and must be equal to the invoice amount, which the implementation ensures.
+	ForRefund { refund_amount: u64 },
+}
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
@@ -95,6 +208,8 @@ where
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
 	pub(crate) pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
+
+	pending_offers_events: Mutex<Vec<OfferEvents>>,
 
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 
@@ -126,6 +241,7 @@ where
 			message_router,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
+			pending_offers_events: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			#[cfg(feature = "dnssec")]
@@ -1041,6 +1157,14 @@ where
 		Ok(())
 	}
 
+	pub fn enqueue_offers_event(
+		&self, event: OfferEvents
+	) -> Result<(), ()> {
+		let mut pending_offers_events = self.pending_offers_events.lock().unwrap();
+		pending_offers_events.push(event);
+		Ok(())
+	}
+
 	/// Gets the enqueued [`OffersMessage`] with their corresponding [`MessageSendInstructions`].
 	pub fn release_pending_offers_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
@@ -1059,5 +1183,11 @@ where
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+	}
+
+	pub fn get_and_clear_pending_offers_events(
+		&self,
+	) -> Vec<OfferEvents> {
+		core::mem::take(&mut self.pending_offers_events.lock().unwrap())
 	}
 }
