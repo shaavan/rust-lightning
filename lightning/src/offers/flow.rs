@@ -81,11 +81,23 @@ pub enum FlowEvent {
 /// Contains all the events corresponding to all Offers, and Refund with amount in currency.
 /// To enable set handle_currency_config to true.
 pub enum Currency {
+	/// When we scan a refund with amount in currency.
+	/// Convert the amount and call [`OffersMessageFlow::send_invoice_for_refund`]
 	ManualRefundAmountRequired(Refund),
+	/// When we scan an offer with amount in currency.
+	/// Create amount, or don't and call [`OffersMessageFlow::send_invoice_request_for_offer`]
 	ManualOfferAmountRequired(Offer),
+	/// We receive InvoiceRequest without amount corresponding to Offer
+	/// Create amount and call [`OffersMessageFlow::send_invoice_for_invoice_request_without_amount`]
 	ReceivedInvoiceRequestWithoutAmountForOffer(InvoiceRequest),
+	/// We receive InvoiceRequest with amount corresponding to Offer
+	/// Verify amount and call [`OffersMessageFlow::send_invoice_for_invoice_request_with_amount`]
 	ReceivedInvoiceRequestWithAmountForOffer(InvoiceRequest),
+	/// We receive Bolt12Invoice corresponding to Refund
+	/// Verify amount and call <?>
 	ReceivedInvoiceForRefund(Bolt12Invoice),
+	/// We receive Bolt12Invoice corresponding to InvoiceRequest without amount
+	/// Create amount and call <?>
 	ReceivedInvoiceforInvoiceRequestWithoutAmount(Bolt12Invoice),
 }
 
@@ -125,7 +137,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
-	pending_events: Mutex<Vec<FlowEvents>>,
+	pending_events: Mutex<Vec<FlowEvent>>,
 	
 	configs: FlowConfig
 }
@@ -381,6 +393,73 @@ fn enqueue_onion_message_with_reply_paths<T: OnionMessageContents + Clone>(
 			};
 			queue.push((message.clone(), instructions));
 		});
+}
+
+
+impl<MR: Deref> OffersMessageFlow<MR>
+where
+	MR::Target: MessageRouter,
+{
+	pub fn send_invoice_for_refund<ES: Deref, R: Deref>(
+		&self, router: &R, entropy_source: ES, refund: &Refund,
+		amount_msats: u64, usable_channels: Vec<ChannelDetails>, peers: Vec<MessageForwardNode>,
+	) -> Result<Bolt12Invoice, Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+		R::Target: Router,
+	{
+		let entropy = &*entropy_source;
+		let builder = self.create_invoice_builder_from_refund(router, entropy, refund, amount_msats, usable_channels)?;
+		let invoice = builder.allow_mpp().build_and_sign(&self.secp_ctx)?;
+		self.enqueue_invoice(entropy, invoice.clone(), refund, peers)?;
+
+		Ok(invoice)
+	}
+
+	pub fn send_invoice_request_for_offer<ES: Deref>(
+		&self, entropy_source: ES, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
+		payer_note: Option<String>, human_readable_name: Option<HumanReadableName>,
+		payment_id: PaymentId, peers: Vec<MessageForwardNode>,
+	) -> Result<InvoiceRequest, Bolt12SemanticError>
+	where
+		ES::Target: EntropySource
+	{
+		let entropy = &*entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+
+		let builder = self.create_invoice_request_builder(offer, nonce, quantity, amount_msats, payer_note, human_readable_name, payment_id)?;
+		let invoice_request = builder.build_and_sign()?;
+		self.enqueue_invoice_request(invoice_request.clone(), payment_id, nonce, peers)?;
+
+		Ok(invoice_request)
+	}
+
+	fn create_response_for_invoice_request_without_amount<ES: Deref, NS: Deref, R: Deref>(
+		&self, signer: &NS, router: &R, entropy_source: ES,
+		invoice_request: VerifiedInvoiceRequest, amount_msats: u64,
+		usable_channels: Vec<ChannelDetails>
+	) -> Result<(OffersMessage, Option<MessageContext>), Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+		NS::Target: NodeSigner,
+		R::Target: Router
+	{
+		if invoice_request.has_amount_msats() { return Err(Bolt12SemanticError::InvalidAmount) }
+		Ok(self.create_response_for_invoice_request(signer, router, entropy_source, invoice_request, amount_msats, usable_channels))
+	}
+
+	fn create_response_for_invoice_request_with_amount<ES: Deref, NS: Deref, R: Deref>(
+		&self, signer: &NS, router: &R, entropy_source: ES,
+		invoice_request: VerifiedInvoiceRequest, usable_channels: Vec<ChannelDetails>
+	) -> Result<(OffersMessage, Option<MessageContext>), Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+		NS::Target: NodeSigner,
+		R::Target: Router
+	{
+		let amount_msats = invoice_request.amount_msats().ok_or(Bolt12SemanticError::InvalidAmount)?;
+		Ok(self.create_response_for_invoice_request(signer, router, entropy_source, invoice_request, amount_msats, usable_channels))
+	}
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -808,7 +887,7 @@ where
 	/// Returns an error if the refund targets a different chain or if no valid  
 	/// blinded path can be constructed.
 	pub fn create_invoice_builder_from_refund<'a, ES: Deref, R: Deref>(
-		&'a self, router: &R, entropy_source: ES, refund: &'a Refund,
+		&'a self, router: &R, entropy_source: ES, refund: &'a Refund, amount_msats: u64, 
 		usable_channels: Vec<ChannelDetails>,
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
 	where
@@ -822,7 +901,6 @@ where
 		let expanded_key = &self.inbound_payment_key;
 		let entropy = &*entropy_source;
 
-		let amount_msats = refund.amount_msats();
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let (payment_hash, payment_secret) = self
