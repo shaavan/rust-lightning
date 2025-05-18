@@ -10529,7 +10529,7 @@ where
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
 		let entropy = &*self.entropy_source;
-		let builder = self.flow.create_invoice_builder_from_refund(&self.router, entropy, refund, self.list_usable_channels())?;
+		let builder = self.flow.create_invoice_builder_from_refund(&self.router, entropy, refund, refund.amount_msats(), self.list_usable_channels())?;
 		let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
 		self.flow.enqueue_invoice(entropy, invoice.clone(), refund, self.get_peers_for_blinded_path())?;
 
