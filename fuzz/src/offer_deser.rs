@@ -14,7 +14,7 @@ use lightning::ln::channelmanager::PaymentId;
 use lightning::ln::inbound_payment::ExpandedKey;
 use lightning::offers::invoice_request::InvoiceRequest;
 use lightning::offers::nonce::Nonce;
-use lightning::offers::offer::{Amount, Offer, Quantity};
+use lightning::offers::offer::{Offer, Quantity};
 use lightning::offers::parse::Bolt12SemanticError;
 use lightning::sign::EntropySource;
 use lightning::util::ser::Writeable;

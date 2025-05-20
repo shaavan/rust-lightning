@@ -595,7 +595,7 @@ pub struct Offer {
 	// The serialized offer. Needed when creating an `InvoiceRequest` if the offer contains unknown
 	// fields.
 	pub(super) bytes: Vec<u8>,
-	pub(super) contents: OfferContents,
+	pub(crate) contents: OfferContents,
 	id: OfferId,
 }
 
@@ -606,7 +606,7 @@ pub struct Offer {
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(super) struct OfferContents {
+pub(crate) struct OfferContents {
 	chains: Option<Vec<ChainHash>>,
 	metadata: Option<Metadata>,
 	amount: Option<Amount>,
@@ -619,6 +619,16 @@ pub(super) struct OfferContents {
 	issuer_signing_pubkey: Option<PublicKey>,
 	#[cfg(test)]
 	experimental_foo: Option<u64>,
+}
+
+impl OfferContents {
+	pub(crate) fn is_amount_currency(&self) -> bool {
+		if let Some(Amount::Currency { .. }) = self.amount() {
+			true
+		} else {
+			false
+		}
+	}
 }
 
 macro_rules! offer_accessors { ($self: ident, $contents: expr) => {

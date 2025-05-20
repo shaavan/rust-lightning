@@ -49,7 +49,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
-use crate::offers::flow::OffersMessageFlow;
+use crate::offers::flow::{CurrencyEvent, FlowEvent, OffersMessageFlow};
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelError, ChannelUpdateStatus, FundedChannel, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, ReconnectionMsg, InboundV1Channel, WithChannelContext};
 use crate::ln::channel::PendingV2Channel;
@@ -70,7 +70,7 @@ use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferBuilder};
+use crate::offers::offer::{Amount, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::signer;
@@ -10488,6 +10488,13 @@ where
 		let entropy = &*self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
 
+		if self.flow.is_currency_enabled() && offer.contents.is_amount_currency() {
+			// TODO: Placeholder error type, to be corrected
+			return self.flow
+				.enqueue_event(FlowEvent::Currency(CurrencyEvent::ManualOfferAmountRequired(offer.clone())))
+				.map_err(|_| Bolt12SemanticError::AlreadyExpired);
+		}
+
 		let builder = self.flow.create_invoice_request_builder(offer, nonce, quantity, amount_msats, payer_note, human_readable_name, payment_id)?;
 
 		let invoice_request = builder.build_and_sign()?;
@@ -12278,6 +12285,17 @@ where
 					Err(_) => return None,
 				};
 
+				if self.flow.is_currency_enabled() && invoice_request.inner.is_offer_in_currency() {
+					let event = if invoice_request.inner.has_amount_msats() {
+						CurrencyEvent::ReceivedInvoiceRequestWithAmountForOffer(invoice_request)
+					} else {
+						CurrencyEvent::ReceivedInvoiceRequestWithoutAmountForOffer(invoice_request)
+					};
+
+					let _ = self.flow.enqueue_event(FlowEvent::Currency(event));
+					return None;
+				}
+
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request.inner
 				) {
@@ -12305,6 +12323,15 @@ where
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				if self.flow.is_currency_enabled() && invoice.is_no_ir_amount_and_offer_in_currency() {
+					let _ = self
+						.flow
+						.enqueue_event(FlowEvent::Currency(
+							CurrencyEvent::ReceivedInvoiceforInvoiceRequestWithoutAmount(invoice),
+						));
+					return None;
+				}
 
 				if self.default_configuration.manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.

@@ -588,6 +588,12 @@ pub struct InvoiceRequest {
 	signature: Signature,
 }
 
+impl InvoiceRequest {
+	pub(crate) fn is_offer_in_currency(&self) -> bool {
+		self.contents.inner.offer.is_amount_currency()
+	}
+}
+
 /// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
@@ -621,7 +627,7 @@ pub struct VerifiedInvoiceRequest {
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub(super) struct InvoiceRequestContents {
-	pub(super) inner: InvoiceRequestContentsWithoutPayerSigningPubkey,
+	pub(crate) inner: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: PublicKey,
 }
 
@@ -629,7 +635,7 @@ pub(super) struct InvoiceRequestContents {
 #[cfg_attr(test, derive(PartialEq))]
 pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
 	pub(super) payer: PayerContents,
-	pub(super) offer: OfferContents,
+	pub(crate) offer: OfferContents,
 	chain: Option<ChainHash>,
 	amount_msats: Option<u64>,
 	features: InvoiceRequestFeatures,
