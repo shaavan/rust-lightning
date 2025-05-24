@@ -71,6 +71,58 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
 
+/// Configuration options for determining which [`OfferEvents`] should be generated during BOLT12 offer handling.
+///
+/// Use this to control whether events like [`InvoiceRequestReceived`] and [`Bolt12InvoiceReceived`] are
+/// triggered automatically or suppressed, depending on your use case.
+///
+/// The default behavior disables all events (`NeverTrigger`) for both cases.
+pub struct UserConfigs {
+	/// Controls whether [`OfferEvents::InvoiceRequestReceived`] is generated upon receiving an [`InvoiceRequest`].
+	invoice_request_configs: InvoiceRequestConfigs,
+
+	/// Controls whether [`OfferEvents::Bolt12InvoiceReceived`] is generated upon receiving a [`Bolt12Invoice`].
+	invoice_configs: Bolt12InvoiceConfigs,
+}
+
+impl Default for UserConfigs {
+	fn default() -> Self {
+		UserConfigs {
+			invoice_request_configs: InvoiceRequestConfigs::NeverTrigger,
+			invoice_configs: Bolt12InvoiceConfigs::NeverTrigger,
+		}
+	}
+}
+
+/// Specifies under what conditions an [`InvoiceRequest`] will generate an [`OfferEvents::InvoiceRequestReceived`] event.
+pub enum InvoiceRequestConfigs {
+	/// Always trigger the event when an [`InvoiceRequest`] is received.
+	AlwaysTrigger,
+
+	/// Trigger the event only if the corresponding [`Offer`] specifies an [`Amount::Currency`] amount.
+	TriggerIfOfferInCurrency,
+
+	/// Never trigger the event, regardless of the incoming [`InvoiceRequest`].
+	NeverTrigger,
+}
+
+/// Specifies under what conditions a [`Bolt12Invoice`] will generate an [`OfferEvents::Bolt12InvoiceReceived`] event.
+pub enum Bolt12InvoiceConfigs {
+	/// Always trigger the event when a [`Bolt12Invoice`] is received.
+	AlwaysTrigger,
+
+	/// Trigger the event only if the invoice corresponds to an [`Offer`] flow with an [`Amount::Currency`] offer.
+	TriggerIfOfferInCurrency,
+
+	/// Trigger the event only if the invoice corresponds to an [`Offer`] flow where:
+	/// - the underlying [`Offer`] amount is in [`Amount::Currency`], and
+	/// - the corresponding [`InvoiceRequest`] did **not** specify an amount.
+	TriggerIfOfferInCurrencyAndNoIRAmount,
+
+	/// Never trigger the event, regardless of the incoming [`Bolt12Invoice`].
+	NeverTrigger,
+}
+
 /// Contains OfferEvents that can optionally triggered for manual
 /// handling by user based on appropriate user_config.
 pub enum OfferEvents {
@@ -217,6 +269,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	user_configs: UserConfigs,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -248,6 +302,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			user_configs: UserConfigs::default(),
 		}
 	}
 
