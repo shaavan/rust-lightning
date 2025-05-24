@@ -72,6 +72,49 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
 
+/// The UserConfig to determine the level of event generation and manual handling user wants.
+/// Set during Flow initialisation
+pub struct UserConfigs {
+	/// Represent config parameter, and behavior to be followed when invoice request is received.
+	invoice_request_configs: InvoiceRequestConfigs,
+	/// Represent config parameter, and behavior to be followed when bolt12invoice is received.
+	invoice_configs: Bolt12InvoiceConfigs,
+}
+
+impl Default for UserConfigs {
+	fn default() -> Self {
+		UserConfigs {
+			invoice_request_configs: InvoiceRequestConfigs::NeverTrigger,
+			invoice_configs: Bolt12InvoiceConfigs::NeverTrigger,
+		}
+	}
+}
+
+/// Different level of config parameter to represents when [`OfferEvents::InvoiceRequestReceived`]
+/// will be triggered.
+pub enum InvoiceRequestConfigs {
+	/// Always trigger.
+	AlwaysTrigger,
+	/// Trigger only if the corresponding offer is in currency.
+	TriggerIfOfferInCurrency,
+	/// Never trigger
+	NeverTrigger,
+}
+
+/// Different level of config parameter to represents when [`OfferEvents::Bolt12InvoiceReceived`]
+/// will be triggered.
+pub enum Bolt12InvoiceConfigs {
+	/// Always trigger.
+	AlwaysTrigger,
+	/// Trigger only if invoice corresponds to offer and the offer is in currency.
+	TriggerIfOfferInCurrency,
+	/// Trigger only if invoice corresponds to offer and the offer is in currency,
+	/// and the corresponding IR amount is also no set.
+	TriggerIfOfferInCurrencyAndNoIRAmount,
+	/// Never trigger
+	NeverTrigger,
+}
+
 /// Represents the nature of InvoiceRequest and the corresponding Offer's amount is set.
 pub enum IREventAmount {
 	/// Only the Offer amount is set, and the InvoiceRequest amount is not specified.
@@ -142,6 +185,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	user_configs: UserConfigs,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -173,6 +218,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			user_configs: UserConfigs::default(),
 		}
 	}
 
