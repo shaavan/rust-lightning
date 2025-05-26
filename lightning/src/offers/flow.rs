@@ -37,8 +37,7 @@ use crate::ln::channelmanager::{
 };
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
-	UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY,
+	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
@@ -560,6 +559,99 @@ where
 				Ok(payment_id)
 			},
 			_ => Err(()),
+		}
+	}
+
+	/// This function runs user_configs checks on the invoice_request, and make sure whether
+	/// the invoice_request is to be handled synchornously or asynchornously (in which case
+	/// the correspoonding OfferEvent will be enquqed).
+	pub fn synchornously_handle_invoice_request(&self, invoice_request: VerifiedInvoiceRequest) -> Result<Option<VerifiedInvoiceRequest>, ()>
+	{
+		if self.should_trigger_invoice_request_event(&invoice_request) {
+			let amount = match (invoice_request.inner.amount_msats(), invoice_request.inner.get_offer_amount()) {
+				(Some(ir_amount), Some(offer_amount)) => IREventAmount::InvoiceRequestAndOfferAmount {
+					invoice_request_amount_msats: ir_amount,
+					offer_amount,
+				},
+				(Some(ir_amount), None) => IREventAmount::InvoiceRequestOnly {
+					invoice_request_amount_msats: ir_amount,
+				},
+				(None, Some(offer_amount)) => IREventAmount::OfferOnly { offer_amount },
+				(None, None) => {
+					// This is an error case, we should not have an invoice_request without
+					// either amount set.
+					return Err(());
+				}
+			};
+
+			let event = OfferEvents::InvoiceRequestReceived {
+				invoice_request,
+				amount,
+			};
+
+			// Enqueue the event for later processing.
+			self.enqueue_offers_event(event)?;
+
+			Ok(None)
+		} else {
+			// If the user_config is set to never trigger, we just return the invoice_request
+			// without any further processing.
+			Ok(Some(invoice_request))
+		}
+	}
+
+	pub fn synchornously_handle_invoice(&self, invoice: Bolt12Invoice, payment_id: PaymentId) -> Result<Option<Bolt12Invoice>, ()> {
+		if self.should_trigger_invoice_event(&invoice) {
+			let precurseor_amount = invoice.get_precursor_amount();
+			let offer_amount = invoice.get_offer_amount();
+
+			let amount_source = match offer_amount {
+				Ok(offer_amt) => match (precurseor_amount, offer_amt) {
+					(Some(pre_amt), Some(amt)) => Bolt12InvoiceAmountSource::ForOffer {
+						amount: IREventAmount::InvoiceRequestAndOfferAmount {
+							invoice_request_amount_msats: pre_amt,
+							offer_amount: amt,
+						},
+					},
+					(Some(pre_amt), None) => Bolt12InvoiceAmountSource::ForOffer {
+						amount: IREventAmount::InvoiceRequestOnly {
+							invoice_request_amount_msats: pre_amt,
+						},
+					},
+					(None, Some(amt)) => Bolt12InvoiceAmountSource::ForOffer {
+						amount: IREventAmount::OfferOnly { offer_amount: amt },
+					},
+					(None, None) => {
+						// This is an error case, we should not have an invoice without
+						// either amount set.
+						return Err(());
+					}
+				},
+				Err(_) => {
+					// If the invoice does not have an offer amount, it is likely a refund.
+					// We can still process it, but we won't have an offer amount.
+					Bolt12InvoiceAmountSource::ForRefund {
+						refund_amount: precurseor_amount.expect("precursor_amount must be Some for refund"),
+					}
+				}
+			};
+
+			let invoice_amount = invoice.amount_msats();
+			let event = OfferEvents::Bolt12InvoiceReceived {
+				invoice,
+				payment_id,
+				invoice_amount,
+				amount_source,
+			};
+
+			// Enqueue the event for later processing.
+			self.enqueue_offers_event(event)?;
+
+			Ok(None)
+		} else {
+			// If the user_config is set to never trigger, we just return the invoice
+			// without any further processing.
+			Ok(Some(invoice))
 		}
 	}
 
