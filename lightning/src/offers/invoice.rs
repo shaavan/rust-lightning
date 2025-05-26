@@ -125,10 +125,7 @@ use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
 use crate::offers::invoice_request::{
-	ExperimentalInvoiceRequestTlvStream, ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest,
-	InvoiceRequestContents, InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef,
-	EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES,
-	IV_BYTES as INVOICE_REQUEST_IV_BYTES,
+	ExperimentalInvoiceRequestTlvStream, ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestAmountSource, InvoiceRequestContents, InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef, EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES, IV_BYTES as INVOICE_REQUEST_IV_BYTES
 };
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
@@ -774,17 +771,14 @@ pub struct Bolt12Invoice {
 }
 
 impl Bolt12Invoice {
-    pub(crate) fn get_precursor_amount(&self) -> Option<u64> {
+    pub(crate) fn amount_source(&self) -> Bolt12InvoiceAmountSource {
         match &self.contents {
-            InvoiceContents::ForOffer { invoice_request, .. } => invoice_request.amount_msats(),
-            InvoiceContents::ForRefund { refund, .. } => Some(refund.amount_msats()),
-        }
-    }
-
-    pub(crate) fn get_offer_amount(&self) -> Result<Option<Amount>, ()> {
-        match &self.contents {
-            InvoiceContents::ForOffer { invoice_request, .. } => Ok(invoice_request.get_offer_amount()),
-            InvoiceContents::ForRefund { .. } => Err(()),
+            InvoiceContents::ForOffer { invoice_request, .. } => {
+				Bolt12InvoiceAmountSource::Offer(invoice_request.amount_source())
+			},
+            InvoiceContents::ForRefund { refund, .. } => {
+				Bolt12InvoiceAmountSource::Refund(refund.amount_msats())
+			}
         }
     }
 }
@@ -819,6 +813,14 @@ struct InvoiceFields {
 	signing_pubkey: PublicKey,
 	#[cfg(test)]
 	experimental_baz: Option<u64>,
+}
+
+/// The source of the amount for a [`Bolt12Invoice`].
+pub enum Bolt12InvoiceAmountSource {
+	/// The invoice corresponds to an [`Offer`] flow with the exact nature of amount specified by [`InvoiceRequestAmountSource`].
+	Offer(InvoiceRequestAmountSource),
+	/// The invoice corresponds to a [`Refund`] flow, with the amount specified in the [`Refund`].
+	Refund(u64),
 }
 
 macro_rules! invoice_accessors { ($self: ident, $contents: expr) => {

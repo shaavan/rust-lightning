@@ -37,11 +37,10 @@ use crate::ln::channelmanager::{
 };
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder,
-	InvoiceBuilderVariant, DEFAULT_RELATIVE_EXPIRY,
+	Bolt12Invoice, Bolt12InvoiceAmountSource, DerivedSigningPubkey, InvoiceBuilder, InvoiceBuilderVariant, DEFAULT_RELATIVE_EXPIRY
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	InvoiceRequest, InvoiceRequestAmountSource, InvoiceRequestBuilder, VerifiedInvoiceRequest
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
@@ -85,11 +84,64 @@ pub struct UserConfigs {
 	invoice_configs: Bolt12InvoiceConfigs,
 }
 
-impl Default for UserConfigs {
-	fn default() -> Self {
-		UserConfigs {
+impl UserConfigs {
+	/// Creates a new [`UserConfigs`] instance with default settings.
+	///
+	/// By default, all events are set to `NeverTrigger`, meaning no events will be generated.
+	pub fn new() -> Self {
+		Self {
 			invoice_request_configs: InvoiceRequestConfigs::NeverTrigger,
 			invoice_configs: Bolt12InvoiceConfigs::NeverTrigger,
+		}
+	}
+
+	/// Sets the configuration for invoice request events.
+	pub fn set_invoice_request_configs(self, configs: InvoiceRequestConfigs) -> Self {
+		Self {
+			invoice_request_configs: configs,
+			..self
+		}
+	}
+
+	/// Sets the configuration for invoice events.
+	pub fn set_invoice_configs(self, configs: Bolt12InvoiceConfigs) -> Self {
+		Self {
+			invoice_configs: configs,
+			..self
+		}
+	}
+
+	/// Determines whether an [`InvoiceRequest`] should be handled synchronously or dispatched as an event.
+	pub fn handle_invoice_request_asyncly(&self, invoice_request: &InvoiceRequest) -> bool {
+		match self.invoice_request_configs {
+			InvoiceRequestConfigs::AlwaysTrigger => true,
+			InvoiceRequestConfigs::TriggerIfOfferInCurrency => {
+				matches!(invoice_request.contents.offer_amount(), Some(Amount::Currency { .. }))
+			}
+			InvoiceRequestConfigs::NeverTrigger => false,
+		}
+	}
+
+	/// Determines whether an [`Bolt12Invoice`] should be handled synchronously or dispatched as an event.
+	pub fn handle_invoice_asyncly(&self, invoice: &Bolt12Invoice) -> bool {
+		let amount_source = invoice.amount_source();
+		let (ir_amount, offer_amount) = match amount_source {
+			Bolt12InvoiceAmountSource::Offer(amount) => match amount {
+				InvoiceRequestAmountSource::OfferOnly { amount } => (None, Some(amount)),
+				InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount { invoice_request_amount_msats, offer_amount } => (Some(invoice_request_amount_msats), Some(offer_amount)),
+				InvoiceRequestAmountSource::InvoiceRequestOnly { amount_msats } => (Some(amount_msats), None),
+			},
+			Bolt12InvoiceAmountSource::Refund(_) => (None, None),
+		};
+		match self.invoice_configs {
+			Bolt12InvoiceConfigs::AlwaysTrigger => true,
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrency => {
+				matches!(offer_amount, Some(Amount::Currency { .. }))
+			}
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrencyAndNoIRAmount => {
+				matches!(offer_amount, Some(Amount::Currency { .. })) && ir_amount.is_none()
+			}
+			Bolt12InvoiceConfigs::NeverTrigger => false,
 		}
 	}
 }
@@ -168,7 +220,7 @@ pub enum OfferEvents {
 		///   **greater than or equal to** the offer amount before constructing this variant.
 		///
 		/// - In either case, use the exact request amount when calling [`Self::create_invoice_builder_from_invoice_request`].
-		amount: InvoiceRequestAmountSource,
+		amount_source: InvoiceRequestAmountSource,
 	},
 
 	/// Notified that an [`Bolt12Invoice`] was received
@@ -184,57 +236,39 @@ pub enum OfferEvents {
 		invoice_amount: u64,
 		/// Indicates the source of the amount: whether from Offer, Refund, or InvoiceRequest.
 		/// Useful to examine the invoice's amount before deciding to pay it.
+		/// 
+		/// ## [`Bolt12InvoiceAmountSource::ForOffer`]
+		/// 
+		/// If the invoice correponds to an Offer flow, it could be based on following cases:
+		/// 
+		/// ### [`InvoiceRequestAmountSource::OfferOnly`]:
+		/// 
+		/// - If the offer amount is in [`Amount::Currency`], the user must ensures that the invoice amount sufficiently compensates for the offer amount post conversion.
+		/// - If the offer amount is in [`Amount::Bitcoin`], the implementation ensures that the invoice amount is exactly equal to the offer amount.
+		/// 
+		/// ### [`InvoiceRequestAmountSource::InvoiceRequestOnly`]:
+		/// 
+		/// If only the [`InvoiceRequest`] amount is specified, implementation ensures that the invoice amount is exactly equal to the request amount abiding by the spec.
+		/// 
+		/// For more details, see the [BOLT12 spec](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md#requirements-1)
+		/// 
+		/// ### [`InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount`]:
+		/// 
+		/// - If the offer uses [`Amount::Currency`], ensure that the request amount reasonably compensates
+		///   based on conversion rates.
+		/// 
+		/// - If the offer uses [`Amount::Bitcoin`], this implementation ensures the request amount is
+		///   **greater than or equal to** the offer amount before constructing this variant.
+		///
+		/// In both cases, the implementation ensures that the invoice amount is exactly equal to the request amount.
+		/// 
+		/// ## [`Bolt12InvoiceAmountSource::ForRefund`]
+		/// 
+		/// The invoice corresponds to a [`Refund`] flow, with the amount specified in the [`Refund`].
+		/// 
+		/// The amount is specified in the [`Refund`] and must be equal to the invoice amount, which the implementation ensures.
 		amount_source: Bolt12InvoiceAmountSource,
 	},
-}
-
-/// Represents the nature of amount specified with an [`InvoiceRequest`].
-pub enum InvoiceRequestAmountSource {
-	/// Only the corresponding Offer amount is set; the [`InvoiceRequest`] amount is not specified.
-	OfferOnly { offer_amount: Amount },
-
-	/// Only the [`InvoiceRequest`] amount is set; the corresponding Offer amount is not specified.
-	InvoiceRequestOnly { invoice_request_amount_msats: u64 },
-
-	/// Both the [`InvoiceRequest`] amount and the corresponding Offer amount are set.
-	InvoiceRequestAndOfferAmount {
-		invoice_request_amount_msats: u64,
-		offer_amount: Amount,
-	},
-}
-
-/// Contains [`OfferEvents::Bolt12InvoiceReceived`] data specific
-/// to [`Bolt12Invoice`] corresponds to Offer or Refund.
-pub enum Bolt12InvoiceAmountSource {
-	/// The invoice corresponds to an [`Offer`] flow with the exact nature of amount specified by [`InvoiceRequestAmountSource`].
-	/// 
-	/// If the invoice is for an [`Offer`], it could be based on following cases:
-	/// 
-	/// ### [`InvoiceRequestAmountSource::OfferOnly`]:
-	/// 
-	/// - If the offer amount is in [`Amount::Currency`], the user must ensures that the invoice amount sufficiently compensates for the offer amount post conversion.
-	/// - If the offer amount is in [`Amount::Bitcoin`], the implementation ensures that the invoice amount is exactly equal to the offer amount.
-	/// 
-	/// ### [`InvoiceRequestAmountSource::InvoiceRequestOnly`]:
-	/// 
-	/// If only the [`InvoiceRequest`] amount is specified, implementation ensures that the invoice amount is exactly equal to the request amount abiding by the spec.
-	/// 
-	/// For more details, see the [BOLT12 spec](https://github.com/lightning/bolts/blob/master/12-offer-encoding.md#requirements-1)
-	/// 
-	/// ### [`InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount`]:
-	/// 
-	/// - If the offer uses [`Amount::Currency`], ensure that the request amount reasonably compensates
-	///   based on conversion rates.
-	/// 
-	/// - If the offer uses [`Amount::Bitcoin`], this implementation ensures the request amount is
-	///   **greater than or equal to** the offer amount before constructing this variant.
-	///
-	/// In both cases, the implementation ensures that the invoice amount is exactly equal to the request amount. 
-	ForOffer { amount: InvoiceRequestAmountSource },
-	/// The invoice corresponds to a [`Refund`] flow, with the amount specified in the [`Refund`].
-	/// 
-	/// The amount is specified in the [`Refund`] and must be equal to the invoice amount, which the implementation ensures.
-	ForRefund { refund_amount: u64 },
 }
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
@@ -303,7 +337,7 @@ where
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
 
-			user_configs: UserConfigs::default(),
+			user_configs: UserConfigs::new(),
 		}
 	}
 
@@ -512,30 +546,60 @@ impl<MR: Deref> OffersMessageFlow<MR>
 where
 	MR::Target: MessageRouter,
 {
-	pub fn should_trigger_invoice_request_event(&self, invoice_request: &VerifiedInvoiceRequest) -> bool {
-		match self.user_configs.invoice_request_configs {
-			InvoiceRequestConfigs::AlwaysTrigger => true,
-			InvoiceRequestConfigs::TriggerIfOfferInCurrency => {
-				matches!(invoice_request.inner.get_offer_amount(), Some(Amount::Currency { .. }))
-			}
-			InvoiceRequestConfigs::NeverTrigger => false,
+	/// Determines whether the given [`VerifiedInvoiceRequest`] should be
+	/// handled synchronously or dispatched as an event, based on [`UserConfigs`].
+	///
+	/// Returns:
+	/// - `Ok(Some(request))` if the caller should handle it now.
+	/// - `Ok(None)` if it was dispatched for async processing.
+	/// - `Err(())` in case of validation or enqueue failure.
+	pub fn determine_invoice_request_handling(
+		&self, invoice_request: VerifiedInvoiceRequest,
+	) -> Result<Option<VerifiedInvoiceRequest>, ()> {
+		if !self.user_configs.handle_invoice_request_asyncly(&invoice_request.inner) {
+			// Synchronous path: return the request for user handling.
+			return Ok(Some(invoice_request));
 		}
+
+		let amount_source = invoice_request.inner.contents.amount_source();
+
+		// Dispatch event for async handling.
+		self.enqueue_offers_event(OfferEvents::InvoiceRequestReceived {
+			invoice_request,
+			amount_source
+		})?;
+
+		Ok(None)
 	}
 
-	pub fn should_trigger_invoice_event(&self, invoice: &Bolt12Invoice) -> bool {
-		let configs = &self.user_configs.invoice_configs;
-
-		match configs {
-			Bolt12InvoiceConfigs::AlwaysTrigger => true,
-			Bolt12InvoiceConfigs::TriggerIfOfferInCurrency => {
-				matches!(invoice.get_offer_amount(), Ok(Some(Amount::Currency { .. })))
-			}
-			Bolt12InvoiceConfigs::TriggerIfOfferInCurrencyAndNoIRAmount => {
-				matches!(invoice.get_offer_amount(), Ok(Some(Amount::Currency { .. })))
-					&& invoice.get_precursor_amount().is_none()
-			}
-			Bolt12InvoiceConfigs::NeverTrigger => false,
+	/// Determines whether the given [`Bolt12Invoice`] should be handled
+	/// synchronously or dispatched as an event, based on [`UserConfigs`].
+	///
+	/// Returns:
+	/// - `Ok(Some(request))` if the caller should handle it now.
+	/// - `Ok(None)` if it was dispatched for async processing.
+	/// - `Err(())` in case of validation or enqueue failure.
+	pub fn determine_invoice_handling(
+		&self, invoice: Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<Option<Bolt12Invoice>, ()> {
+		if !self.user_configs.handle_invoice_asyncly(&invoice) {
+			// Synchronous path: return the invoice for user handling.
+			return Ok(Some(invoice));
 		}
+
+		let invoice_amount = invoice.amount_msats();
+		let amount_source = invoice.amount_source();
+
+		let event = OfferEvents::Bolt12InvoiceReceived {
+			invoice,
+			payment_id,
+			invoice_amount,
+			amount_source,
+		};
+
+		self.enqueue_offers_event(event)?;
+
+		Ok(None)
 	}
 
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the invoice request's own metadata.
@@ -1239,6 +1303,7 @@ where
 		Ok(())
 	}
 
+	/// Enqueues an [`OfferEvents`] event to be processed manually by the user.
 	pub fn enqueue_offers_event(
 		&self, event: OfferEvents
 	) -> Result<(), ()> {
@@ -1267,6 +1332,7 @@ where
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
 	}
 
+	/// Gets the enqueued [`OfferEvents`] events.
 	pub fn get_and_clear_pending_offers_events(
 		&self,
 	) -> Vec<OfferEvents> {
