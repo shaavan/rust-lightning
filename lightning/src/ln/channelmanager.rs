@@ -49,7 +49,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
-use crate::offers::flow::OffersMessageFlow;
+use crate::offers::flow::{Bolt12InvoiceType, OfferEvents, OffersMessageFlow};
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelError, ChannelUpdateStatus, FundedChannel, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, ReconnectionMsg, InboundV1Channel, WithChannelContext};
 use crate::ln::channel::PendingV2Channel;
@@ -12256,6 +12256,17 @@ where
 					Err(_) => return None,
 				};
 
+				if self.flow.should_trigger_invoice_request_event(&invoice_request) {
+					let event = OfferEvents::InvoiceRequestReceived {
+						invoice_request: invoice_request.clone(),
+						invoice_request_amount_msats: invoice_request.inner.amount_msats(),
+						offer_amount: invoice_request.inner.get_offer_amount()
+					};
+
+					let _ = self.flow.enqueue_offers_event(event);
+					return None;
+				}
+
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request.inner
 				) {
@@ -12294,6 +12305,36 @@ where
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				if self.flow.should_trigger_invoice_event(&invoice) {
+					let precursor_amount = invoice.get_precursor_amount();
+					let offer_amount = invoice.get_offer_amount();
+
+					// If offer_amount is Err, this is a refund invoice.
+					let invoice_type = match offer_amount {
+						Ok(amount) => Bolt12InvoiceType::ForOffer {
+							invoice_request_amount_msats: precursor_amount,
+							offer_amount: amount,
+						},
+						Err(_) => {
+							// precursor_amount should always be Some for refund's invoice case.
+							// If not, this is a logic error.
+							Bolt12InvoiceType::ForRefund {
+								refund_amount: precursor_amount.expect("precursor_amount must be Some for refund"),
+							}
+						}
+					};
+
+					let event = OfferEvents::Bolt12InvoiceReceived {
+						invoice: invoice.clone(),
+						payment_id,
+						invoice_amount_msats: invoice.amount_msats(),
+						invoice_type,
+					};
+
+					// Ignore the result intentionally.
+					let _ = self.flow.enqueue_offers_event(event);
+				}
 
 				if self.default_configuration.manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
