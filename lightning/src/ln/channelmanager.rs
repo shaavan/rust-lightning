@@ -49,7 +49,7 @@ use crate::events::{self, Event, EventHandler, EventsProvider, InboundChannelFun
 // construct one themselves.
 use crate::ln::inbound_payment;
 use crate::ln::types::ChannelId;
-use crate::offers::flow::OffersMessageFlow;
+use crate::offers::flow::{OfferEvents, OffersMessageFlow};
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::ln::channel::{self, Channel, ChannelError, ChannelUpdateStatus, FundedChannel, ShutdownResult, UpdateFulfillCommitFetch, OutboundV1Channel, ReconnectionMsg, InboundV1Channel, WithChannelContext};
 use crate::ln::channel::PendingV2Channel;
@@ -12256,6 +12256,12 @@ where
 					Err(_) => return None,
 				};
 
+				let invoice_request = match self.flow.synchornously_handle_invoice_request(invoice_request) {
+					Ok(Some(ir)) => ir,
+					Ok(None) => return None,
+					Err(_) => return None,
+				};
+
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request.inner
 				) {
@@ -12294,6 +12300,15 @@ where
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				let invoice = match self.flow.synchornously_handle_invoice(invoice, payment_id) {
+					Ok(Some(invoice)) => invoice,
+					Ok(None) => return None,
+					Err(_) => {
+						log_trace!(logger, "Failed to handle invoice");
+						return None
+					},
+				};
 
 				if self.default_configuration.manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
