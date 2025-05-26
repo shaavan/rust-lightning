@@ -428,7 +428,33 @@ impl<MR: Deref> OffersMessageFlow<MR>
 where
 	MR::Target: MessageRouter,
 {
-	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the [`InvoiceRequest::metadata`].
+	pub fn should_trigger_invoice_request_event(&self, invoice_request: &VerifiedInvoiceRequest) -> bool {
+		match self.user_configs.invoice_request_configs {
+			InvoiceRequestConfigs::AlwaysTrigger => true,
+			InvoiceRequestConfigs::TriggerIfOfferInCurrency => {
+				matches!(invoice_request.inner.get_offer_amount(), Some(Amount::Currency { .. }))
+			}
+			InvoiceRequestConfigs::NeverTrigger => false,
+		}
+	}
+
+	pub fn should_trigger_invoice_event(&self, invoice: &Bolt12Invoice) -> bool {
+		let configs = &self.user_configs.invoice_configs;
+
+		match configs {
+			Bolt12InvoiceConfigs::AlwaysTrigger => true,
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrency => {
+				matches!(invoice.get_offer_amount(), Ok(Some(Amount::Currency { .. })))
+			}
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrencyAndNoIRAmount => {
+				matches!(invoice.get_offer_amount(), Ok(Some(Amount::Currency { .. })))
+					&& invoice.get_precursor_amount().is_none()
+			}
+			Bolt12InvoiceConfigs::NeverTrigger => false,
+		}
+	}
+
+	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the invoice request's own metadata.
 	///
 	/// - If an [`OffersContext::InvoiceRequest`] with a `nonce` is provided, verification is performed using recipient context data.
 	/// - If no context is provided but the [`InvoiceRequest`] contains [`Offer`] metadata, verification is performed using that metadata.
