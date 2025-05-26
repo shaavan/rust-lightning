@@ -588,6 +588,18 @@ pub struct InvoiceRequest {
 	signature: Signature,
 }
 
+impl InvoiceRequest {
+	pub(crate) fn get_offer_amount(&self) -> Option<Amount> {
+		self.contents.get_offer_amount()
+	}
+}
+
+impl InvoiceRequestContents {
+	pub(super) fn get_offer_amount(&self) -> Option<Amount> {
+		self.inner.offer.amount()
+	}
+}
+
 /// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.

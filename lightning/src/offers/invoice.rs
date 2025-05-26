@@ -773,6 +773,22 @@ pub struct Bolt12Invoice {
 	tagged_hash: TaggedHash,
 }
 
+impl Bolt12Invoice {
+    pub(crate) fn get_precursor_amount(&self) -> Option<u64> {
+        match &self.contents {
+            InvoiceContents::ForOffer { invoice_request, .. } => invoice_request.amount_msats(),
+            InvoiceContents::ForRefund { refund, .. } => Some(refund.amount_msats()),
+        }
+    }
+
+    pub(crate) fn get_offer_amount(&self) -> Result<Option<Amount>, ()> {
+        match &self.contents {
+            InvoiceContents::ForOffer { invoice_request, .. } => Ok(invoice_request.get_offer_amount()),
+            InvoiceContents::ForRefund { .. } => Err(()),
+        }
+    }
+}
+
 /// The contents of an [`Bolt12Invoice`] for responding to either an [`Offer`] or a [`Refund`].
 ///
 /// [`Offer`]: crate::offers::offer::Offer
