@@ -2357,19 +2357,24 @@ fn no_double_pay_with_stale_channelmanager() {
 	check_added_monitors!(nodes[1], 2);
 	check_closed_event!(nodes[1], 2, ClosureReason::HolderForceClosed { broadcasted_latest_txn: Some(true) }, [alice_id, alice_id], 10_000_000);
 
+	// Now Bob claims the funds with the payment preimage
 	nodes[1].node.claim_funds(payment_preimage);
 	expect_payment_claimed!(nodes[1], payment_hash, amt_msat);
 	check_added_monitors!(nodes[1], 2);
 
+	// Get all the transactions that Bob broadcasted
 	let node_txn = nodes[1].tx_broadcaster.txn_broadcasted.lock().unwrap().split_off(0);
 	assert_eq!(node_txn.len(), 2);
 
 	connect_block(&nodes[0], &create_dummy_block(nodes[0].best_block_hash(), 42, vec![commitment_tx_0[0].clone(), node_txn[0].clone()]));
 	connect_block(&nodes[0], &create_dummy_block(nodes[0].best_block_hash(), 42, vec![commitment_tx_1[0].clone(), node_txn[1].clone()]));
+	
+	// Connect enough blocks to reach the CLTV expiry
 	connect_blocks(&nodes[0], TEST_FINAL_CLTV as u32);
 
+	// Check for the PaymentSent event
 	let events = nodes[0].node.get_and_clear_pending_events();
-
+	assert_eq!(events.len(), 1, "Expected exactly one event after processing the payment");
 	match events[0] {
 		Event::PaymentSent { .. } => {},
 		Event::PaymentPathFailed { .. } => panic!("Received PaymentPathFailed"),
