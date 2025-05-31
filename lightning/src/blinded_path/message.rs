@@ -69,7 +69,6 @@ impl BlindedMessagePath {
 	/// pubkey in `node_pks` will be the destination node.
 	///
 	/// Errors if no hops are provided or if `node_pk`(s) are invalid.
-	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[MessageForwardNode], recipient_node_id: PublicKey,
 		context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>,
@@ -89,9 +88,53 @@ impl BlindedMessagePath {
 			blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
 			blinded_hops: blinded_hops(
 				secp_ctx,
+				entropy_source,
+				None,
 				intermediate_nodes,
 				recipient_node_id,
 				context,
+				0,
+				&blinding_secret,
+			)
+			.map_err(|_| ())?,
+		}))
+	}
+
+	/// Create a path for an onion message, to be forwarded along `node_pks`.
+	///
+	/// Additionally allows appending a number of dummy hops before the final hop,
+	/// increasing the total path length and enhancing privacy by obscuring the true
+	/// distance between sender and recipient.
+	///
+	/// The last node pubkey in `node_pks` will be the destination node.
+	///
+	/// Errors if no hops are provided or if `node_pk`(s) are invalid.
+	pub fn new_with_dummy_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+		intermediate_nodes: &[MessageForwardNode], dummy_hops_count: u8,
+		recipient_node_id: PublicKey, context: MessageContext, entropy_source: ES,
+		expanded_key: &inbound_payment::ExpandedKey, secp_ctx: &Secp256k1<T>,
+	) -> Result<Self, ()>
+	where
+		ES::Target: EntropySource,
+	{
+		let introduction_node = IntroductionNode::NodeId(
+			intermediate_nodes.first().map_or(recipient_node_id, |n| n.node_id),
+		);
+		let blinding_secret_bytes = entropy_source.get_secure_random_bytes();
+		let blinding_secret =
+			SecretKey::from_slice(&blinding_secret_bytes[..]).expect("RNG is busted");
+
+		Ok(Self(BlindedPath {
+			introduction_node,
+			blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
+			blinded_hops: blinded_hops(
+				secp_ctx,
+				entropy_source,
+				Some(expanded_key),
+				intermediate_nodes,
+				recipient_node_id,
+				context,
+				dummy_hops_count,
 				&blinding_secret,
 			)
 			.map_err(|_| ())?,
@@ -593,13 +636,23 @@ impl_writeable_tlv_based!(DNSResolverContext, {
 pub(crate) const MESSAGE_PADDING_ROUND_OFF: usize = 100;
 
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
-pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
-	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[MessageForwardNode],
-	recipient_node_id: PublicKey, context: MessageContext, session_priv: &SecretKey,
-) -> Result<Vec<BlindedHop>, secp256k1::Error> {
+pub(super) fn blinded_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+	secp_ctx: &Secp256k1<T>, entropy_source: ES,
+	expanded_key: Option<&inbound_payment::ExpandedKey>, intermediate_nodes: &[MessageForwardNode],
+	recipient_node_id: PublicKey, context: MessageContext, dummy_hops_count: u8,
+	session_priv: &SecretKey,
+) -> Result<Vec<BlindedHop>, secp256k1::Error>
+where
+	ES::Target: EntropySource,
+{
+	if expanded_key.is_none() && dummy_hops_count > 0 {
+		debug_assert!(false, "Dummy hops are not supported without expanded keys");
+	}
+
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| node.node_id)
+		.chain((0..dummy_hops_count).map(|_| recipient_node_id))
 		.chain(core::iter::once(recipient_node_id));
 	let is_compact = intermediate_nodes.iter().any(|node| node.short_channel_id.is_some());
 
@@ -614,6 +667,19 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.map(|next_hop| {
 			ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })
 		})
+		.chain((0..1).filter(|_| dummy_hops_count > 0).map(|_| {
+			let dummy_tlv = UnauthenticatedDummyTlv {};
+			let nonce = Nonce::from_entropy_source(&*entropy_source);
+			let hmac = dummy_tlv.hmac_data(nonce, expanded_key.unwrap());
+			let tlv = PrimaryDummyTlv {
+				dummy_tlv,
+				authentication: (hmac, nonce),
+			};
+			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
+		}))
+		.chain((1..dummy_hops_count).map(|_| {
+			ControlTlvs::Dummy(DummyTlv::Subsequent)
+		}))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 
 	if is_compact {
