@@ -29,8 +29,7 @@ use super::packet::{
 #[cfg(async_payments)]
 use crate::blinded_path::message::AsyncPaymentsContext;
 use crate::blinded_path::message::{
-	BlindedMessagePath, DNSResolverContext, DummyTlv, ForwardTlvs, MessageContext,
-	MessageForwardNode, NextMessageHop, OffersContext, ReceiveTlvs,
+	BlindedMessagePath, DNSResolverContext, ForwardTlvs, MessageContext, MessageForwardNode, NextMessageHop, OffersContext, PrimaryDummyTlv, ReceiveTlvs
 };
 use crate::blinded_path::utils;
 use crate::blinded_path::{IntroductionNode, NodeIdLookUp};
@@ -1185,7 +1184,7 @@ where
 			},
 		},
 		Ok((
-			Payload::Dummy(DummyControlTlvs::Unblinded(DummyTlv { dummy_tlv, authentication })),
+			Payload::Dummy(DummyControlTlvs::Unblinded(PrimaryDummyTlv { dummy_tlv, authentication })),
 			Some((next_hop_hmac, new_packet_bytes)),
 		)) => {
 			let expanded_key = node_signer.get_expanded_key();

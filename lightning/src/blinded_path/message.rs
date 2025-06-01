@@ -343,13 +343,13 @@ impl Verification for UnauthenticatedDummyTlv {
 /// This prevents an attacker from crafting a bogus blinded path consisting solely of dummy tlv
 /// without any valid payload, which could otherwise waste resources through recursive
 /// processing — a potential vector for DoS-like attacks.
-pub(crate) struct DummyTlv {
+pub(crate) struct PrimaryDummyTlv {
 	pub(crate) dummy_tlv: UnauthenticatedDummyTlv,
 	/// An HMAC of `tlvs` along with a nonce used to construct it.
 	pub(crate) authentication: (Hmac<Sha256>, Nonce),
 }
 
-impl Writeable for DummyTlv {
+impl Writeable for PrimaryDummyTlv {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		encode_tlv_stream!(writer, {
 			(65539, self.authentication, required),
@@ -641,7 +641,7 @@ where
 			let dummy_tlv = UnauthenticatedDummyTlv {};
 			let nonce = Nonce::from_entropy_source(&*entropy_source);
 			let hmac = dummy_tlv.hmac_data(nonce, expanded_key.unwrap());
-			ControlTlvs::Dummy(DummyTlv { dummy_tlv, authentication: (hmac, nonce) })
+			ControlTlvs::Dummy(PrimaryDummyTlv { dummy_tlv, authentication: (hmac, nonce) })
 		}))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 
