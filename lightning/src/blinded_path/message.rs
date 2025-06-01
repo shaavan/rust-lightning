@@ -328,6 +328,25 @@ impl Verification for UnauthenticatedDummyTlv {
 	}
 }
 
+pub(crate) enum DummyTlv {
+	/// Represents a dummy TLV encoded immediately before the actual [`ForwardTlvs`] in a blinded path.
+	/// These TLVs are intended for intermediate nodes and are recursively authenticated and verified
+	/// until the real [`ForwardTlvs`] is reached.
+	///
+	/// Their purpose is to arbitrarily extend the path length, obscuring the sender's position in the
+	/// route and thereby enhancing privacy.
+	Primary(PrimaryDummyTlv),
+}
+
+impl Writeable for DummyTlv {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match self {
+			DummyTlv::Primary(primary) => primary.write(writer)?,
+		}
+		Ok(())
+	}
+}
+
 /// Represents the dummy TLV encoded immediately before the actual [`ReceiveTlvs`] in a blinded path.
 /// These TLVs are intended for the final node and are recursively authenticated and verified until
 /// the real [`ReceiveTlvs`] is reached.
@@ -641,7 +660,11 @@ where
 			let dummy_tlv = UnauthenticatedDummyTlv {};
 			let nonce = Nonce::from_entropy_source(&*entropy_source);
 			let hmac = dummy_tlv.hmac_data(nonce, expanded_key.unwrap());
-			ControlTlvs::Dummy(PrimaryDummyTlv { dummy_tlv, authentication: (hmac, nonce) })
+			let tlv = PrimaryDummyTlv {
+				dummy_tlv,
+				authentication: (hmac, nonce),
+			};
+			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
 		}))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 

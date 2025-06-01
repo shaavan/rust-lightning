@@ -18,7 +18,7 @@ use super::dns_resolution::DNSResolverMessage;
 use super::messenger::CustomOnionMessageHandler;
 use super::offers::OffersMessage;
 use crate::blinded_path::message::{
-	BlindedMessagePath, ForwardTlvs, NextMessageHop, PrimaryDummyTlv, ReceiveTlvs, UnauthenticatedDummyTlv
+	BlindedMessagePath, DummyTlv, ForwardTlvs, NextMessageHop, PrimaryDummyTlv, ReceiveTlvs, UnauthenticatedDummyTlv
 };
 use crate::crypto::streams::{ChaChaPolyReadAdapter, ChaChaPolyWriteAdapter};
 use crate::ln::msgs::DecodeError;
@@ -210,7 +210,7 @@ pub(super) enum ForwardControlTlvs {
 
 pub(super) enum DummyControlTlvs {
 	/// See [`ForwardControlTlvs::Unblinded`]
-	Unblinded(PrimaryDummyTlv),
+	Unblinded(DummyTlv),
 }
 
 /// Receive control TLVs in their blinded and unblinded form.
@@ -345,7 +345,7 @@ pub(crate) enum ControlTlvs {
 	/// This onion message is intended to be forwarded.
 	Forward(ForwardTlvs),
 	/// This onion message is a dummy, and is intended to be peeled.
-	Dummy(PrimaryDummyTlv),
+	Dummy(DummyTlv),
 	/// This onion message is intended to be received.
 	Receive(ReceiveTlvs),
 }
@@ -382,10 +382,11 @@ impl Readable for ControlTlvs {
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs { context })
 		} else {
-			ControlTlvs::Dummy(PrimaryDummyTlv {
+			let tlv = PrimaryDummyTlv {
 				dummy_tlv: UnauthenticatedDummyTlv {},
 				authentication: authentication.ok_or(DecodeError::InvalidValue)?,
-			})
+			};
+			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
 		};
 
 		Ok(payload_fmt)
