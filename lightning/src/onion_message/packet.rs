@@ -374,28 +374,27 @@ impl Readable for ControlTlvs {
 
 		let is_dummy = matches!(dummy_tlv, Some(()));
 
-		let valid_fwd_fmt = !is_dummy && next_hop.is_some();
-		let valid_recv_fmt = !is_dummy && next_hop.is_none() && next_blinding_override.is_none() && authentication.is_none();
-		let valid_primary_dummy_fmt = is_dummy && authentication.is_some();
-		let valid_sub_dummy_fmt = is_dummy && authentication.is_none();
-
-		let payload_fmt = if valid_fwd_fmt {
-			ControlTlvs::Forward(ForwardTlvs {
-				next_hop: next_hop.unwrap(),
-				next_blinding_override,
-			})
-		} else if valid_recv_fmt {
-			ControlTlvs::Receive(ReceiveTlvs { context })
-		} else if valid_primary_dummy_fmt{
-			let tlv = PrimaryDummyTlv {
-				dummy_tlv: UnauthenticatedDummyTlv {},
-				authentication: authentication.ok_or(DecodeError::InvalidValue)?,
-			};
-			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
-		} else if valid_sub_dummy_fmt {
-			ControlTlvs::Dummy(DummyTlv::Subsequent)
-		} else {
-			return Err(DecodeError::InvalidValue);
+		let payload_fmt = match (is_dummy, next_hop, next_blinding_override, authentication) {
+			(false, Some(hop), _, None) => {
+				ControlTlvs::Forward(ForwardTlvs {
+					next_hop: hop,
+					next_blinding_override,
+				})
+			},
+			(false, None, None, None) => {
+				ControlTlvs::Receive(ReceiveTlvs { context })
+			},
+			(true, None, None, Some(auth)) => {
+				let tlv = PrimaryDummyTlv {
+					dummy_tlv: UnauthenticatedDummyTlv {},
+					authentication: auth,
+				};
+				ControlTlvs::Dummy(DummyTlv::Primary(tlv))
+			},
+			(true, None, None, None) => {
+				ControlTlvs::Dummy(DummyTlv::Subsequent)
+			},
+			_ => return Err(DecodeError::InvalidValue),
 		};
 
 		Ok(payload_fmt)
