@@ -667,7 +667,7 @@ where
 		.map(|next_hop| {
 			ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })
 		})
-		.chain((0..dummy_hops_count).map(|_| {
+		.chain((0..1).filter(|_| dummy_hops_count > 0).map(|_| {
 			let dummy_tlv = UnauthenticatedDummyTlv {};
 			let nonce = Nonce::from_entropy_source(&*entropy_source);
 			let hmac = dummy_tlv.hmac_data(nonce, expanded_key.unwrap());
@@ -676,6 +676,9 @@ where
 				authentication: (hmac, nonce),
 			};
 			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
+		}))
+		.chain((1..dummy_hops_count).map(|_| {
+			ControlTlvs::Dummy(DummyTlv::Subsequent)
 		}))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 
