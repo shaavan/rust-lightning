@@ -336,12 +336,21 @@ pub(crate) enum DummyTlv {
 	/// Their purpose is to arbitrarily extend the path length, obscuring the sender's position in the
 	/// route and thereby enhancing privacy.
 	Primary(PrimaryDummyTlv),
+	Subsequent,
 }
 
 impl Writeable for DummyTlv {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		match self {
 			DummyTlv::Primary(primary) => primary.write(writer)?,
+			DummyTlv::Subsequent => {
+				// Subsequent dummy TLVs are empty, so we don't write anything.
+				// This is to ensure that the path length can be extended without
+				// adding any additional data.
+				encode_tlv_stream!(writer, {
+					(65541, (), required), // Represents that this is a Dummy Tlv variant
+				})
+			},
 		}
 		Ok(())
 	}
@@ -372,6 +381,8 @@ impl Writeable for PrimaryDummyTlv {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		encode_tlv_stream!(writer, {
 			(65539, self.authentication, required),
+			// The Some(()) represents that this is a Dummy Tlv variant
+			(65541, (), required),
 		});
 
 		Ok(())

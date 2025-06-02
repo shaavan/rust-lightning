@@ -362,6 +362,7 @@ impl Readable for ControlTlvs {
 			(8, next_blinding_override, option),
 			(65537, context, option),
 			(65539, authentication, option),
+			(65541, dummy_tlv, option),
 		});
 
 		let next_hop = match (short_channel_id, next_node_id) {
@@ -371,8 +372,12 @@ impl Readable for ControlTlvs {
 			(None, None) => None,
 		};
 
-		let valid_fwd_fmt = next_hop.is_some();
-		let valid_recv_fmt = next_hop.is_none() && next_blinding_override.is_none() && authentication.is_none();
+		let is_dummy = matches!(dummy_tlv, Some(()));
+
+		let valid_fwd_fmt = !is_dummy && next_hop.is_some();
+		let valid_recv_fmt = !is_dummy && next_hop.is_none() && next_blinding_override.is_none() && authentication.is_none();
+		let valid_primary_dummy_fmt = is_dummy && authentication.is_some();
+		let valid_sub_dummy_fmt = is_dummy && authentication.is_none();
 
 		let payload_fmt = if valid_fwd_fmt {
 			ControlTlvs::Forward(ForwardTlvs {
@@ -381,12 +386,16 @@ impl Readable for ControlTlvs {
 			})
 		} else if valid_recv_fmt {
 			ControlTlvs::Receive(ReceiveTlvs { context })
-		} else {
+		} else if valid_primary_dummy_fmt{
 			let tlv = PrimaryDummyTlv {
 				dummy_tlv: UnauthenticatedDummyTlv {},
 				authentication: authentication.ok_or(DecodeError::InvalidValue)?,
 			};
 			ControlTlvs::Dummy(DummyTlv::Primary(tlv))
+		} else if valid_sub_dummy_fmt {
+			ControlTlvs::Dummy(DummyTlv::Subsequent)
+		} else {
+			return Err(DecodeError::InvalidValue);
 		};
 
 		Ok(payload_fmt)

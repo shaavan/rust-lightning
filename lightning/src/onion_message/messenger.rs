@@ -1199,6 +1199,18 @@ where
 			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
 		},
 		Ok((
+			Payload::Dummy(DummyControlTlvs::Unblinded(DummyTlv::Subsequent)),
+			Some((next_hop_hmac, new_packet_bytes)),
+		)) => {
+			let onion_message = compute_onion_message(
+				msg.onion_routing_packet.public_key,
+				next_hop_hmac,
+				new_packet_bytes,
+				None,
+			)?;
+			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
+		},
+		Ok((
 			Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
 				next_hop,
 				next_blinding_override,
