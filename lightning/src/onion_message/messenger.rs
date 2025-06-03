@@ -1190,25 +1190,116 @@ where
 			let expanded_key = node_signer.get_expanded_key();
 			dummy_tlv.verify_data(authentication.0, authentication.1, &expanded_key)?;
 
-			let onion_message = compute_onion_message(
+			let mut onion_message = compute_onion_message(
 				msg.onion_routing_packet.public_key,
 				next_hop_hmac,
 				new_packet_bytes,
 				None,
 			)?;
-			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
+
+			// Manually peel the next dummy hops
+			loop {
+				let control_tlvs_ss = match node_signer.ecdh(Recipient::Node, &onion_message.blinding_point, None) {
+					Ok(ss) => ss,
+					Err(e) => {
+						log_error!(logger, "Failed to retrieve node secret: {:?}", e);
+						return Err(());
+					},
+				};
+
+				let onion_decode_ss = {
+					let blinding_factor = {
+						let mut hmac = HmacEngine::<Sha256>::new(b"blinded_node_id");
+						hmac.input(control_tlvs_ss.as_ref());
+						let hmac = Hmac::from_engine(hmac).to_byte_array();
+						Scalar::from_be_bytes(hmac).unwrap()
+					};
+					let packet_pubkey = &onion_message.onion_routing_packet.public_key;
+					match node_signer.ecdh(Recipient::Node, packet_pubkey, Some(&blinding_factor)) {
+						Ok(ss) => ss.secret_bytes(),
+						Err(()) => {
+							log_trace!(logger, "Failed to compute onion packet shared secret");
+							return Err(());
+						},
+					}
+				};
+
+				let next_hop = onion_utils::decode_next_untagged_hop(
+					onion_decode_ss,
+					&onion_message.onion_routing_packet.hop_data[..],
+					onion_message.onion_routing_packet.hmac,
+					(control_tlvs_ss, custom_handler.deref(), logger.deref()),
+				);
+
+				match next_hop {
+					Ok((
+						Payload::Dummy(DummyControlTlvs::Unblinded(DummyTlv::Subsequent)),
+						Some((next_hop_hmac_, new_packet_bytes_)),
+					)) => {
+						// If we have a subsequent dummy hop, we compute the next onion message
+						onion_message = compute_onion_message(
+							onion_message.onion_routing_packet.public_key,
+							next_hop_hmac_,
+							new_packet_bytes_,
+							None,
+						)?;
+					},
+					Ok((
+						Payload::Receive {
+							message,
+							control_tlvs: ReceiveControlTlvs::Unblinded(ReceiveTlvs { context }),
+							reply_path,
+						},
+						None,
+					)) => {
+						let res = match (message, context) {
+							(ParsedOnionMessageContents::Offers(msg), Some(MessageContext::Offers(ctx))) => {
+								Ok(PeeledOnion::Offers(msg, Some(ctx), reply_path))
+							},
+							(ParsedOnionMessageContents::Offers(msg), None) => {
+								Ok(PeeledOnion::Offers(msg, None, reply_path))
+							},
+							#[cfg(async_payments)]
+							(
+								ParsedOnionMessageContents::AsyncPayments(msg),
+								Some(MessageContext::AsyncPayments(ctx)),
+							) => Ok(PeeledOnion::AsyncPayments(msg, ctx, reply_path)),
+							(ParsedOnionMessageContents::Custom(msg), Some(MessageContext::Custom(ctx))) => {
+								Ok(PeeledOnion::Custom(msg, Some(ctx), reply_path))
+							},
+							(ParsedOnionMessageContents::Custom(msg), None) => {
+								Ok(PeeledOnion::Custom(msg, None, reply_path))
+							},
+							(
+								ParsedOnionMessageContents::DNSResolver(msg),
+								Some(MessageContext::DNSResolver(ctx)),
+							) => Ok(PeeledOnion::DNSResolver(msg, Some(ctx), reply_path)),
+							(ParsedOnionMessageContents::DNSResolver(msg), None) => {
+								Ok(PeeledOnion::DNSResolver(msg, None, reply_path))
+							},
+							_ => {
+								log_trace!(
+									logger,
+									"Received message was sent on a blinded path with wrong or missing context."
+								);
+								Err(())
+							},
+						};
+						return res;
+					}
+					_ => {
+						log_trace!(logger, "Errored decoding onion message packet");
+						return Err(());
+					},
+				};
+			}
 		},
 		Ok((
 			Payload::Dummy(DummyControlTlvs::Unblinded(DummyTlv::Subsequent)),
-			Some((next_hop_hmac, new_packet_bytes)),
+			Some(_),
 		)) => {
-			let onion_message = compute_onion_message(
-				msg.onion_routing_packet.public_key,
-				next_hop_hmac,
-				new_packet_bytes,
-				None,
-			)?;
-			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
+			debug_assert!(false, "Received a subsequent dummy hop without a primary dummy hop");
+			Err(())
 		},
 		Ok((
 			Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
