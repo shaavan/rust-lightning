@@ -220,6 +220,16 @@ pub struct InvoiceWithDerivedSigningPubkeyBuilder<'a> {
 	signing_pubkey_strategy: DerivedSigningPubkey,
 }
 
+/// A variant of [`InvoiceBuilder`] that indicates how the signing public key was set.
+/// 
+/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
+pub enum InvoiceBuilderVariant<'a> {
+	/// An [`InvoiceBuilder`] that uses a derived signing public key.
+	Derived(InvoiceBuilder<'a, DerivedSigningPubkey>),
+	/// An [`InvoiceBuilder`] that uses an explicitly set signing public key.
+	Explicit(InvoiceBuilder<'a, ExplicitSigningPubkey>),
+}
+
 /// Indicates how [`Bolt12Invoice::signing_pubkey`] was set.
 ///
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
