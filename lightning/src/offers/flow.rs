@@ -38,11 +38,10 @@ use crate::ln::channelmanager::{
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
-	UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY,
+	DEFAULT_RELATIVE_EXPIRY,
 };
-use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestEnum,
+	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest, VerifiedInvoiceRequestEnum
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -53,7 +52,7 @@ use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendIns
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::router::Router;
-use crate::sign::{EntropySource, NodeSigner};
+use crate::sign::EntropySource;
 use crate::sync::{Mutex, RwLock};
 use crate::types::payment::{PaymentHash, PaymentSecret};
 
@@ -763,100 +762,131 @@ where
 		Ok(builder.into())
 	}
 
-	/// Creates a response for the provided [`VerifiedInvoiceRequestEnum`].
+	/// Creates an [`InvoiceBuilder`] with [`DerivedSigningPubkey`] for the
+	/// provided [`VerifiedInvoiceRequest::WithKeys`].
 	///
-	/// A response can be either an [`OffersMessage::Invoice`] with additional [`MessageContext`],
-	/// or an [`OffersMessage::InvoiceError`], depending on the [`InvoiceRequest`].
+	/// Returns the invoice builder along with a [`MessageContext`] that can
+	/// later be used to respond to the counterparty.
 	///
-	/// An [`OffersMessage::InvoiceError`] will be generated if:
-	/// - We fail to generate valid payment paths to include in the [`Bolt12Invoice`].
-	/// - We fail to generate a valid signed [`Bolt12Invoice`] for the [`InvoiceRequest`].
-	pub fn create_response_for_invoice_request<ES: Deref, NS: Deref, R: Deref>(
-		&self, signer: &NS, router: &R, entropy_source: ES,
-		invoice_request: VerifiedInvoiceRequestEnum, amount_msats: u64, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
-	) -> (OffersMessage, Option<MessageContext>)
+	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
+	/// before signing and generating the final [`Bolt12Invoice`].
+	///
+	/// # Errors
+	///
+	/// Returns a [`Bolt12SemanticError`] if:
+	/// - User call the function with [`VerifiedInvoiceRequest::WithoutKeys`].
+	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
+	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
+	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, ES: Deref, R: Deref>(
+		&'a self, router: &R, entropy_source: ES, invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
+		amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		usable_channels: Vec<ChannelDetails>,
+	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
-		NS::Target: NodeSigner,
 		R::Target: Router,
 	{
 		let entropy = &*entropy_source;
 		let expanded_key = &self.inbound_payment_key;
-		let secp_ctx = &self.secp_ctx;
 
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
-			offer_id: invoice_request.offer_id(),
+			offer_id: invoice_request.offer_id,
 			invoice_request: invoice_request.fields(),
 		});
 
-		let payment_paths = match self.create_blinded_payment_paths(
-			router,
-			entropy,
-			usable_channels,
-			Some(amount_msats),
-			payment_secret,
-			context,
-			relative_expiry,
-		) {
-			Ok(paths) => paths,
-			Err(_) => {
-				let error = InvoiceError::from(Bolt12SemanticError::MissingPaths);
-				return (OffersMessage::InvoiceError(error.into()), None);
-			},
-		};
+		let payment_paths = self
+			.create_blinded_payment_paths(
+				router,
+				entropy,
+				usable_channels,
+				Some(amount_msats),
+				payment_secret,
+				context,
+				relative_expiry,
+			)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
+		#[cfg(feature = "std")]
+		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
-		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+		let builder = invoice_request.respond_using_derived_keys_no_std(
+			payment_paths,
+			payment_hash,
+			created_at,
+		);
+		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
-		let response = match invoice_request {
-			VerifiedInvoiceRequestEnum::WithKeys(req) => {
-				#[cfg(feature = "std")]
-				let builder = req.respond_using_derived_keys(payment_paths, payment_hash);
-				#[cfg(not(feature = "std"))]
-				let builder = req.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at);
-				builder
-					.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
-					.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
-					.map_err(InvoiceError::from)
-			},
-			VerifiedInvoiceRequestEnum::WithoutKeys(req) => {
-				#[cfg(feature = "std")]
-				let builder = req.respond_with(payment_paths, payment_hash);
-				#[cfg(not(feature = "std"))]
-				let builder = req.respond_with_no_std(payment_paths, payment_hash, created_at);
-				builder
-					.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
-					.and_then(|builder| builder.allow_mpp().build())
-					.map_err(InvoiceError::from)
-					.and_then(|invoice| {
-						#[cfg(c_bindings)]
-						let mut invoice = invoice;
-						invoice
-							.sign(|invoice: &UnsignedBolt12Invoice| {
-								signer.sign_bolt12_invoice(invoice)
-							})
-							.map_err(InvoiceError::from)
-					})
-			},
-		};
+		let nonce = Nonce::from_entropy_source(entropy);
+		let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
+		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash, nonce, hmac });
 
-		match response {
-			Ok(invoice) => {
-				let nonce = Nonce::from_entropy_source(entropy);
-				let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
-				let context = MessageContext::Offers(OffersContext::InboundPayment {
-					payment_hash,
-					nonce,
-					hmac,
-				});
+		Ok((builder, context))
+	}
 
-				(OffersMessage::Invoice(invoice), Some(context))
-			},
-			Err(error) => (OffersMessage::InvoiceError(error.into()), None),
-		}
+	/// Creates an [`InvoiceBuilder`] with [`ExplicitSigningPubkey`] for the
+	/// provided [`VerifiedInvoiceRequest::WithoutKeys`].
+	///
+	/// Returns the invoice builder along with a [`MessageContext`] that can
+	/// later be used to respond to the counterparty.
+	///
+	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
+	/// before signing and generating the final [`Bolt12Invoice`].
+	///
+	/// # Errors
+	///
+	/// Returns a [`Bolt12SemanticError`] if:
+	/// - User call the function with [`VerifiedInvoiceRequest::WithKeys`].
+	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
+	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
+	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, ES: Deref, R: Deref>(
+		&'a self, router: &R, entropy_source: ES, invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
+		amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		usable_channels: Vec<ChannelDetails>,
+	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+		R::Target: Router,
+	{
+		let entropy = &*entropy_source;
+		let expanded_key = &self.inbound_payment_key;
+
+		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+
+		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
+			offer_id: invoice_request.offer_id,
+			invoice_request: invoice_request.fields(),
+		});
+
+		let payment_paths = self
+			.create_blinded_payment_paths(
+				router,
+				entropy,
+				usable_channels,
+				Some(amount_msats),
+				payment_secret,
+				context,
+				relative_expiry,
+			)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		#[cfg(feature = "std")]
+		let builder = invoice_request.respond_with(payment_paths, payment_hash);
+		#[cfg(not(feature = "std"))]
+		let builder = invoice_request.respond_with_no_std(
+			payment_paths,
+			payment_hash,
+			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
+		);
+
+		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
+		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash, nonce, hmac });
+
+		Ok((builder, context))
 	}
 
 	/// Enqueues the created [`InvoiceRequest`] to be sent to the counterparty.
@@ -884,6 +914,7 @@ where
 	/// or [`InvoiceError`].
 	///
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
+	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 	pub fn enqueue_invoice_request(
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Nonce,
 		peers: Vec<MessageForwardNode>,
@@ -936,6 +967,7 @@ where
 	/// to create blinded reply paths
 	///
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
+	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 	pub fn enqueue_invoice<ES: Deref>(
 		&self, entropy_source: ES, invoice: Bolt12Invoice, refund: &Refund,
 		peers: Vec<MessageForwardNode>,

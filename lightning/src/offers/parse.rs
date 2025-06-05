@@ -204,6 +204,10 @@ pub enum Bolt12SemanticError {
 	///
 	/// [`Refund`]: super::refund::Refund
 	UnexpectedHumanReadableName,
+	/// Derived keys were expected in [`VerifiedInvoiceRequest`] but were missing.
+	MissingKeys,
+	/// Keys were provided in [`VerifiedInvoiceRequest`] but were not expected.
+	UnexpectedKeys,
 }
 
 impl From<CheckedHrpstringError> for Bolt12ParseError {
