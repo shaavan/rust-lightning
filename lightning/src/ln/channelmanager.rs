@@ -155,7 +155,6 @@ use {
 };
 #[cfg(not(c_bindings))]
 use {
-	crate::offers::offer::{DerivedMetadata, OfferBuilder},
 	crate::offers::refund::RefundBuilder,
 	crate::onion_message::messenger::DefaultMessageRouter,
 	crate::routing::gossip::NetworkGraph,
@@ -163,6 +162,9 @@ use {
 	crate::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringFeeParameters},
 	crate::sign::KeysManager,
 };
+
+#[cfg(any(not(c_bindings), async_payments))]
+use crate::offers::offer::{DerivedMetadata, OfferBuilder};
 
 use lightning_invoice::{
 	Bolt11Invoice, Bolt11InvoiceDescription, CreationError, Currency, Description,
