@@ -37,10 +37,9 @@ use crate::ln::channelmanager::{
 };
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
-	InvoiceBuilderVariant, UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY,
+	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, InvoiceBuilderVariant,
+	DEFAULT_RELATIVE_EXPIRY,
 };
-use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
@@ -53,7 +52,7 @@ use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendIns
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::router::Router;
-use crate::sign::{EntropySource, NodeSigner};
+use crate::sign::EntropySource;
 use crate::sync::{Mutex, RwLock};
 use crate::types::payment::{PaymentHash, PaymentSecret};
 
@@ -763,101 +762,6 @@ where
 		Ok(builder.into())
 	}
 
-	/// Creates a response for the provided [`VerifiedInvoiceRequest`].
-	///
-	/// A response can be either an [`OffersMessage::Invoice`] with additional [`MessageContext`],
-	/// or an [`OffersMessage::InvoiceError`], depending on the [`InvoiceRequest`].
-	///
-	/// An [`OffersMessage::InvoiceError`] will be generated if:
-	/// - We fail to generate valid payment paths to include in the [`Bolt12Invoice`].
-	/// - We fail to generate a valid signed [`Bolt12Invoice`] for the [`InvoiceRequest`].
-	pub fn create_response_for_invoice_request<ES: Deref, NS: Deref, R: Deref>(
-		&self, signer: &NS, router: &R, entropy_source: ES,
-		invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
-	) -> (OffersMessage, Option<MessageContext>)
-	where
-		ES::Target: EntropySource,
-		NS::Target: NodeSigner,
-		R::Target: Router,
-	{
-		let entropy = &*entropy_source;
-		let expanded_key = &self.inbound_payment_key;
-		let secp_ctx = &self.secp_ctx;
-
-		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
-
-		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
-			offer_id: invoice_request.offer_id,
-			invoice_request: invoice_request.fields(),
-		});
-
-		let payment_paths = match self.create_blinded_payment_paths(
-			router,
-			entropy,
-			usable_channels,
-			Some(amount_msats),
-			payment_secret,
-			context,
-			relative_expiry,
-		) {
-			Ok(paths) => paths,
-			Err(_) => {
-				let error = InvoiceError::from(Bolt12SemanticError::MissingPaths);
-				return (OffersMessage::InvoiceError(error.into()), None);
-			},
-		};
-
-		#[cfg(not(feature = "std"))]
-		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
-
-		let response = if invoice_request.keys.is_some() {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_using_derived_keys_no_std(
-				payment_paths,
-				payment_hash,
-				created_at,
-			);
-			builder
-				.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
-				.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
-				.map_err(InvoiceError::from)
-		} else {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_with(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
-			builder
-				.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
-				.and_then(|builder| builder.allow_mpp().build())
-				.map_err(InvoiceError::from)
-				.and_then(|invoice| {
-					#[cfg(c_bindings)]
-					let mut invoice = invoice;
-					invoice
-						.sign(|invoice: &UnsignedBolt12Invoice| signer.sign_bolt12_invoice(invoice))
-						.map_err(InvoiceError::from)
-				})
-		};
-
-		match response {
-			Ok(invoice) => {
-				let nonce = Nonce::from_entropy_source(entropy);
-				let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
-				let context = MessageContext::Offers(OffersContext::InboundPayment {
-					payment_hash,
-					nonce,
-					hmac,
-				});
-
-				(OffersMessage::Invoice(invoice), Some(context))
-			},
-			Err(error) => (OffersMessage::InvoiceError(error.into()), None),
-		}
-	}
-
 	/// Creates an [`InvoiceBuilderVariant`] for the provided [`VerifiedInvoiceRequest`].
 	///
 	/// Returns the appropriate invoice builder variant (`Derived` or `Explicit`) along with a
@@ -957,6 +861,7 @@ where
 	/// or [`InvoiceError`].
 	///
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
+	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 	pub fn enqueue_invoice_request(
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Nonce,
 		peers: Vec<MessageForwardNode>,
@@ -1009,6 +914,7 @@ where
 	/// to create blinded reply paths
 	///
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
+	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 	pub fn enqueue_invoice<ES: Deref>(
 		&self, entropy_source: ES, invoice: Bolt12Invoice, refund: &Refund,
 		peers: Vec<MessageForwardNode>,
