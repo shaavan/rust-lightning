@@ -87,10 +87,11 @@ use crate::ln::outbound_payment::{
 use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
 use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, DEFAULT_RELATIVE_EXPIRY,
+	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice,
+	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequest};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
@@ -155,7 +156,6 @@ use {
 };
 #[cfg(not(c_bindings))]
 use {
-	crate::offers::offer::{DerivedMetadata, OfferBuilder},
 	crate::offers::refund::RefundBuilder,
 	crate::onion_message::messenger::DefaultMessageRouter,
 	crate::routing::gossip::NetworkGraph,
@@ -163,6 +163,9 @@ use {
 	crate::routing::scoring::{ProbabilisticScorer, ProbabilisticScoringFeeParameters},
 	crate::sign::KeysManager,
 };
+
+#[cfg(any(not(c_bindings), async_payments))]
+use crate::offers::offer::{DerivedMetadata, OfferBuilder};
 
 use lightning_invoice::{
 	Bolt11Invoice, Bolt11InvoiceDescription, CreationError, Currency, Description,
@@ -12698,16 +12701,79 @@ where
 					},
 				};
 
-				let entropy = &*self.entropy_source;
-				let (response, context) = self.flow.create_response_for_invoice_request(
-					&self.node_signer, &self.router, entropy, invoice_request, amount_msats,
-					payment_hash, payment_secret, self.list_usable_channels()
-				);
+				let (result, context) = match &invoice_request {
+					VerifiedInvoiceRequest::WithKeys { .. } => {
+						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
+							&self.router,
+							&*self.entropy_source,
+							&invoice_request,
+							amount_msats,
+							payment_hash,
+							payment_secret,
+							self.list_usable_channels(),
+						);
 
-				match context {
-					Some(context) => Some((response, responder.respond_with_reply_path(context))),
-					None => Some((response, responder.respond()))
-				}
+						match result {
+							Ok((builder, context)) => {
+								let res = builder
+									.build_and_sign(&self.secp_ctx)
+									.map_err(InvoiceError::from);
+
+								(res, context)
+							},
+							Err(error) => {
+								return Some((
+									OffersMessage::InvoiceError(InvoiceError::from(error)),
+									responder.respond(),
+								));
+							},
+						}
+					},
+					VerifiedInvoiceRequest::WithoutKeys { .. } => {
+						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
+							&self.router,
+							&*self.entropy_source,
+							&invoice_request,
+							amount_msats,
+							payment_hash,
+							payment_secret,
+							self.list_usable_channels(),
+						);
+
+						match result {
+							Ok((builder, context)) => {
+								let res = builder.
+									build()
+									.map_err(InvoiceError::from)
+									.and_then(|invoice| {
+										#[cfg(c_bindings)]
+										let mut invoice = invoice;
+										invoice
+											.sign(|invoice: &UnsignedBolt12Invoice| self.node_signer.sign_bolt12_invoice(invoice))
+											.map_err(InvoiceError::from)
+									});
+								(res, context)
+							},
+							Err(error) => {
+								return Some((
+									OffersMessage::InvoiceError(InvoiceError::from(error)),
+									responder.respond(),
+								));
+							},
+						}
+					}
+				};
+
+				Some(match result {
+					Ok(invoice) => (
+						OffersMessage::Invoice(invoice),
+						responder.respond_with_reply_path(context),
+					),
+					Err(error) => (
+						OffersMessage::InvoiceError(error),
+						responder.respond(),
+					),
+				})
 			},
 			OffersMessage::Invoice(invoice) => {
 				let payment_id = match self.flow.verify_bolt12_invoice(&invoice, context.as_ref()) {
