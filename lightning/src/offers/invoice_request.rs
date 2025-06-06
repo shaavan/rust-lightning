@@ -588,6 +588,30 @@ pub struct InvoiceRequest {
 	signature: Signature,
 }
 
+impl InvoiceRequestContents {
+	pub(crate) fn amount_source(&self) -> InvoiceRequestAmountSource {
+		match (self.amount_msats(), self.inner.offer.amount()) {
+			(Some(ir_amount), Some(offer_amount)) => {
+				InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount {
+					invoice_request_amount_msats: ir_amount,
+					offer_amount,
+				}
+			},
+			(Some(ir_amount), None) => {
+				InvoiceRequestAmountSource::InvoiceRequestOnly { amount_msats: ir_amount }
+			},
+			(None, Some(offer_amount)) => {
+				InvoiceRequestAmountSource::OfferOnly { amount: offer_amount }
+			},
+			(None, None) => panic!("InvoiceRequest or the correponding Offer must have an amount"),
+		}
+	}
+
+	pub(crate) fn offer_amount(&self) -> Option<Amount> {
+		self.inner.offer.amount()
+	}
+}
+
 /// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
@@ -638,6 +662,29 @@ pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
 	offer_from_hrn: Option<HumanReadableName>,
 	#[cfg(test)]
 	experimental_bar: Option<u64>,
+}
+
+/// Represents the nature of amount specified with an [`InvoiceRequest`].
+pub enum InvoiceRequestAmountSource {
+	/// Both the [`InvoiceRequest`] amount and the corresponding Offer amount are set.
+	InvoiceRequestAndOfferAmount {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		invoice_request_amount_msats: u64,
+		/// The corresponding Offer amount.
+		offer_amount: Amount,
+	},
+
+	/// Only the [`InvoiceRequest`] amount is set; the corresponding Offer amount is not specified.
+	InvoiceRequestOnly {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		amount_msats: u64,
+	},
+
+	/// Only the corresponding Offer amount is set; the [`InvoiceRequest`] amount is not specified.
+	OfferOnly {
+		/// The corresponding Offer amount.
+		amount: Amount,
+	},
 }
 
 macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
