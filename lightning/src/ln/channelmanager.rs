@@ -12681,6 +12681,15 @@ where
 					Err(_) => return None,
 				};
 
+				let invoice_request = match self.flow.determine_invoice_request_handling(invoice_request) {
+					Ok(Some(ir)) => ir,
+					Ok(None) => return None,
+					Err(_) => {
+						log_trace!(self.logger, "Failed to handle invoice request");
+						return None;
+					}
+				};
+
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 					&invoice_request.inner, None
 				) {
@@ -12759,6 +12768,15 @@ where
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				let invoice = match self.flow.determine_invoice_handling(invoice, payment_id) {
+					Ok(Some(invoice)) => invoice,
+					Ok(None) => return None,
+					Err(_) => {
+						log_trace!(logger, "Failed to handle invoice");
+						return None
+					},
+				};
 
 				if self.default_configuration.manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
