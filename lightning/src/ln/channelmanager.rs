@@ -3708,6 +3708,48 @@ where
 			secp_ctx.clone(), message_router, FlowConfigs::new()
 		);
 
+		Self::new_inner(
+			secp_ctx, fee_est, chain_monitor, tx_broadcaster, router, flow,
+			logger, entropy_source, node_signer, signer_provider, config, params,
+			current_timestamp
+		)
+
+	}
+
+	/// Similar to [`ChannelManager::new`], but allows providing a custom [`OffersMessageFlow`] implementation.
+	///
+	/// This is useful if you want more control over how BOLT12 offer-related messages are handled,
+	/// including support for custom [`FlowConfigs`] to conditionally trigger [`OfferEvents`] that you
+	/// can handle asynchronously via your own logic.
+	///
+	/// Use this method when:
+	/// - You want to initialize [`ChannelManager`] with a non-default [`OffersMessageFlow`] implementation.
+	/// - You need fine-grained control over BOLT12 event generation or message flow behavior.
+	///
+	/// [`FlowConfigs`]: crate::offers::flow::FlowConfigs
+	/// [`OfferEvents`]: crate::offers::flow::OfferEvents
+	#[rustfmt::skip]
+	pub fn new_with_flow(
+		fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R, flow: OffersMessageFlow<MR>,
+		logger: L, entropy_source: ES, node_signer: NS, signer_provider: SP, config: UserConfig,
+		params: ChainParameters, current_timestamp: u32,
+	) -> Self {
+		let mut secp_ctx = Secp256k1::new();
+		secp_ctx.seeded_randomize(&entropy_source.get_secure_random_bytes());
+
+		Self::new_inner(
+			secp_ctx, fee_est, chain_monitor, tx_broadcaster, router, flow,
+			logger, entropy_source, node_signer, signer_provider, config, params,
+			current_timestamp
+		)
+	}
+
+	#[rustfmt::skip]
+	fn new_inner(
+		secp_ctx: Secp256k1<secp256k1::All>, fee_est: F, chain_monitor: M, tx_broadcaster: T, router: R,
+		flow: OffersMessageFlow<MR>, logger: L, entropy_source: ES, node_signer: NS,
+		signer_provider: SP, config: UserConfig, params: ChainParameters, current_timestamp: u32
+	) -> Self {
 		ChannelManager {
 			default_configuration: config.clone(),
 			chain_hash: ChainHash::using_genesis_block(params.network),
@@ -3727,10 +3769,10 @@ where
 			pending_intercepted_htlcs: Mutex::new(new_hash_map()),
 			short_to_chan_info: FairRwLock::new(new_hash_map()),
 
-			our_network_pubkey,
+			our_network_pubkey: node_signer.get_node_id(Recipient::Node).unwrap(),
 			secp_ctx,
 
-			inbound_payment_key: expanded_inbound_key,
+			inbound_payment_key: node_signer.get_inbound_payment_key(),
 			fake_scid_rand_bytes: entropy_source.get_secure_random_bytes(),
 
 			probing_cookie_secret: entropy_source.get_secure_random_bytes(),
