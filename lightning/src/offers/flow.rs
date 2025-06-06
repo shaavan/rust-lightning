@@ -811,7 +811,7 @@ where
 
 		let builder = if invoice_request.keys.is_some() {
 			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+			let builder = invoice_request.respond_using_derived_keys(Some(amount_msats), payment_paths, payment_hash);
 			#[cfg(not(feature = "std"))]
 			let builder = invoice_request.respond_using_derived_keys_no_std(
 				payment_paths,
@@ -824,7 +824,7 @@ where
 			#[cfg(feature = "std")]
 			let builder = invoice_request.respond_with(payment_paths, payment_hash);
 			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
+			let builder = invoice_request.respond_with_no_std(None, payment_paths, payment_hash, created_at);
 			builder.map(|b| InvoiceBuilderVariant::Explicit(InvoiceBuilder::from(b).allow_mpp()))?
 		};
 
