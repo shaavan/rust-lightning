@@ -12684,7 +12684,7 @@ where
 				};
 
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner()
+					&invoice_request.inner(), None
 				) {
 					Ok(amount_msats) => amount_msats,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
