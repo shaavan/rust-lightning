@@ -563,6 +563,62 @@ impl<MR: Deref> OffersMessageFlow<MR>
 where
 	MR::Target: MessageRouter,
 {
+	/// Determines whether the given [`VerifiedInvoiceRequest`] should be
+	/// handled synchronously or dispatched as an event, based on [`FlowConfigs`].
+	///
+	/// Returns:
+	/// - `Ok(Some(request))` if the caller should handle it now.
+	/// - `Ok(None)` if it was dispatched for async processing.
+	/// - `Err(())` in case of validation or enqueue failure.
+	pub fn determine_invoice_request_handling(
+		&self, invoice_request: VerifiedInvoiceRequest,
+	) -> Result<Option<VerifiedInvoiceRequest>, ()> {
+		if !self.user_configs.handle_invoice_request_asyncly(&invoice_request.inner)? {
+			// Synchronous path: return the request for user handling.
+			return Ok(Some(invoice_request));
+		}
+
+		let amount_source = invoice_request.inner.contents.amount_source().map_err(|_| ())?;
+
+		// Dispatch event for async handling.
+		self.enqueue_offers_event(OfferEvents::InvoiceRequestReceived {
+			invoice_request,
+			amount_source,
+		})?;
+
+		Ok(None)
+	}
+
+	/// Determines whether the given [`Bolt12Invoice`] should be handled
+	/// synchronously or dispatched as an event, based on [`FlowConfigs`].
+	///
+	/// Returns:
+	/// - `Ok(Some(request))` if the caller should handle it now.
+	/// - `Ok(None)` if it was dispatched for async processing.
+	/// - `Err(())` in case of validation or enqueue failure.
+	pub fn determine_invoice_handling(
+		&self, invoice: Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<Option<Bolt12Invoice>, ()> {
+		if !self.user_configs.handle_invoice_asyncly(&invoice)? {
+			// Synchronous path: return the invoice for user handling.
+			return Ok(Some(invoice));
+		}
+
+		let invoice_amount = invoice.amount_msats();
+		let amount_source = invoice.amount_source().map_err(|_| ())?;
+
+		let event = OfferEvents::Bolt12InvoiceReceived {
+			invoice,
+			payment_id,
+			invoice_amount,
+			amount_source,
+		};
+
+		self.enqueue_offers_event(event)?;
+
+		Ok(None)
+	}
+
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the [`InvoiceRequest::metadata`].
 	///
 	/// - If an [`OffersContext::InvoiceRequest`] with a `nonce` is provided, verification is performed using recipient context data.
