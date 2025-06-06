@@ -588,6 +588,36 @@ pub struct InvoiceRequest {
 	signature: Signature,
 }
 
+impl InvoiceRequestContents {
+	pub(crate) fn amount_source(&self) -> Result<InvoiceRequestAmountSource, Bolt12SemanticError> {
+		let ir_amount = self.amount_msats();
+		let offer_amount = self.inner.offer.amount();
+
+		match (ir_amount, offer_amount) {
+			(Some(ir), Some(offer)) => {
+				if let Amount::Bitcoin { amount_msats } = offer {
+					if ir < amount_msats {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
+
+				Ok(InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount {
+					invoice_request_amount_msats: ir,
+					offer_amount: offer,
+				})
+			},
+
+			(Some(amount_msats), None) => {
+				Ok(InvoiceRequestAmountSource::InvoiceRequestOnly { amount_msats })
+			},
+
+			(None, Some(amount)) => Ok(InvoiceRequestAmountSource::OfferOnly { amount }),
+
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}
+	}
+}
+
 /// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
@@ -638,6 +668,29 @@ pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
 	offer_from_hrn: Option<HumanReadableName>,
 	#[cfg(test)]
 	experimental_bar: Option<u64>,
+}
+
+/// Represents the nature of amount specified with an [`InvoiceRequest`].
+pub enum InvoiceRequestAmountSource {
+	/// Both the [`InvoiceRequest`] amount and the corresponding Offer amount are set.
+	InvoiceRequestAndOfferAmount {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		invoice_request_amount_msats: u64,
+		/// The corresponding Offer amount.
+		offer_amount: Amount,
+	},
+
+	/// Only the [`InvoiceRequest`] amount is set; the corresponding Offer amount is not specified.
+	InvoiceRequestOnly {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		amount_msats: u64,
+	},
+
+	/// Only the corresponding Offer amount is set; the [`InvoiceRequest`] amount is not specified.
+	OfferOnly {
+		/// The corresponding Offer amount.
+		amount: Amount,
+	},
 }
 
 macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
