@@ -818,6 +818,7 @@ where
 			);
 			#[cfg(not(feature = "std"))]
 			let builder = invoice_request.respond_using_derived_keys_no_std(
+				Some(amount_msats),
 				payment_paths,
 				payment_hash,
 				created_at,
