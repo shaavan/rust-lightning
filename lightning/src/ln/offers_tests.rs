@@ -2235,7 +2235,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		VerifiedInvoiceRequestEnum::WithKeys(req) => {
-			req.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+			req.respond_using_derived_keys_no_std(None, payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
