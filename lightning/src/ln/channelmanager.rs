@@ -85,7 +85,7 @@ use crate::ln::outbound_payment::{
 	SendAlongPathArgs, StaleExpiration,
 };
 use crate::ln::types::ChannelId;
-use crate::offers::flow::OffersMessageFlow;
+use crate::offers::flow::{FlowConfigs, OffersMessageFlow};
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, InvoiceBuilderVariant,
 	UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY,
@@ -3703,7 +3703,7 @@ where
 		let flow = OffersMessageFlow::new(
 			ChainHash::using_genesis_block(params.network), params.best_block,
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), message_router
+			secp_ctx.clone(), message_router, FlowConfigs::new()
 		);
 
 		ChannelManager {
@@ -14965,7 +14965,7 @@ where
 		let flow = OffersMessageFlow::new(
 			chain_hash, best_block, our_network_pubkey,
 			highest_seen_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), args.message_router
+			secp_ctx.clone(), args.message_router, FlowConfigs::new(),
 		);
 
 		let channel_manager = ChannelManager {

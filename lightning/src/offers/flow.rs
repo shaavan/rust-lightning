@@ -44,7 +44,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestAmountSource, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
@@ -60,7 +60,6 @@ use crate::types::payment::{PaymentHash, PaymentSecret};
 use {
 	crate::blinded_path::message::AsyncPaymentsContext,
 	crate::blinded_path::payment::AsyncBolt12OfferContext,
-	crate::offers::offer::Amount,
 	crate::offers::signer,
 	crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder},
 	crate::onion_message::async_payments::HeldHtlcAvailable,
@@ -174,6 +173,110 @@ pub enum OfferEvents {
 	},
 }
 
+/// Configuration options for determining which [`OfferEvents`] should be generated during BOLT12 offer handling.
+///
+/// Use this to control whether events like [`InvoiceRequestReceived`] and [`Bolt12InvoiceReceived`] are
+/// triggered automatically or suppressed, depending on your use case.
+///
+/// The default behavior disables all events (`NeverTrigger`) for both cases.
+pub struct FlowConfigs {
+	/// Controls whether [`OfferEvents::InvoiceRequestReceived`] is generated upon receiving an [`InvoiceRequest`].
+	invoice_request_configs: InvoiceRequestConfigs,
+
+	/// Controls whether [`OfferEvents::Bolt12InvoiceReceived`] is generated upon receiving a [`Bolt12Invoice`].
+	invoice_configs: Bolt12InvoiceConfigs,
+}
+
+impl FlowConfigs {
+	/// Creates a new [`FlowConfigs`] instance with default settings.
+	///
+	/// By default, all events are set to `NeverTrigger`, meaning no events will be generated.
+	pub fn new() -> Self {
+		Self {
+			invoice_request_configs: InvoiceRequestConfigs::NeverTrigger,
+			invoice_configs: Bolt12InvoiceConfigs::NeverTrigger,
+		}
+	}
+
+	/// Sets the configuration for invoice request events.
+	pub fn set_invoice_request_configs(self, configs: InvoiceRequestConfigs) -> Self {
+		Self { invoice_request_configs: configs, ..self }
+	}
+
+	/// Sets the configuration for invoice events.
+	pub fn set_invoice_configs(self, configs: Bolt12InvoiceConfigs) -> Self {
+		Self { invoice_configs: configs, ..self }
+	}
+
+	/// Determines whether an [`InvoiceRequest`] should be handled synchronously or dispatched as an event.
+	pub fn handle_invoice_request_asyncly(&self, invoice_request: &InvoiceRequest) -> bool {
+		match self.invoice_request_configs {
+			InvoiceRequestConfigs::AlwaysTrigger => true,
+			InvoiceRequestConfigs::TriggerIfOfferInCurrency => {
+				matches!(invoice_request.contents.offer_amount(), Some(Amount::Currency { .. }))
+			},
+			InvoiceRequestConfigs::NeverTrigger => false,
+		}
+	}
+
+	/// Determines whether an [`Bolt12Invoice`] should be handled synchronously or dispatched as an event.
+	pub fn handle_invoice_asyncly(&self, invoice: &Bolt12Invoice) -> bool {
+		let amount_source = invoice.amount_source();
+		let (ir_amount, offer_amount) = match amount_source {
+			Bolt12InvoiceAmountSource::Offer(amount) => match amount {
+				InvoiceRequestAmountSource::OfferOnly { amount } => (None, Some(amount)),
+				InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount {
+					invoice_request_amount_msats,
+					offer_amount,
+				} => (Some(invoice_request_amount_msats), Some(offer_amount)),
+				InvoiceRequestAmountSource::InvoiceRequestOnly { amount_msats } => {
+					(Some(amount_msats), None)
+				},
+			},
+			Bolt12InvoiceAmountSource::Refund(_) => (None, None),
+		};
+		match self.invoice_configs {
+			Bolt12InvoiceConfigs::AlwaysTrigger => true,
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrency => {
+				matches!(offer_amount, Some(Amount::Currency { .. }))
+			},
+			Bolt12InvoiceConfigs::TriggerIfOfferInCurrencyAndNoIRAmount => {
+				matches!(offer_amount, Some(Amount::Currency { .. })) && ir_amount.is_none()
+			},
+			Bolt12InvoiceConfigs::NeverTrigger => false,
+		}
+	}
+}
+
+/// Specifies under what conditions an [`InvoiceRequest`] will generate an [`OfferEvents::InvoiceRequestReceived`] event.
+pub enum InvoiceRequestConfigs {
+	/// Always trigger the event when an [`InvoiceRequest`] is received.
+	AlwaysTrigger,
+
+	/// Trigger the event only if the corresponding [`Offer`] specifies an [`Amount::Currency`] amount.
+	TriggerIfOfferInCurrency,
+
+	/// Never trigger the event, regardless of the incoming [`InvoiceRequest`].
+	NeverTrigger,
+}
+
+/// Specifies under what conditions a [`Bolt12Invoice`] will generate an [`OfferEvents::Bolt12InvoiceReceived`] event.
+pub enum Bolt12InvoiceConfigs {
+	/// Always trigger the event when a [`Bolt12Invoice`] is received.
+	AlwaysTrigger,
+
+	/// Trigger the event only if the invoice corresponds to an [`Offer`] flow with an [`Amount::Currency`] offer.
+	TriggerIfOfferInCurrency,
+
+	/// Trigger the event only if the invoice corresponds to an [`Offer`] flow where:
+	/// - the underlying [`Offer`] amount is in [`Amount::Currency`], and
+	/// - the corresponding [`InvoiceRequest`] did **not** specify an amount.
+	TriggerIfOfferInCurrencyAndNoIRAmount,
+
+	/// Never trigger the event, regardless of the incoming [`Bolt12Invoice`].
+	NeverTrigger,
+}
+
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
 ///
@@ -206,6 +309,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	user_configs: FlowConfigs,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -216,7 +321,7 @@ where
 	pub fn new(
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
-		secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
+		secp_ctx: Secp256k1<secp256k1::All>, message_router: MR, configs: FlowConfigs,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -237,6 +342,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			user_configs: configs,
 		}
 	}
 
