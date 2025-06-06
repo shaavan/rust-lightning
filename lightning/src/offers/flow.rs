@@ -810,9 +810,14 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(
+			Some(amount_msats),
+			payment_paths,
+			payment_hash,
+		);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
+			Some(amount_msats),
 			payment_paths,
 			payment_hash,
 			created_at,
@@ -875,9 +880,10 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
+		let builder = invoice_request.respond_with(Some(amount_msats), payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_with_no_std(
+			Some(amount_msats),
 			payment_paths,
 			payment_hash,
 			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
