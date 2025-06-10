@@ -291,6 +291,288 @@ impl Writeable for DummyTlv {
 	}
 }
 
+#[test]
+fn test_size_of_tlvs_instances() {
+    let public_key = create_public_key();
+    let nonce = create_nonce();
+    let payment_id = PaymentId([1; 32]);
+    let payment_hash = PaymentHash([42; 32]);
+    let hmac = create_hmac();
+
+    // // Testing ForwardTlvs with different variants of NextMessageHop
+    // test_forward_tlvs(public_key);
+
+    // // Testing ReceiveTlvs with different variants of MessageContext
+    // test_receive_tlvs(payment_id, nonce, payment_hash, hmac);
+
+	// Testing Payment ForwardTlvs
+	test_payment_forward_tlvs(public_key);
+
+	// Testing Payment ReceiveTlvs
+	test_payment_receive_tlvs(public_key);
+
+	/// Testing DummyTlv instances
+	test_dummy_message_tlvs();
+
+	assert!(false);
+}
+
+#[cfg(test)]
+fn create_public_key() -> PublicKey {
+	use bitcoin::hex::FromHex;
+
+    let secp_ctx = Secp256k1::new();
+    PublicKey::from_secret_key(
+        &secp_ctx,
+        &SecretKey::from_slice(
+            &<Vec<u8>>::from_hex("0101010101010101010101010101010101010101010101010101010101010101")
+                .unwrap()[..],
+        )
+        .unwrap(),
+    )
+}
+
+#[cfg(test)]
+fn create_nonce() -> Nonce {
+	use crate::offers::test_utils::FixedEntropy;
+
+    let entropy = FixedEntropy {};
+    Nonce::from_entropy_source(&entropy)
+}
+
+#[cfg(test)]
+fn create_hmac() -> Hmac<Sha256> {
+	use bitcoin::hashes::{Hash, HmacEngine};
+
+    Hmac::from_engine(HmacEngine::<Sha256>::default())
+}
+
+#[cfg(test)]
+fn test_forward_tlvs(public_key: PublicKey) {
+    let forward_tlv_node_id_none = ForwardTlvs {
+        next_hop: NextMessageHop::NodeId(public_key),
+        next_blinding_override: None,
+    };
+    println!(
+        "Size of ForwardTlvs (NextMessageHop::NodeId, none): {}",
+        forward_tlv_node_id_none.serialized_length()
+    );
+
+    let forward_tlv_node_id_some = ForwardTlvs {
+        next_hop: NextMessageHop::NodeId(public_key),
+        next_blinding_override: Some(public_key),
+    };
+    println!(
+        "Size of ForwardTlvs (NextMessageHop::NodeId): {}",
+        forward_tlv_node_id_some.serialized_length()
+    );
+
+    let forward_tlv_short_channel = ForwardTlvs {
+        next_hop: NextMessageHop::ShortChannelId(24),
+        next_blinding_override: None,
+    };
+    println!(
+        "Size of ForwardTlvs (NextMessageHop::ShortChannelId): {}",
+        forward_tlv_short_channel.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_receive_tlvs(
+    payment_id: PaymentId,
+    nonce: Nonce,
+    payment_hash: PaymentHash,
+    hmac: Hmac<Sha256>,
+) {
+    let receive_tlv_invoice = ReceiveTlvs {
+        context: Some(MessageContext::Offers(OffersContext::InvoiceRequest { nonce })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::Offers::InvoiceRequest): {}",
+        receive_tlv_invoice.serialized_length()
+    );
+
+	let receive_tlv_outbound_none = ReceiveTlvs {
+        context: Some(MessageContext::Offers(OffersContext::OutboundPayment {
+            payment_id,
+            nonce,
+            hmac: None,
+        })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::Offers::OutboundPayment): {}",
+        receive_tlv_outbound_none.serialized_length()
+    );
+
+    let receive_tlv_outbound = ReceiveTlvs {
+        context: Some(MessageContext::Offers(OffersContext::OutboundPayment {
+            payment_id,
+            nonce,
+            hmac: Some(hmac),
+        })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::Offers::OutboundPayment): {}",
+        receive_tlv_outbound.serialized_length()
+    );
+
+    let receive_tlv_inbound = ReceiveTlvs {
+        context: Some(MessageContext::Offers(OffersContext::InboundPayment {
+            payment_hash,
+            nonce,
+            hmac,
+        })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::Offers::InboundPayment): {}",
+        receive_tlv_inbound.serialized_length()
+    );
+
+    let receive_tlv_async = ReceiveTlvs {
+        context: Some(MessageContext::AsyncPayments(AsyncPaymentsContext::OutboundPayment {
+            payment_id,
+            nonce,
+            hmac,
+        })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::AsyncPayments): {}",
+        receive_tlv_async.serialized_length()
+    );
+
+    let receive_tlv_dns = ReceiveTlvs {
+        context: Some(MessageContext::DNSResolver(DNSResolverContext {
+            nonce: [0; 16],
+        })),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::DNSResolver): {}",
+        receive_tlv_dns.serialized_length()
+    );
+
+    let receive_tlv_custom = ReceiveTlvs {
+        context: Some(MessageContext::Custom(vec![0; 32])),
+    };
+    println!(
+        "Size of ReceiveTlvs (MessageContext::Custom): {}",
+        receive_tlv_custom.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_payment_forward_tlvs(public_key: PublicKey) {
+	use types::features::BlindedHopFeatures;
+	use crate::blinded_path::payment::{self, PaymentConstraints, PaymentRelay};
+
+	let forward_tlv_none = payment::ForwardTlvs {
+		short_channel_id: 20,
+		payment_relay: PaymentRelay {
+			cltv_expiry_delta: 1,
+			fee_proportional_millionths: 2,
+			fee_base_msat: 3
+		},
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 1_000_000_000,
+		},
+		features: BlindedHopFeatures::empty(),
+		next_blinding_override: None,
+	};
+
+	println!(
+        "Size of Payment ForwardTlvs with no pubkey: {}",
+        forward_tlv_none.serialized_length()
+    );
+
+	let forward_tlv = payment::ForwardTlvs {
+		short_channel_id: 20,
+		payment_relay: PaymentRelay {
+			cltv_expiry_delta: 1,
+			fee_proportional_millionths: 2,
+			fee_base_msat: 3
+		},
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: 1,
+			htlc_minimum_msat: 1_000_000_000,
+		},
+		features: BlindedHopFeatures::empty(),
+		next_blinding_override: Some(public_key),
+	};
+
+	println!(
+        "Size of Payment ForwardTlvs with pubkey): {}",
+        forward_tlv.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_payment_receive_tlvs(public_key: PublicKey) {
+	use lightning_invoice::PaymentSecret;
+	use crate::{blinded_path::payment::{self, Bolt12OfferContext, Bolt12RefundContext, PaymentConstraints, UnauthenticatedReceiveTlvs}, offers::{invoice_request::InvoiceRequestFields, offer::OfferId}, onion_message::dns_resolution::HumanReadableName};
+
+	let receive_tlvs_offer = payment::ReceiveTlvs {
+		tlvs: UnauthenticatedReceiveTlvs {
+			payment_secret: PaymentSecret([0; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1,
+				htlc_minimum_msat: 1_000_000_000,
+			},
+			payment_context: payment::PaymentContext::Bolt12Offer(Bolt12OfferContext {
+				offer_id: OfferId([0; 32]),
+				invoice_request: InvoiceRequestFields {
+					payer_signing_pubkey: public_key,
+					quantity: None,
+					payer_note_truncated: None,
+					human_readable_name: None
+				}
+			})
+		},
+		authentication: (create_hmac(), Nonce([0; 16])),
+	};
+
+	println!(
+        "Size of Payment ReceiveTlvs for offer): {}",
+        receive_tlvs_offer.serialized_length()
+    );
+
+	let receive_tlvs_refund = payment::ReceiveTlvs {
+		tlvs: UnauthenticatedReceiveTlvs {
+			payment_secret: PaymentSecret([0; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1,
+				htlc_minimum_msat: 1_000_000_000,
+			},
+			payment_context: payment::PaymentContext::Bolt12Refund(Bolt12RefundContext {})
+		},
+		authentication: (create_hmac(), Nonce([0; 16])),
+	};
+
+	println!(
+        "Size of Payment ReceiveTlvs for refund): {}",
+        receive_tlvs_refund.serialized_length()
+    );
+}
+
+#[cfg(test)]
+fn test_dummy_message_tlvs() {
+	let primary_dummy_tlv = DummyTlv::Primary(PrimaryDummyTlv {
+		dummy_tlv: UnauthenticatedDummyTlv {},
+		authentication: (create_hmac(), Nonce([0; 16])),
+	});
+
+	println!(
+		"Size of PrimaryDummyTlv: {}",
+		primary_dummy_tlv.serialized_length()
+	);
+
+	let subsequent_dummy_tlv = DummyTlv::Subsequent;
+
+	println!(
+		"Size of SubsequentDummyTlv: {}",
+		subsequent_dummy_tlv.serialized_length()
+	);
+}
+
 /// Represents the first dummy TLV in a blinded path, which is authenticated and contains an HMAC.
 /// These TLV are intended for the final node.
 ///
