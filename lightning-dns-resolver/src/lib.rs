@@ -172,7 +172,7 @@ mod test {
 	use lightning::ln::peer_handler::IgnoringMessageHandler;
 	use lightning::onion_message::dns_resolution::{HumanReadableName, OMNameResolver};
 	use lightning::onion_message::messenger::{
-		AOnionMessenger, Destination, MessageRouter, OnionMessagePath, OnionMessenger,
+		AOnionMessenger, Destination, MessageRouter, NodeIdMessageRouter, OnionMessagePath, OnionMessenger
 	};
 	use lightning::routing::router::RouteParametersConfig;
 	use lightning::sign::{KeysManager, NodeSigner, Recipient};
@@ -396,7 +396,8 @@ mod test {
 		let name = HumanReadableName::from_encoded("matt@mattcorallo.com").unwrap();
 
 		// When we get the proof back, override its contents to an offer from nodes[1]
-		let bs_offer = nodes[1].node.create_offer_builder(None).unwrap().build().unwrap();
+		let router = NodeIdMessageRouter::new(nodes[1].network_graph, nodes[1].keys_manager);
+		let bs_offer = nodes[1].node.create_offer_builder_using_router(router).unwrap().build().unwrap();
 		let proof_override = &nodes[0].node.testing_dnssec_proof_offer_resolution_override;
 		proof_override.lock().unwrap().insert(name.clone(), bs_offer);
 
