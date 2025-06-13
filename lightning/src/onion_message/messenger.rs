@@ -528,6 +528,17 @@ pub trait MessageRouter {
 
 /// A [`MessageRouter`] that can only route to a directly connected [`Destination`].
 ///
+/// [`DefaultMessageRouter`] constructs compact [`BlindedMessagePath`]s on a best-effort basis.
+/// That is, if appropriate SCID information is available for the intermediate peers, it will
+/// default to creating compact paths.
+///
+/// # Compact Blinded Paths
+///
+/// Compact blinded paths use short channel IDs (SCIDs) instead of pubkeys, resulting in smaller
+/// serialization. This is particularly useful when encoding data into space-constrained formats
+/// such as QR codes. The SCID is communicated via a [`MessageForwardNode`], but may be `None`
+/// to allow for graceful degradation.
+///
 /// # Privacy
 ///
 /// Creating [`BlindedMessagePath`]s may affect privacy since, if a suitable path cannot be found,
@@ -692,7 +703,7 @@ where
 			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
-			false,
+			true,
 		)
 	}
 
