@@ -684,7 +684,7 @@ where
 			peers.into_iter(),
 			&self.entropy_source,
 			secp_ctx,
-			false,
+			true,
 		)
 	}
 

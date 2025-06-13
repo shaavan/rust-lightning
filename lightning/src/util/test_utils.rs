@@ -33,7 +33,7 @@ use crate::ln::types::ChannelId;
 use crate::ln::{msgs, wire};
 use crate::offers::invoice::UnsignedBolt12Invoice;
 use crate::onion_message::messenger::{
-	DefaultMessageRouter, Destination, MessageRouter, NodeIdMessageRouter, OnionMessagePath
+	DefaultMessageRouter, Destination, MessageRouter, NodeIdMessageRouter, OnionMessagePath,
 };
 use crate::routing::gossip::{EffectiveCapacity, NetworkGraph, NodeId, RoutingFees};
 use crate::routing::router::{
@@ -325,8 +325,8 @@ pub enum TestMessageRouter<'a> {
 			Arc<NetworkGraph<&'a TestLogger>>,
 			&'a TestLogger,
 			&'a TestKeysInterface,
-		>
-	}
+		>,
+	},
 }
 
 impl<'a> TestMessageRouter<'a> {
@@ -358,8 +358,12 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		match self {
-			Self::Default { inner } => inner.create_blinded_paths(recipient, context, peers, secp_ctx),
-			Self::NodeId { inner } => inner.create_blinded_paths(recipient, context, peers, secp_ctx),
+			Self::Default { inner } => {
+				inner.create_blinded_paths(recipient, context, peers, secp_ctx)
+			},
+			Self::NodeId { inner } => {
+				inner.create_blinded_paths(recipient, context, peers, secp_ctx)
+			},
 		}
 	}
 
@@ -368,8 +372,12 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		match self {
-			Self::Default { inner } => inner.create_compact_blinded_paths(recipient, context, peers, secp_ctx),
-			Self::NodeId { inner } => inner.create_compact_blinded_paths(recipient, context, peers, secp_ctx),
+			Self::Default { inner } => {
+				inner.create_compact_blinded_paths(recipient, context, peers, secp_ctx)
+			},
+			Self::NodeId { inner } => {
+				inner.create_compact_blinded_paths(recipient, context, peers, secp_ctx)
+			},
 		}
 	}
 }
