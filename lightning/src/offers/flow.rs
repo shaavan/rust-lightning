@@ -788,7 +788,7 @@ where
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
-			offer_id: invoice_request.offer_id,
+			offer_id: invoice_request.offer_id(),
 			invoice_request: invoice_request.fields(),
 		});
 
@@ -811,35 +811,42 @@ where
 		#[cfg(not(feature = "std"))]
 		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
 
-		let response = if invoice_request.keys.is_some() {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_using_derived_keys_no_std(
-				payment_paths,
-				payment_hash,
-				created_at,
-			);
-			builder
-				.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
-				.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
-				.map_err(InvoiceError::from)
-		} else {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_with(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
-			builder
-				.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
-				.and_then(|builder| builder.allow_mpp().build())
-				.map_err(InvoiceError::from)
-				.and_then(|invoice| {
-					#[cfg(c_bindings)]
-					let mut invoice = invoice;
-					invoice
-						.sign(|invoice: &UnsignedBolt12Invoice| signer.sign_bolt12_invoice(invoice))
-						.map_err(InvoiceError::from)
-				})
+		let response = match invoice_request {
+			VerifiedInvoiceRequest::WithKeys { .. } => {
+				#[cfg(feature = "std")]
+				let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+				#[cfg(not(feature = "std"))]
+				let builder = invoice_request.respond_using_derived_keys_no_std(
+					payment_paths,
+					payment_hash,
+					created_at,
+				);
+
+				builder
+					.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
+					.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
+					.map_err(InvoiceError::from)
+			},
+			VerifiedInvoiceRequest::WithoutKeys { .. } => {
+				#[cfg(feature = "std")]
+				let builder = invoice_request.respond_with(payment_paths, payment_hash);
+				#[cfg(not(feature = "std"))]
+				let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
+
+				builder
+					.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
+					.and_then(|builder| builder.allow_mpp().build())
+					.map_err(InvoiceError::from)
+					.and_then(|invoice| {
+						#[cfg(c_bindings)]
+						let mut invoice = invoice;
+						invoice
+							.sign(|invoice: &UnsignedBolt12Invoice| {
+								signer.sign_bolt12_invoice(invoice)
+							})
+							.map_err(InvoiceError::from)
+					})
+			},
 		};
 
 		match response {
