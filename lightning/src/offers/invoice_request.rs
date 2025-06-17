@@ -52,7 +52,7 @@
 //! # <InvoiceRequestBuilder<_>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
-//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)?
+//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)?
 //! # )
 //!     .chain(Network::Testnet)?
 //!     .amount_msats(1000)?
@@ -145,16 +145,17 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 		pub(super) fn deriving_signing_pubkey(
 			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce,
 			secp_ctx: &'b Secp256k1<$secp_context>, payment_id: PaymentId,
-		) -> Self {
+			amount_msats: Option<u64>,
+		) -> Result<Self, Bolt12SemanticError> {
 			let payment_id = Some(payment_id);
 			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
 			let metadata = Metadata::DerivedSigningPubkey(derivation_material);
-			Self {
+			Ok(Self {
 				offer,
-				invoice_request: Self::create_contents(offer, metadata),
+				invoice_request: Self::create_contents(offer, metadata, amount_msats)?,
 				payer_signing_pubkey: None,
 				secp_ctx: Some(secp_ctx),
-			}
+			})
 		}
 
 		/// Builds a signed [`InvoiceRequest`] after checking for valid semantics.
@@ -180,15 +181,17 @@ macro_rules! invoice_request_builder_methods { (
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $secp_context: ty $(, $self_mut: tt)?
 ) => {
 	#[cfg_attr(c_bindings, allow(dead_code))]
-	fn create_contents(offer: &Offer, metadata: Metadata) -> InvoiceRequestContentsWithoutPayerSigningPubkey {
+	fn create_contents(offer: &Offer, metadata: Metadata, amount_msats: Option<u64>) -> Result<InvoiceRequestContentsWithoutPayerSigningPubkey, Bolt12SemanticError> {
 		let offer = offer.contents.clone();
-		InvoiceRequestContentsWithoutPayerSigningPubkey {
-			payer: PayerContents(metadata), offer, chain: None, amount_msats: None,
+		let amount_source = InvoiceRequestAmountSource::amount_source(amount_msats, offer.amount())?;
+		Ok(InvoiceRequestContentsWithoutPayerSigningPubkey {
+			payer: PayerContents(metadata), offer, chain: None, amount_msats,
 			features: InvoiceRequestFeatures::empty(), quantity: None, payer_note: None,
 			offer_from_hrn: None,
 			#[cfg(test)]
 			experimental_bar: None,
-		}
+			amount_source,
+		})
 	}
 
 	/// Sets the [`InvoiceRequest::chain`] of the given [`Network`] for paying an invoice. If not
@@ -224,7 +227,9 @@ macro_rules! invoice_request_builder_methods { (
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
 			Some(amount_msats), $self.invoice_request.quantity
 		)?;
+		let amount_source = InvoiceRequestAmountSource::amount_source(Some(amount_msats), $self.invoice_request.offer.amount())?;
 		$self.invoice_request.amount_msats = Some(amount_msats);
+		$self.invoice_request.amount_source = amount_source;
 		Ok($return_value)
 	}
 
@@ -653,6 +658,12 @@ pub(super) struct InvoiceRequestContents {
 	payer_signing_pubkey: PublicKey,
 }
 
+impl InvoiceRequestContents {
+	pub(crate) fn amount_source(&self) -> &InvoiceRequestAmountSource {
+		&self.inner.amount_source
+	}
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
@@ -666,6 +677,61 @@ pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
 	offer_from_hrn: Option<HumanReadableName>,
 	#[cfg(test)]
 	experimental_bar: Option<u64>,
+	amount_source: InvoiceRequestAmountSource,
+}
+
+#[derive(Clone, Debug)]
+#[cfg_attr(test, derive(PartialEq))]
+/// Represents the nature of amount specified with an [`InvoiceRequest`].
+pub enum InvoiceRequestAmountSource {
+	/// Both the [`InvoiceRequest`] amount and the corresponding Offer amount are set.
+	InvoiceRequestAndOfferAmount {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		invoice_request_amount_msats: u64,
+		/// The corresponding Offer amount.
+		offer_amount: Amount,
+	},
+
+	/// Only the [`InvoiceRequest`] amount is set; the corresponding Offer amount is not specified.
+	InvoiceRequestOnly {
+		/// The amount in msats specified in the [`InvoiceRequest`].
+		amount_msats: u64,
+	},
+
+	/// Only the corresponding Offer amount is set; the [`InvoiceRequest`] amount is not specified.
+	OfferOnly {
+		/// The corresponding Offer amount.
+		amount: Amount,
+	},
+}
+
+impl InvoiceRequestAmountSource {
+	pub(crate) fn amount_source(
+		invoice_request_amount_msats: Option<u64>, offer_amount: Option<Amount>,
+	) -> Result<InvoiceRequestAmountSource, Bolt12SemanticError> {
+		match (invoice_request_amount_msats, offer_amount) {
+			(Some(ir_amount_msats), Some(offer_amount)) => {
+				if let Amount::Bitcoin { amount_msats } = offer_amount {
+					if ir_amount_msats < amount_msats {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
+
+				Ok(InvoiceRequestAmountSource::InvoiceRequestAndOfferAmount {
+					invoice_request_amount_msats: ir_amount_msats,
+					offer_amount,
+				})
+			},
+
+			(Some(amount_msats), None) => {
+				Ok(InvoiceRequestAmountSource::InvoiceRequestOnly { amount_msats })
+			},
+
+			(None, Some(amount)) => Ok(InvoiceRequestAmountSource::OfferOnly { amount }),
+
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}
+	}
 }
 
 macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
@@ -1050,6 +1116,7 @@ impl VerifiedInvoiceRequest {
 		let InvoiceRequestContents {
 			payer_signing_pubkey,
 			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, .. },
+			..
 		} = &self.inner().contents;
 
 		InvoiceRequestFields {
@@ -1423,6 +1490,8 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			return Err(Bolt12SemanticError::UnexpectedPaths);
 		}
 
+		let amount_source = InvoiceRequestAmountSource::amount_source(amount, offer.amount())?;
+
 		Ok(InvoiceRequestContents {
 			inner: InvoiceRequestContentsWithoutPayerSigningPubkey {
 				payer,
@@ -1435,6 +1504,7 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 				offer_from_hrn,
 				#[cfg(test)]
 				experimental_bar,
+				amount_source,
 			},
 			payer_signing_pubkey,
 		})
@@ -1546,7 +1616,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1639,7 +1709,7 @@ mod tests {
 			.absolute_expiry(future_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1651,7 +1721,7 @@ mod tests {
 			.absolute_expiry(past_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1674,7 +1744,7 @@ mod tests {
 			.build()
 			.unwrap();
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.experimental_bar(42)
 			.build_and_sign()
@@ -1785,7 +1855,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1800,7 +1870,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()
@@ -1816,7 +1886,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1832,7 +1902,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1849,7 +1919,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Bitcoin)
 		{
@@ -1862,7 +1932,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1883,9 +1953,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(1000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1000))
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1898,11 +1966,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(1001)
-			.unwrap()
-			.amount_msats(1000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1000))
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1915,9 +1979,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(1001)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1001))
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1930,9 +1992,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(999)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(999))
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
@@ -1943,12 +2003,14 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1000))
 			.unwrap()
 			.quantity(2)
 			.unwrap()
 			.amount_msats(1000)
 		{
+			// Even though the amount is updated, it's still insufficient for the quantity.
+			// For the quantity has been set to 2, the amount must be at least 2 * 1000.
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
 		}
@@ -1957,7 +2019,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.amount_msats(MAX_VALUE_MSAT + 1)
 		{
@@ -1970,9 +2032,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(1000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1000))
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -1982,13 +2042,13 @@ mod tests {
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
 		}
 
-		match OfferBuilder::new(recipient_pubkey())
-			.build()
-			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.build_and_sign()
-		{
+		match OfferBuilder::new(recipient_pubkey()).build().unwrap().request_invoice(
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+			payment_id,
+			None,
+		) {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::MissingAmount),
 		}
@@ -1998,7 +2058,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2021,7 +2081,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2035,7 +2095,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2049,7 +2109,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount(Amount::Currency { iso4217_code: *b"USD", amount: 10 })
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
@@ -2070,7 +2130,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2083,7 +2143,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.features_unchecked(InvoiceRequestFeatures::empty())
@@ -2110,7 +2170,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2123,7 +2183,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2138,7 +2198,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.amount_msats(10_000)
 			.unwrap()
@@ -2155,9 +2215,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(11_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(11_000))
 			.unwrap()
 			.quantity(11)
 		{
@@ -2170,9 +2228,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(2_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(2_000))
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2187,7 +2243,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2200,7 +2256,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2221,7 +2277,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.payer_note("bar".into())
 			.build_and_sign()
@@ -2234,7 +2290,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.payer_note("bar".into())
 			.payer_note("baz".into())
@@ -2257,7 +2313,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2281,7 +2337,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2306,7 +2362,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -2324,7 +2380,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain_unchecked(Network::Testnet)
 			.build_unchecked_and_sign();
@@ -2353,7 +2409,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2368,9 +2424,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(1000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(1000))
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2382,29 +2436,21 @@ mod tests {
 			panic!("error parsing invoice_request: {:?}", e);
 		}
 
-		let invoice_request = OfferBuilder::new(recipient_pubkey())
-			.build()
-			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.build_unchecked_and_sign();
+		let offer = OfferBuilder::new(recipient_pubkey()).build().unwrap();
 
-		let mut buffer = Vec::new();
-		invoice_request.write(&mut buffer).unwrap();
+		let invoice_request =
+			offer.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None);
 
-		match InvoiceRequest::try_from(buffer) {
+		match invoice_request {
 			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(
-				e,
-				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::MissingAmount)
-			),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::MissingAmount),
 		}
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.amount_msats_unchecked(999)
 			.build_unchecked_and_sign();
@@ -2424,7 +2470,7 @@ mod tests {
 			.description("foo".to_string())
 			.amount(Amount::Currency { iso4217_code: *b"USD", amount: 1000 })
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2446,7 +2492,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2480,7 +2526,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2497,9 +2543,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(2_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(2_000))
 			.unwrap()
 			.quantity_unchecked(2)
 			.build_unchecked_and_sign();
@@ -2522,9 +2566,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(10_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(10_000))
 			.unwrap()
 			.quantity(10)
 			.unwrap()
@@ -2543,9 +2585,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(11_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(11_000))
 			.unwrap()
 			.quantity_unchecked(11)
 			.build_unchecked_and_sign();
@@ -2566,9 +2606,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
-			.unwrap()
-			.amount_msats(2_000)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, Some(2_000))
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2587,7 +2625,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2607,7 +2645,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2635,7 +2673,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2667,7 +2705,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2697,7 +2735,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2732,7 +2770,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_unchecked()
 			.contents
@@ -2760,7 +2798,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2797,7 +2835,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_without_checks();
 
@@ -2832,7 +2870,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_without_checks();
 
@@ -2877,7 +2915,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_without_checks();
 
@@ -2915,7 +2953,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_without_checks();
 
@@ -2950,7 +2988,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2983,7 +3021,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -3039,7 +3077,7 @@ mod tests {
 		let expected_payer_note = "❤️".repeat(85);
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()

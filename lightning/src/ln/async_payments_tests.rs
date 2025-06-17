@@ -672,6 +672,7 @@ fn amount_doesnt_match_invreq() {
 					Nonce::from_entropy_source(nodes[0].keys_manager),
 					&secp_ctx,
 					payment_id,
+					None,
 				)
 				.unwrap()
 				.amount_msats(amt_msat + 1)

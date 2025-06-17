@@ -1812,7 +1812,7 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 		.build().unwrap();
 
 	let payment_id = PaymentId([1; 32]);
-	match bob.node.pay_for_offer(&offer, None, None, None, payment_id, Retry::Attempts(0), RouteParametersConfig::default()) {
+	match bob.node.pay_for_offer(&offer, None, Some(1000), None, payment_id, Retry::Attempts(0), RouteParametersConfig::default()) {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedChain),
 	}

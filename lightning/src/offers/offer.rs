@@ -760,6 +760,8 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $builder: t
 	///   derived, and
 	/// - includes the [`PaymentId`] encrypted in [`InvoiceRequest::payer_metadata`] so that it can
 	///   be used when sending the payment for the requested invoice.
+	/// - If offer doesn't contain an amount, the user must specify an `amount_msats`` that can be
+	///   used to create the invoice request.
 	///
 	/// Errors if the offer contains unknown required features.
 	///
@@ -777,13 +779,14 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $builder: t
 		secp_ctx: &'b Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &'b Secp256k1<secp256k1::All>,
-		payment_id: PaymentId
+		payment_id: PaymentId,
+		amount_msats: Option<u64>,
 	) -> Result<$builder, Bolt12SemanticError> {
 		if $self.offer_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		Ok(<$builder>::deriving_signing_pubkey($self, expanded_key, nonce, secp_ctx, payment_id))
+		Ok(<$builder>::deriving_signing_pubkey($self, expanded_key, nonce, secp_ctx, payment_id, amount_msats)?)
 	}
 } }
 
@@ -1404,7 +1407,7 @@ mod tests {
 		assert_eq!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1415,7 +1418,7 @@ mod tests {
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1432,7 +1435,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1448,7 +1451,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1485,7 +1488,7 @@ mod tests {
 		assert_ne!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1496,7 +1499,7 @@ mod tests {
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1511,7 +1514,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1529,7 +1532,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1751,7 +1754,7 @@ mod tests {
 			.features_unchecked(OfferFeatures::unknown())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, None)
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),

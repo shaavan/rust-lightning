@@ -10722,16 +10722,12 @@ where
 		let nonce = Nonce::from_entropy_source(entropy);
 
 		let builder = self.flow.create_invoice_request_builder(
-			offer, nonce, payment_id,
+			offer, nonce, payment_id, amount_msats
 		)?;
 
 		let builder = match quantity {
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
-		};
-		let builder = match amount_msats {
-			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
 		};
 		let builder = match payer_note {
 			None => builder,

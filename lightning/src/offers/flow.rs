@@ -617,14 +617,19 @@ where
 	/// # Nonce
 	/// The nonce is used to create a unique [`InvoiceRequest::payer_metadata`] for the invoice request.
 	/// These will be used to verify the corresponding [`Bolt12Invoice`] when it is received.
+	///
+	/// # Amount
+	///
+	/// If the [`Offer`] doesn't contain an amount, user must provide an `amount_msats` to
+	/// specify the amount to be paid.
 	pub fn create_invoice_request_builder<'a>(
-		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
+		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId, amount_msats: Option<u64>,
 	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
 		let builder: InvoiceRequestBuilder<secp256k1::All> =
-			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?.into();
+			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, amount_msats)?.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)
