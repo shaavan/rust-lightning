@@ -722,7 +722,7 @@ impl<'a, 'b, 'c> Drop for Node<'a, 'b, 'c> {
 					signer_provider: self.keys_manager,
 					fee_estimator: &test_utils::TestFeeEstimator::new(253),
 					router: &test_utils::TestRouter::new(Arc::clone(&network_graph), &self.logger, &scorer),
-					message_router: &test_utils::TestMessageRouter::new(network_graph, self.keys_manager),
+					message_router: &test_utils::TestMessageRouter::new_default(network_graph, self.keys_manager),
 					chain_monitor: self.chain_monitor,
 					tx_broadcaster: &broadcaster,
 					logger: &self.logger,
@@ -3310,7 +3310,7 @@ pub fn create_node_cfgs_with_persisters<'a>(node_count: usize, chanmon_cfgs: &'a
 			tx_broadcaster: &chanmon_cfgs[i].tx_broadcaster,
 			fee_estimator: &chanmon_cfgs[i].fee_estimator,
 			router: test_utils::TestRouter::new(network_graph.clone(), &chanmon_cfgs[i].logger, &chanmon_cfgs[i].scorer),
-			message_router: test_utils::TestMessageRouter::new(network_graph.clone(), &chanmon_cfgs[i].keys_manager),
+			message_router: test_utils::TestMessageRouter::new_default(network_graph.clone(), &chanmon_cfgs[i].keys_manager),
 			chain_monitor,
 			keys_manager: &chanmon_cfgs[i].keys_manager,
 			node_seed: seed,
@@ -3321,6 +3321,34 @@ pub fn create_node_cfgs_with_persisters<'a>(node_count: usize, chanmon_cfgs: &'a
 
 	nodes
 }
+
+pub fn create_node_cfgs_with_node_id_message_router<'a>(node_count: usize, chanmon_cfgs: &'a Vec<TestChanMonCfg>) -> Vec<NodeCfg<'a>> {
+	let persisters: Vec<_> = chanmon_cfgs.iter().map(|c| &c.persister).collect();
+
+	let mut nodes = Vec::new();
+
+	for i in 0..node_count {
+		let chain_monitor = test_utils::TestChainMonitor::new(Some(&chanmon_cfgs[i].chain_source), &chanmon_cfgs[i].tx_broadcaster, &chanmon_cfgs[i].logger, &chanmon_cfgs[i].fee_estimator, persisters[i], &chanmon_cfgs[i].keys_manager);
+		let network_graph = Arc::new(NetworkGraph::new(Network::Testnet, &chanmon_cfgs[i].logger));
+		let seed = [i as u8; 32];
+		nodes.push(NodeCfg {
+			chain_source: &chanmon_cfgs[i].chain_source,
+			logger: &chanmon_cfgs[i].logger,
+			tx_broadcaster: &chanmon_cfgs[i].tx_broadcaster,
+			fee_estimator: &chanmon_cfgs[i].fee_estimator,
+			router: test_utils::TestRouter::new(network_graph.clone(), &chanmon_cfgs[i].logger, &chanmon_cfgs[i].scorer),
+			message_router: test_utils::TestMessageRouter::new_node_id_router(network_graph.clone(), &chanmon_cfgs[i].keys_manager),
+			chain_monitor,
+			keys_manager: &chanmon_cfgs[i].keys_manager,
+			node_seed: seed,
+			network_graph,
+			override_init_features: Rc::new(RefCell::new(None)),
+		});
+	}
+
+	nodes
+}
+
 
 pub fn test_default_channel_config() -> UserConfig {
 	let mut default_config = UserConfig::default();
