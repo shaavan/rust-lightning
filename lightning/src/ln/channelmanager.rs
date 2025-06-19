@@ -10262,6 +10262,53 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 } }
 
 macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
+	fn create_refund_builder_intern<PF>(
+		&$self,
+		make_path: PF,
+		amount_msats: u64,
+		absolute_expiry: Duration,
+		payment_id: PaymentId,
+		retry_strategy: Retry,
+		route_params_config: RouteParametersConfig
+	) -> Result<$builder, Bolt12SemanticError>
+	where
+		PF: FnOnce(PublicKey, MessageContext, &secp256k1::Secp256k1<secp256k1::All>) -> Result<Option<BlindedMessagePath>, Bolt12SemanticError>,
+	{
+		let node_id = $self.get_our_node_id();
+		let expanded_key = &$self.inbound_payment_key;
+		let entropy = &*$self.entropy_source;
+		let secp_ctx = &$self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = MessageContext::Offers(
+			OffersContext::OutboundPayment { payment_id, nonce, hmac: None }
+		);
+
+		// Create the base builder with common properties
+		let mut builder = RefundBuilder::deriving_signing_pubkey(
+			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
+		)?
+			.chain_hash($self.chain_hash)
+			.absolute_expiry(absolute_expiry);
+
+		// Add path if one is provided by the path creator
+		if let Some(path) = make_path(node_id, context, secp_ctx)? {
+			builder = builder.path(path);
+		}
+
+		// Handle persistence and payment tracking
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
+
+		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
+		$self.pending_outbound_payments
+			.add_new_awaiting_invoice(
+				payment_id, expiration, retry_strategy, route_params_config, None,
+			)
+			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
+
+		Ok(builder.into())
+	}
+
 	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
 	/// [`ChannelManager`] when handling [`Bolt12Invoice`] messages for the refund.
 	///
@@ -10311,34 +10358,19 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		&$self, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
 		retry_strategy: Retry, route_params_config: RouteParametersConfig
 	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-		let path = $self.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry))
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let builder = RefundBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
-		)?
-			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry)
-			.path(path);
-
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
-
-		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
-		$self.pending_outbound_payments
-			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, route_params_config, None,
-			)
-			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
-
-		Ok(builder.into())
+		$self.create_refund_builder_intern(
+			|_, context, _| {
+				$self.create_blinded_paths(context)
+					.and_then(|paths| paths.into_iter().next().ok_or(()))
+					.map(Some)
+					.map_err(|_| Bolt12SemanticError::MissingPaths)
+			},
+			amount_msats,
+			absolute_expiry,
+			payment_id,
+			retry_strategy,
+			route_params_config
+		)
 	}
 
 	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
@@ -10389,41 +10421,19 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		&$self, router: ME, amount_msats: u64, absolute_expiry: Duration, payment_id: PaymentId,
 		retry_strategy: Retry, route_params_config: RouteParametersConfig
 	) -> Result<$builder, Bolt12SemanticError> {
-		let node_id = $self.get_our_node_id();
-		let expanded_key = &$self.inbound_payment_key;
-		let entropy = &*$self.entropy_source;
-		let secp_ctx = &$self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = MessageContext::Offers(
-			OffersContext::OutboundPayment { payment_id, nonce, hmac: None }
-		);
-
-		let peers = $self.get_peers_for_blinded_path();
-		let path = router.create_blinded_paths(node_id, context, peers, secp_ctx)
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?
-			.into_iter().next();
-
-		let mut builder = RefundBuilder::deriving_signing_pubkey(
-			node_id, expanded_key, nonce, secp_ctx, amount_msats, payment_id
-		)?
-			.chain_hash($self.chain_hash)
-			.absolute_expiry(absolute_expiry);
-
-		if let Some(path) = path {
-			builder = builder.path(path)
-		}
-
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop($self);
-
-		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
-		$self.pending_outbound_payments
-			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, route_params_config, None,
-			)
-			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
-
-		Ok(builder.into())
+		$self.create_refund_builder_intern(
+			|node_id, context, secp_ctx| {
+				let peers = $self.get_peers_for_blinded_path();
+				router.create_blinded_paths(node_id, context, peers, secp_ctx)
+					.map(|paths| paths.into_iter().next())
+					.map_err(|_| Bolt12SemanticError::MissingPaths)
+			},
+			amount_msats,
+			absolute_expiry,
+			payment_id,
+			retry_strategy,
+			route_params_config
+		)
 	}
 } }
 
