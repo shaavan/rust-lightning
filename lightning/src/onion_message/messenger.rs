@@ -577,6 +577,10 @@ where
 
 		let has_one_peer = peers.len() == 1;
 		let mut peer_info = peers
+			.map(|peer| MessageForwardNode {
+				short_channel_id: if compact_paths { peer.short_channel_id } else { None },
+				..peer
+			})
 			// Limit to peers with announced channels unless the recipient is unannounced.
 			.filter_map(|peer| {
 				network_graph
