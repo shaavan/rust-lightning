@@ -2212,9 +2212,8 @@ where
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
-/// # let absolute_expiry = None;
 /// let offer = channel_manager
-///     .create_offer_builder(absolute_expiry)?
+///     .create_offer_builder()?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -10852,9 +10851,8 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	///
 	/// # Privacy
 	///
-	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the offer based on the given
-	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
-	/// privacy implications.
+	/// Uses the [`ChannelManager`]'s [`MessageRouter`] to construct a [`BlindedMessagePath`] for
+	/// the offer. See those docs for privacy implications.
 	///
 	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
 	///
@@ -10869,12 +10867,46 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
-	pub fn create_offer_builder(
-		&$self, absolute_expiry: Option<Duration>
-	) -> Result<$builder, Bolt12SemanticError> {
-		let entropy = &*$self.entropy_source;
+	pub fn create_offer_builder(&$self) -> Result<$builder, Bolt12SemanticError> {
+		let builder = $self.flow.create_offer_builder(
+			&*$self.entropy_source, $self.get_peers_for_blinded_path()
+		)?;
 
-		let builder = $self.flow.create_offer_builder(entropy, absolute_expiry, $self.get_peers_for_blinded_path())?;
+		Ok(builder.into())
+	}
+
+	/// Creates an [`OfferBuilder`] such that the [`Offer`] it builds is recognized by the
+	/// [`ChannelManager`] when handling [`InvoiceRequest`] messages for the offer.
+	///
+	/// # Privacy
+	///
+	/// Constructs a [`BlindedMessagePath`] for the offer using a custom [`MessageRouter`].
+	/// Users can implement a custom [`MessageRouter`] to define properties of the
+	/// [`BlindedMessagePath`] as required or opt not to create any `BlindedMessagePath`.
+	///
+	/// Also, uses a derived signing pubkey in the offer for recipient privacy.
+	///
+	/// # Limitations
+	///
+	/// See [`OffersMessageFlow::create_offer_builder`] for limitations on the offer builder.
+	///
+	/// # Errors
+	///
+	/// Errors if the provided [`MessageRouter`] is unable to create a blinded path for the offer.
+	///
+	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+	/// [`Offer`]: crate::offers::offer::Offer
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	pub fn create_offer_builder_using_router<ME: Deref>(
+		&$self,
+		router: ME,
+	) -> Result<$builder, Bolt12SemanticError>
+	where
+		ME::Target: MessageRouter,
+	{
+		let builder = $self.flow.create_offer_builder_using_router(
+			router, &*$self.entropy_source, $self.get_peers_for_blinded_path()
+		)?;
 
 		Ok(builder.into())
 	}
