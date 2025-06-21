@@ -622,27 +622,70 @@ where
 		})
 	}
 
+	fn create_refund_builder_intern<ES: Deref, PF, I>(
+		&self, entropy_source: ES, make_paths: PF, amount_msats: u64, absolute_expiry: Duration,
+		payment_id: PaymentId,
+	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+		PF: FnOnce(
+			PublicKey,
+			MessageContext,
+			&secp256k1::Secp256k1<secp256k1::All>,
+		) -> Result<I, Bolt12SemanticError>,
+		I: IntoIterator<Item = BlindedMessagePath>,
+	{
+		let node_id = self.get_our_node_id();
+		let expanded_key = &self.inbound_payment_key;
+		let entropy = &*entropy_source;
+		let secp_ctx = &self.secp_ctx;
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let context = MessageContext::Offers(OffersContext::OutboundPayment {
+			payment_id,
+			nonce,
+			hmac: None,
+		});
+
+		// Create the base builder with common properties
+		let mut builder = RefundBuilder::deriving_signing_pubkey(
+			node_id,
+			expanded_key,
+			nonce,
+			secp_ctx,
+			amount_msats,
+			payment_id,
+		)?
+		.chain_hash(self.chain_hash)
+		.absolute_expiry(absolute_expiry);
+
+		for path in make_paths(node_id, context, secp_ctx)? {
+			builder = builder.path(path);
+		}
+
+		Ok(builder.into())
+	}
+
 	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
 	/// [`OffersMessageFlow`], and any corresponding [`Bolt12Invoice`] received for the refund
 	/// can be verified using [`Self::verify_bolt12_invoice`].
+	///
+	/// # Privacy
+	///
+	/// Uses the [`OffersMessageFlow`]'s [`MessageRouter`] to construct a [`BlindedMessagePath`]
+	/// for the offer. See those docs for privacy implications.
 	///
 	/// The builder will have the provided expiration set. Any changes to the expiration on the
 	/// returned builder will not be honored by [`OffersMessageFlow`]. For non-`std`, the highest seen
 	/// block time minus two hours is used for the current time when determining if the refund has
 	/// expired.
 	///
-	/// To refund can be revoked by the user prior to receiving the invoice.
+	/// The refund can be revoked by the user prior to receiving the invoice.
 	/// If abandoned, or if an invoice is not received before expiration, the payment will fail
 	/// with an [`Event::PaymentFailed`].
 	///
 	/// If `max_total_routing_fee_msat` is not specified, the default from
 	/// [`RouteParameters::from_payment_params_and_value`] is applied.
-	///
-	/// # Privacy
-	///
-	/// Uses [`MessageRouter`] to construct a [`BlindedMessagePath`] for the refund based on the given
-	/// `absolute_expiry` according to [`MAX_SHORT_LIVED_RELATIVE_EXPIRY`]. See those docs for
-	/// privacy implications.
 	///
 	/// Also uses a derived payer id in the refund for payer privacy.
 	///
@@ -662,32 +705,76 @@ where
 	where
 		ES::Target: EntropySource,
 	{
-		let node_id = self.get_our_node_id();
-		let expanded_key = &self.inbound_payment_key;
-		let entropy = &*entropy_source;
-		let secp_ctx = &self.secp_ctx;
-
-		let nonce = Nonce::from_entropy_source(entropy);
-		let context = OffersContext::OutboundPayment { payment_id, nonce, hmac: None };
-
-		let path = self
-			.create_blinded_paths_using_absolute_expiry(context, Some(absolute_expiry), peers)
-			.and_then(|paths| paths.into_iter().next().ok_or(()))
-			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let builder = RefundBuilder::deriving_signing_pubkey(
-			node_id,
-			expanded_key,
-			nonce,
-			secp_ctx,
+		self.create_refund_builder_intern(
+			&*entropy_source,
+			|_, context, _| {
+				self.create_blinded_paths(peers, context)
+					.map(|paths| paths.into_iter().take(1))
+					.map_err(|_| Bolt12SemanticError::MissingPaths)
+			},
 			amount_msats,
+			absolute_expiry,
 			payment_id,
-		)?
-		.chain_hash(self.chain_hash)
-		.absolute_expiry(absolute_expiry)
-		.path(path);
+		)
+	}
 
-		Ok(builder)
+	/// Creates a [`RefundBuilder`] such that the [`Refund`] it builds is recognized by the
+	/// [`OffersMessageFlow`] when handling [`Bolt12Invoice`] messages for the refund.
+	///
+	/// # Privacy
+	///
+	/// Constructs a [`BlindedMessagePath`] for the refund using a custom [`MessageRouter`].
+	/// Users can implement a custom [`MessageRouter`] to define properties of the
+	/// [`BlindedMessagePath`] as required or opt not to create any `BlindedMessagePath`.
+	///
+	/// # Payment
+	///
+	/// The provided `payment_id` is used to ensure that only one invoice is paid for the refund.
+	/// See [Avoiding Duplicate Payments] for other requirements once the payment has been sent.
+	///
+	/// The builder will have the provided expiration set. Any changes to the expiration on the
+	/// returned builder will not be honored by [`OffersMessageFlow`]. For non-`std`, the highest seen
+	/// block time minus two hours is used for the current time when determining if the refund has
+	/// expired.
+	///
+	/// The refund can be revoked by the user prior to receiving the invoice.
+	/// If abandoned, or if an invoice is not received before expiration, the payment will fail
+	/// with an [`Event::PaymentFailed`].
+	///
+	/// If `max_total_routing_fee_msat` is not specified, The default from
+	/// [`RouteParameters::from_payment_params_and_value`] is applied.
+	///
+	/// Also, uses a derived payer id in the refund for payer privacy.
+	///
+	/// # Errors
+	///
+	/// Errors if:
+	/// - a duplicate `payment_id` is provided given the caveats in the aforementioned link,
+	/// - `amount_msats` is invalid, or
+	/// - the provided [`MessageRouter`] is unable to create a blinded path for the refund.
+	///
+	/// [`Event::PaymentFailed`]: crate::events::Event::PaymentFailed
+	/// [`RouteParameters::from_payment_params_and_value`]: crate::routing::router::RouteParameters::from_payment_params_and_value
+	pub fn create_refund_builder_using_router<ES: Deref, ME: Deref>(
+		&self, router: ME, entropy_source: ES, amount_msats: u64, absolute_expiry: Duration,
+		payment_id: PaymentId, peers: Vec<MessageForwardNode>,
+	) -> Result<RefundBuilder<secp256k1::All>, Bolt12SemanticError>
+	where
+		ME::Target: MessageRouter,
+		ES::Target: EntropySource,
+	{
+		self.create_refund_builder_intern(
+			&*entropy_source,
+			|node_id, context, secp_ctx| {
+				router
+					.create_blinded_paths(node_id, context, peers, secp_ctx)
+					.map(|paths| paths.into_iter().take(1))
+					.map_err(|_| Bolt12SemanticError::MissingPaths)
+			},
+			amount_msats,
+			absolute_expiry,
+			payment_id,
+		)
 	}
 
 	/// Creates an [`InvoiceRequestBuilder`] such that the [`InvoiceRequest`] it builds is recognized
