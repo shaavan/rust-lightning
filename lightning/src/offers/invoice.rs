@@ -228,12 +228,14 @@ pub trait SigningPubkeyStrategy {}
 /// [`Bolt12Invoice::signing_pubkey`] was explicitly set.
 ///
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
+#[derive(Clone, Debug)]
 pub struct ExplicitSigningPubkey {}
 
 /// [`Bolt12Invoice::signing_pubkey`] was derived.
 ///
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
-pub struct DerivedSigningPubkey(pub(super) Keypair);
+#[derive(Clone, Debug)]
+pub struct DerivedSigningPubkey(pub Keypair);
 
 impl SigningPubkeyStrategy for ExplicitSigningPubkey {}
 impl SigningPubkeyStrategy for DerivedSigningPubkey {}
@@ -1791,6 +1793,7 @@ mod tests {
 	use crate::ln::msgs::DecodeError;
 	use crate::offers::invoice_request::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
+		VerifiedInvoiceRequestEnum,
 	};
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
@@ -2207,15 +2210,25 @@ mod tests {
 				.build_and_sign()
 				.unwrap();
 
-		if let Err(e) = invoice_request
+		let verified_request = invoice_request
 			.clone()
 			.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx)
-			.unwrap()
-			.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
-			.unwrap()
-			.build_and_sign(&secp_ctx)
-		{
-			panic!("error building invoice: {:?}", e);
+			.unwrap();
+
+		match verified_request {
+			VerifiedInvoiceRequestEnum::WithKeys(req) => {
+				let invoice = req
+					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
+					.unwrap()
+					.build_and_sign(&secp_ctx);
+
+				if let Err(e) = invoice {
+					panic!("error building invoice: {:?}", e);
+				}
+			},
+			VerifiedInvoiceRequestEnum::WithoutKeys(_) => {
+				panic!("expected invoice request with keys");
+			},
 		}
 
 		let expanded_key = ExpandedKey::new([41; 32]);
@@ -2235,13 +2248,13 @@ mod tests {
 				.build_and_sign()
 				.unwrap();
 
-		match invoice_request
+		let verified_request = invoice_request
 			.verify_using_metadata(&expanded_key, &secp_ctx)
-			.unwrap()
-			.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
-		{
-			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
+			.unwrap();
+
+		match verified_request {
+			VerifiedInvoiceRequestEnum::WithKeys(_) => panic!("expected invoice request without keys"),
+			VerifiedInvoiceRequestEnum::WithoutKeys(_) => ()
 		}
 	}
 
