@@ -42,7 +42,7 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestLegacy,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -354,7 +354,7 @@ where
 	/// - The verification process (via recipient context data or metadata) fails.
 	pub fn verify_invoice_request(
 		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
-	) -> Result<VerifiedInvoiceRequest, ()> {
+	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -763,7 +763,7 @@ where
 		Ok(builder.into())
 	}
 
-	/// Creates a response for the provided [`VerifiedInvoiceRequest`].
+	/// Creates a response for the provided [`VerifiedInvoiceRequestLegacy`].
 	///
 	/// A response can be either an [`OffersMessage::Invoice`] with additional [`MessageContext`],
 	/// or an [`OffersMessage::InvoiceError`], depending on the [`InvoiceRequest`].
@@ -773,8 +773,9 @@ where
 	/// - We fail to generate a valid signed [`Bolt12Invoice`] for the [`InvoiceRequest`].
 	pub fn create_response_for_invoice_request<ES: Deref, NS: Deref, R: Deref>(
 		&self, signer: &NS, router: &R, entropy_source: ES,
-		invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
+		invoice_request: VerifiedInvoiceRequestLegacy, amount_msats: u64,
+		payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		usable_channels: Vec<ChannelDetails>,
 	) -> (OffersMessage, Option<MessageContext>)
 	where
 		ES::Target: EntropySource,
