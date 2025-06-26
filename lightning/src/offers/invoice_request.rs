@@ -562,6 +562,7 @@ pub trait AmountSource {}
 
 #[derive(Clone, Debug)]
 pub struct OfferOnly {
+	pub quantity: Option<u64>,
 	pub offer_amount: Amount,
 }
 
@@ -572,6 +573,7 @@ pub struct InvoiceRequestOnly {
 
 #[derive(Clone, Debug)]
 pub struct OfferAndInvoiceRequest {
+	pub quantity: Option<u64>,
 	pub offer_amount: Amount,
 	pub invoice_request_amount: u64,
 }
@@ -580,36 +582,35 @@ impl AmountSource for OfferOnly {}
 impl AmountSource for InvoiceRequestOnly {}
 impl AmountSource for OfferAndInvoiceRequest {}
 
-/// If only OfferAmount is present, we need to make sure that we get the exact amount from the offer, if the amount is in Bitcoin, or let user derive the currency converted amount to use in Invoice.
-/// If only the InvoiceRequestAmount is present, we need to use that amount for the invoice, exactly.
-/// If both are present, we need to verify the invoice request amount is at least greater than or equal to the offer amount, or verify the amount is resonable if the offer is in currency and use the invoice request amount for the invoice.
-
 /// Derives the amount to use for the OfferOnly case.
-pub trait DeriveAmountToUse {
+pub trait AmountDerivable {
 	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
 }
 
-impl DeriveAmountToUse for OfferOnly {
+impl AmountDerivable for OfferOnly {
 	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
 		match self.offer_amount {
-			Amount::Bitcoin{amount_msats} => Ok(amount_msats),
+			Amount::Bitcoin{amount_msats} => {
+				Ok(amount_msats.saturating_mul(self.quantity.unwrap_or(1)))
+			},
 			Amount::Currency{..} => Err(Bolt12SemanticError::UnsupportedCurrency),
 		}
 	}
 }
 
-pub trait VerifyAmountToUse {
+pub trait AmountVerifiable {
 	/// Verifies the amount to use for the invoice request.
 	///
 	/// Returns the amount to use for the invoice request.
 	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
 }
 
-impl VerifyAmountToUse for OfferAndInvoiceRequest {
+impl AmountVerifiable for OfferAndInvoiceRequest {
 	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
 		match self.offer_amount {
 			Amount::Bitcoin { amount_msats } => {
-				if self.invoice_request_amount < amount_msats {
+				let total = amount_msats.saturating_mul(self.quantity.unwrap_or(1));
+				if self.invoice_request_amount < total {
 					Err(Bolt12SemanticError::InsufficientAmount)
 				} else {
 					Ok(self.invoice_request_amount)
@@ -620,6 +621,62 @@ impl VerifyAmountToUse for OfferAndInvoiceRequest {
 	}
 }
 
+#[derive(Clone, Debug)]
+pub enum ResolvedAmountSource {
+	/// The amount was specified in the invoice request.
+	InvoiceRequestOnly(InvoiceRequestOnly),
+	/// The amount was specified in the offer.
+	OfferOnly(OfferOnly),
+	/// The amount was specified in both the offer and the invoice request.
+	OfferAndInvoiceRequest(OfferAndInvoiceRequest),
+}
+
+impl ResolvedAmountSource {
+	/// Returns the amount in msats, if available.
+	pub(crate) fn resolve_amount_source(
+		invoice_request_contents: &InvoiceRequestContents,
+	) -> Result<Self, Bolt12SemanticError> {
+		let ir_amount = invoice_request_contents.inner.amount_msats();
+		let offer_amount = invoice_request_contents.inner.offer.amount();
+		let quantity = invoice_request_contents.quantity();
+
+		match (ir_amount, offer_amount) {
+			(Some(ir_amount), Some(offer_amount)) => {
+				if let Amount::Bitcoin { amount_msats } = offer_amount {
+					if ir_amount < amount_msats {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
+
+				Ok(ResolvedAmountSource::OfferAndInvoiceRequest(OfferAndInvoiceRequest {
+					quantity,
+					offer_amount,
+					invoice_request_amount: ir_amount,
+				}))
+			},
+
+			(Some(amount_msats), None) => {
+				Ok(ResolvedAmountSource::InvoiceRequestOnly(InvoiceRequestOnly {
+					invoice_request_amount: amount_msats,
+				}))
+			},
+
+			(None, Some(amount)) => {
+				Ok(ResolvedAmountSource::OfferOnly(OfferOnly { quantity, offer_amount: amount }))
+			},
+
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}
+	}
+
+	pub fn resolved_amount_msats(&self) -> Result<u64, Bolt12SemanticError> {
+		match self {
+			Self::InvoiceRequestOnly(ir_only) => Ok(ir_only.invoice_request_amount),
+			Self::OfferOnly(offer_only) => offer_only.derive_amount_to_use(),
+			Self::OfferAndInvoiceRequest(offer_and_invoice_request) => offer_and_invoice_request.verify_amount_to_use(),
+		}
+	}
+}
 
 #[cfg(not(c_bindings))]
 impl UnsignedInvoiceRequest {
@@ -656,40 +713,40 @@ pub struct InvoiceRequest {
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
 #[derive(Clone, Debug)]
-pub enum VerifiedInvoiceRequestEnum {
+pub enum InvoiceRequestKeyContext {
 	/// An invoice request with signing keys that can be derived from the metadata.
 	WithKeys(VerifiedInvoiceRequest<DerivedSigningPubkey>),
 	/// An invoice request without derived signing keys, which must be explicitly provided.
 	WithoutKeys(VerifiedInvoiceRequest<ExplicitSigningPubkey>),
 }
 
-impl VerifiedInvoiceRequestEnum {
+impl InvoiceRequestKeyContext {
 	/// Returns a reference to the underlying `InvoiceRequest`.
 	pub fn inner(&self) -> &InvoiceRequest {
 		match self {
-			VerifiedInvoiceRequestEnum::WithKeys(req) => &req.inner,
-			VerifiedInvoiceRequestEnum::WithoutKeys(req) => &req.inner,
+			InvoiceRequestKeyContext::WithKeys(req) => &req.inner,
+			InvoiceRequestKeyContext::WithoutKeys(req) => &req.inner,
 		}
 	}
 
 	/// Returns the `OfferId` of the offer this invoice request is for.
 	pub fn offer_id(&self) -> OfferId {
 		match self {
-			VerifiedInvoiceRequestEnum::WithKeys(req) => req.offer_id,
-			VerifiedInvoiceRequestEnum::WithoutKeys(req) => req.offer_id,
+			InvoiceRequestKeyContext::WithKeys(req) => req.offer_id,
+			InvoiceRequestKeyContext::WithoutKeys(req) => req.offer_id,
 		}
 	}
 }
 
-impl TryFrom<VerifiedInvoiceRequestEnum> for VerifiedInvoiceRequestEnumWithAmountToUse {
+impl TryFrom<InvoiceRequestKeyContext> for VerifiedInvoiceRequestEnumWithAmountToUse {
 	type Error = Bolt12SemanticError;
 
-	fn try_from(request: VerifiedInvoiceRequestEnum) -> Result<Self, Self::Error> {
+	fn try_from(request: InvoiceRequestKeyContext) -> Result<Self, Self::Error> {
 		match request {
-			VerifiedInvoiceRequestEnum::WithKeys(inner) => {
+			InvoiceRequestKeyContext::WithKeys(inner) => {
 				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(inner.try_into()?))
 			}
-			VerifiedInvoiceRequestEnum::WithoutKeys(inner) => {
+			InvoiceRequestKeyContext::WithoutKeys(inner) => {
 				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(inner.try_into()?))
 			}
 		}
@@ -706,7 +763,7 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 
 	/// The amount source for the invoice request, which may be from the offer, the invoice request,
 	/// or both.
-	pub amount_source: AmountSourceEnum,
+	pub amount_source: ResolvedAmountSource,
 
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
@@ -736,7 +793,7 @@ pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
 
 	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
  	/// [`Offer`] or the [`InvoiceRequest`], or both.
-	pub amount_to_use: u64,
+	pub resolved_amount_msats: u64,
 
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
@@ -760,16 +817,12 @@ impl<S: SigningPubkeyStrategy> TryFrom<VerifiedInvoiceRequest<S>> for VerifiedIn
 	type Error = Bolt12SemanticError;
 
 	fn try_from(request: VerifiedInvoiceRequest<S>) -> Result<Self, Self::Error> {
-		let amount_to_use = match request.amount_source {
-			AmountSourceEnum::InvoiceRequestOnly(InvoiceRequestOnly { invoice_request_amount }) => Ok(invoice_request_amount),
-			AmountSourceEnum::OfferOnly(amount) => amount.derive_amount_to_use(),
-			AmountSourceEnum::OfferAndInvoiceRequest(offer_and_ir_amount) => offer_and_ir_amount.verify_amount_to_use(),
-		}?;
+		let resolved_amount_msats = request.amount_source.resolved_amount_msats()?;
 
 		Ok(VerifiedInvoiceRequestWithAmountToUse {
 			offer_id: request.offer_id,
 			inner: request.inner,
-			amount_to_use,
+			resolved_amount_msats,
 			keys: request.keys,
 		})
 	}
@@ -803,57 +856,10 @@ impl VerifiedInvoiceRequestEnumWithAmountToUse {
 		}
 	}
 
-	pub fn amount_to_use(&self) -> u64 {
+	pub fn resolved_amount_msats(&self) -> u64 {
 		match self {
-			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => req.amount_to_use,
-			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.amount_to_use,
-		}
-	}
-}
-
-#[derive(Clone, Debug)]
-pub enum AmountSourceEnum {
-	/// The amount was specified in the invoice request.
-	InvoiceRequestOnly(InvoiceRequestOnly),
-	/// The amount was specified in the offer.
-	OfferOnly(OfferOnly),
-	/// The amount was specified in both the offer and the invoice request.
-	OfferAndInvoiceRequest(OfferAndInvoiceRequest),
-}
-
-impl AmountSourceEnum {
-	/// Returns the amount in msats, if available.
-	pub(crate) fn amount_msats(
-		invoice_request_contents: &InvoiceRequestContents,
-	) -> Result<Self, Bolt12SemanticError> {
-		let ir_amount = invoice_request_contents.amount_msats();
-		let offer_amount = invoice_request_contents.inner.offer.amount();
-
-		match (ir_amount, offer_amount) {
-			(Some(ir_amount), Some(offer_amount)) => {
-				if let Amount::Bitcoin { amount_msats } = offer_amount {
-					if ir_amount < amount_msats {
-						return Err(Bolt12SemanticError::InsufficientAmount);
-					}
-				}
-
-				Ok(AmountSourceEnum::OfferAndInvoiceRequest(OfferAndInvoiceRequest {
-					offer_amount,
-					invoice_request_amount: ir_amount,
-				}))
-			},
-
-			(Some(amount_msats), None) => {
-				Ok(AmountSourceEnum::InvoiceRequestOnly(InvoiceRequestOnly {
-					invoice_request_amount: amount_msats,
-				}))
-			},
-
-			(None, Some(amount)) => {
-				Ok(AmountSourceEnum::OfferOnly(OfferOnly { offer_amount: amount }))
-			},
-
-			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => req.resolved_amount_msats,
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.resolved_amount_msats,
 		}
 	}
 }
@@ -897,8 +903,8 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.chain()
 	}
 
-	/// The amount to pay in msats (i.e., the minimum lightning-payable unit for [`chain`]), which
-	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
+	/// The invoice request amount in msats (i.e., the minimum lightning-payable unit for [`chain`]),
+	/// which if present, must be greater than or equal to [`Offer::amount`], converted if necessary.
 	///
 	/// [`chain`]: Self::chain
 	pub fn amount_msats(&$self) -> Option<u64> {
@@ -988,7 +994,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// If the originating [`Offer`] was created using [`OfferBuilder::deriving_signing_pubkey`],
 	/// then first use [`InvoiceRequest::verify_using_metadata`] or
-	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`VerifiedInvoiceRequestEnum`] methods
+	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`InvoiceRequestKeyContext`] methods
 	/// instead.
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
@@ -1027,7 +1033,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 
 macro_rules! invoice_request_verify_method {
 	($self: ident, $self_type: ty) => {
-/// Verifies that the request was for an offer created using the given key by checking the
+	/// Verifies that the request was for an offer created using the given key by checking the
 	/// metadata from the offer.
 	///
 	/// Returns the verified request which contains the derived keys needed to sign a
@@ -1044,7 +1050,7 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestEnum, ()> {
+	) -> Result<InvoiceRequestKeyContext, ()> {
 		let (offer_id, keys) =
 			$self.contents.inner.offer.verify_using_metadata(&$self.bytes, key, secp_ctx)?;
 
@@ -1056,17 +1062,17 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
-		let amount_source = AmountSourceEnum::amount_msats(&inner.contents)
+		let amount_source = ResolvedAmountSource::resolve_amount_source(&inner.contents)
    			.map_err(|_| ())?;
 
 		let verified = match keys {
-			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
+			None => InvoiceRequestKeyContext::WithoutKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
 				amount_source,
 				keys: ExplicitSigningPubkey {},
 			}),
-			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
+			Some(keys) => InvoiceRequestKeyContext::WithKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
 				amount_source,
@@ -1077,7 +1083,7 @@ macro_rules! invoice_request_verify_method {
 		Ok(verified)
 	}
 
-/// Verifies that the request was for an offer created using the given key by checking a nonce
+	/// Verifies that the request was for an offer created using the given key by checking a nonce
 	/// included with the [`BlindedMessagePath`] for which the request was sent through.
 	///
 	/// Returns the verified request which contains the derived keys needed to sign a
@@ -1094,7 +1100,7 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestEnum, ()> {
+	) -> Result<InvoiceRequestKeyContext, ()> {
 		let (offer_id, keys) = $self.contents.inner.offer.verify_using_recipient_data(
 			&$self.bytes, nonce, key, secp_ctx
 		)?;
@@ -1107,17 +1113,17 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
-		let amount_source = AmountSourceEnum::amount_msats(&inner.contents)
+		let amount_source = ResolvedAmountSource::resolve_amount_source(&inner.contents)
    			.map_err(|_| ())?;
 
 		let verified = match keys {
-			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
+			None => InvoiceRequestKeyContext::WithoutKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
 				amount_source,
 				keys: ExplicitSigningPubkey {},
 			}),
-			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
+			Some(keys) => InvoiceRequestKeyContext::WithKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
 				amount_source,
@@ -1229,7 +1235,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		let keys = $self.keys.0;
-		let amount_msats = $self.amount_to_use;
+		let amount_msats = $self.resolved_amount_msats;
 
 		match $contents.contents.inner.offer.issuer_signing_pubkey() {
 			Some(signing_pubkey) => debug_assert_eq!(signing_pubkey, keys.public_key()),
@@ -1242,7 +1248,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	}
 } }
 
-impl VerifiedInvoiceRequestEnum {
+impl InvoiceRequestKeyContext {
 	offer_accessors!(self, self.inner().contents.inner.offer);
 	invoice_request_accessors!(self, self.inner().contents);
 

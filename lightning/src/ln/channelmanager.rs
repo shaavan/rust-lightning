@@ -12688,7 +12688,7 @@ where
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
 				};
 
-				let amount_msats = invoice_request_with_amount.amount_to_use();
+				let amount_msats = invoice_request_with_amount.resolved_amount_msats();
 
 				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 				let (payment_hash, payment_secret) = match self.create_inbound_payment(
