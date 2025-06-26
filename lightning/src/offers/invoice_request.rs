@@ -681,6 +681,21 @@ impl VerifiedInvoiceRequestEnum {
 	}
 }
 
+impl TryFrom<VerifiedInvoiceRequestEnum> for VerifiedInvoiceRequestEnumWithAmountToUse {
+	type Error = Bolt12SemanticError;
+
+	fn try_from(request: VerifiedInvoiceRequestEnum) -> Result<Self, Self::Error> {
+		match request {
+			VerifiedInvoiceRequestEnum::WithKeys(inner) => {
+				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(inner.try_into()?))
+			}
+			VerifiedInvoiceRequestEnum::WithoutKeys(inner) => {
+				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(inner.try_into()?))
+			}
+		}
+	}
+}
+
 #[derive(Clone, Debug)]
 pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
@@ -739,6 +754,25 @@ pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub keys: S,
+}
+
+impl<S: SigningPubkeyStrategy> TryFrom<VerifiedInvoiceRequest<S>> for VerifiedInvoiceRequestWithAmountToUse<S> {
+	type Error = Bolt12SemanticError;
+
+	fn try_from(request: VerifiedInvoiceRequest<S>) -> Result<Self, Self::Error> {
+		let amount_to_use = match request.amount_source {
+			AmountSourceEnum::InvoiceRequestOnly(InvoiceRequestOnly { invoice_request_amount }) => Ok(invoice_request_amount),
+			AmountSourceEnum::OfferOnly(amount) => amount.derive_amount_to_use(),
+			AmountSourceEnum::OfferAndInvoiceRequest(offer_and_ir_amount) => offer_and_ir_amount.verify_amount_to_use(),
+		}?;
+
+		Ok(VerifiedInvoiceRequestWithAmountToUse {
+			offer_id: request.offer_id,
+			inner: request.inner,
+			amount_to_use,
+			keys: request.keys,
+		})
+	}
 }
 
 /// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
