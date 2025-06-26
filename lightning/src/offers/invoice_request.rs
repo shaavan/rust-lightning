@@ -1183,7 +1183,55 @@ impl VerifiedInvoiceRequestEnum {
 	}
 }
 
+impl VerifiedInvoiceRequestEnumWithAmountToUse {
+	offer_accessors!(self, self.inner().contents.inner.offer);
+	invoice_request_accessors!(self, self.inner().contents);
+
+	/// Fetch the [`InvoiceRequestFields`] for this verified invoice.
+	pub fn fields(&self) -> InvoiceRequestFields {
+		let InvoiceRequestContents {
+			payer_signing_pubkey,
+			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, .. },
+		} = &self.inner().contents;
+
+		InvoiceRequestFields {
+			payer_signing_pubkey: *payer_signing_pubkey,
+			quantity: *quantity,
+			payer_note_truncated: payer_note
+				.clone()
+				// Truncate the payer note to `PAYER_NOTE_LIMIT` bytes, rounding
+				// down to the nearest valid UTF-8 code point boundary.
+				.map(|s| UntrustedString(string_truncate_safe(s, PAYER_NOTE_LIMIT))),
+			human_readable_name: self.offer_from_hrn().clone(),
+		}
+	}
+}
+
 impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+
+	/// Fetch the [`InvoiceRequestFields`] for this verified invoice.
+	pub fn fields(&self) -> InvoiceRequestFields {
+		let InvoiceRequestContents {
+			payer_signing_pubkey,
+			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, .. },
+		} = &self.inner.contents;
+
+		InvoiceRequestFields {
+			payer_signing_pubkey: *payer_signing_pubkey,
+			quantity: *quantity,
+			payer_note_truncated: payer_note
+				.clone()
+				// Truncate the payer note to `PAYER_NOTE_LIMIT` bytes, rounding
+				// down to the nearest valid UTF-8 code point boundary.
+				.map(|s| UntrustedString(string_truncate_safe(s, PAYER_NOTE_LIMIT))),
+			human_readable_name: self.offer_from_hrn().clone(),
+		}
+	}
+}
+
+impl VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 
@@ -1221,6 +1269,30 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 }
 
 impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+
+	/// Fetch the [`InvoiceRequestFields`] for this verified invoice.
+	pub fn fields(&self) -> InvoiceRequestFields {
+		let InvoiceRequestContents {
+			payer_signing_pubkey,
+			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, .. },
+		} = &self.inner.contents;
+
+		InvoiceRequestFields {
+			payer_signing_pubkey: *payer_signing_pubkey,
+			quantity: *quantity,
+			payer_note_truncated: payer_note
+				.clone()
+				// Truncate the payer note to `PAYER_NOTE_LIMIT` bytes, rounding
+				// down to the nearest valid UTF-8 code point boundary.
+				.map(|s| UntrustedString(string_truncate_safe(s, PAYER_NOTE_LIMIT))),
+			human_readable_name: self.offer_from_hrn().clone(),
+		}
+	}
+}
+
+impl VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 
