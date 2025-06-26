@@ -42,7 +42,7 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestLegacy,
+	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestLegacy
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -103,6 +103,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	currency_conversion: DefaultCurrencyConversion,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -133,6 +135,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			currency_conversion: DefaultCurrencyConversion {},
 		}
 	}
 
@@ -185,6 +189,16 @@ where
 			let updated_time = timestamp.load(Ordering::Acquire) as u32;
 			self.hrn_resolver.new_best_block(_height, updated_time);
 		}
+	}
+}
+
+pub struct DefaultCurrencyConversion {}
+
+impl CurrencyConversion for DefaultCurrencyConversion {
+	fn convert_to_bitcoin(
+		&self, _iso4217_code: [u8; 3], _amount: u64,
+	) -> Result<u64, Bolt12SemanticError> {
+		Err(Bolt12SemanticError::UnsupportedCurrency)
 	}
 }
 
