@@ -671,6 +671,65 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 #[derive(Clone, Debug)]
+pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
+	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
+	pub offer_id: OfferId,
+
+	/// The verified request.
+	pub(crate) inner: InvoiceRequest,
+
+	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
+ 	/// [`Offer`] or the [`InvoiceRequest`], or both.
+	pub amount: u64,
+
+	/// Keys for signing a [`Bolt12Invoice`] for the request.
+	///
+	#[cfg_attr(
+		feature = "std",
+		doc = "If `DerivedSigningPubkey`, must call [`respond_using_derived_keys`] when responding. Otherwise, call [`respond_with`]."
+	)]
+	#[cfg_attr(feature = "std", doc = "")]
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	#[cfg_attr(
+		feature = "std",
+		doc = "[`respond_using_derived_keys`]: Self::respond_using_derived_keys"
+	)]
+	#[cfg_attr(feature = "std", doc = "[`respond_with`]: Self::respond_with")]
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub keys: S,
+}
+
+/// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
+/// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
+/// on whether the signing keys were derived.
+#[derive(Clone, Debug)]
+pub enum VerifiedInvoiceRequestEnumWithAmountToUse {
+	/// An invoice request with signing keys that can be derived from the metadata.
+	WithKeys(VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey>),
+	/// An invoice request without derived signing keys, which must be explicitly provided.
+	WithoutKeys(VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey>),
+}
+
+impl VerifiedInvoiceRequestEnumWithAmountToUse {
+	/// Returns a reference to the underlying `InvoiceRequest`.
+	pub fn inner(&self) -> &InvoiceRequest {
+		match self {
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => &req.inner,
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => &req.inner,
+		}
+	}
+
+	/// Returns the `OfferId` of the offer this invoice request is for.
+	pub fn offer_id(&self) -> OfferId {
+		match self {
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => req.offer_id,
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.offer_id,
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
 pub enum AmountSourceEnum {
 	/// The amount was specified in the invoice request.
 	InvoiceRequestOnly(InvoiceRequestOnly),
