@@ -580,6 +580,47 @@ impl AmountSource for OfferOnly {}
 impl AmountSource for InvoiceRequestOnly {}
 impl AmountSource for OfferAndInvoiceRequest {}
 
+/// If only OfferAmount is present, we need to make sure that we get the exact amount from the offer, if the amount is in Bitcoin, or let user derive the currency converted amount to use in Invoice.
+/// If only the InvoiceRequestAmount is present, we need to use that amount for the invoice, exactly.
+/// If both are present, we need to verify the invoice request amount is at least greater than or equal to the offer amount, or verify the amount is resonable if the offer is in currency and use the invoice request amount for the invoice.
+
+/// Derives the amount to use for the OfferOnly case.
+pub trait DeriveAmountToUse {
+	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
+}
+
+impl DeriveAmountToUse for OfferOnly {
+	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin{amount_msats} => Ok(amount_msats),
+			Amount::Currency{..} => Err(Bolt12SemanticError::UnsupportedCurrency),
+		}
+	}
+}
+
+pub trait VerifyAmountToUse {
+	/// Verifies the amount to use for the invoice request.
+	///
+	/// Returns the amount to use for the invoice request.
+	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
+}
+
+impl VerifyAmountToUse for OfferAndInvoiceRequest {
+	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin { amount_msats } => {
+				if self.invoice_request_amount < amount_msats {
+					Err(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					Ok(self.invoice_request_amount)
+				}
+			}
+			Amount::Currency{..} => Err(Bolt12SemanticError::UnsupportedCurrency),
+		}
+	}
+}
+
+
 #[cfg(not(c_bindings))]
 impl UnsignedInvoiceRequest {
 	unsigned_invoice_request_sign_method!(self, Self, mut);
@@ -680,7 +721,7 @@ pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
 
 	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
  	/// [`Offer`] or the [`InvoiceRequest`], or both.
-	pub amount: u64,
+	pub amount_to_use: u64,
 
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
@@ -1147,6 +1188,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		let keys = $self.keys.0;
+		let amount_msats = $self.amount_to_use;
 
 		match $contents.contents.inner.offer.issuer_signing_pubkey() {
 			Some(signing_pubkey) => debug_assert_eq!(signing_pubkey, keys.public_key()),
@@ -1154,7 +1196,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		<$builder>::for_offer_using_keys(
-			&$self.inner, payment_paths, created_at, payment_hash, keys
+			&$self.inner, amount_msats, payment_paths, created_at, payment_hash, keys
 		)
 	}
 } }
