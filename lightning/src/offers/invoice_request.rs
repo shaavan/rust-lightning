@@ -620,7 +620,7 @@ pub struct VerifiedInvoiceRequestLegacy {
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(super) struct InvoiceRequestContents {
+pub(crate) struct InvoiceRequestContents {
 	pub(super) inner: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: PublicKey,
 }
@@ -698,6 +698,87 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.offer_from_hrn()
 	}
 } }
+
+pub trait CurrencyConversion {
+	fn convert_to_bitcoin(&self, _iso4217_code: [u8; 3], _amount: u64) -> Result<u64, Bolt12SemanticError> {
+		Err(Bolt12SemanticError::UnsupportedCurrency)
+	}
+}
+
+/// Represents that the amount to use for the invoice request is derived from the offer only.
+/// The amount is derived from the offer's amount and the quantity specified in the invoice request.
+#[derive(Clone, Debug)]
+pub struct OfferOnly {
+	/// The quantity of items as specified in the invoice request. If `None`, the quantity is assumed to be `1`.
+	pub quantity: Option<u64>,
+	/// The amount to use for the invoice request, as specified in the offer.
+	pub offer_amount: Amount,
+}
+
+impl OfferOnly {
+	pub fn derive_amount_to_use<C: CurrencyConversion>(
+		&self, converter: &C,
+	) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin { amount_msats } => {
+				Ok(amount_msats.saturating_mul(self.quantity.unwrap_or(1)))
+			},
+			Amount::Currency { iso4217_code, amount } => {
+				let amount_msats = converter.convert_to_bitcoin(iso4217_code, amount)?;
+				Ok(amount_msats.saturating_mul(self.quantity.unwrap_or(1)))
+			},
+		}
+	}
+}
+
+/// Represents that the amount to use for the invoice request is specified in the invoice request only.
+#[derive(Clone, Debug)]
+pub struct InvoiceRequestOnly {
+	/// The amount to use for the invoice request, as specified in the invoice request.
+	pub invoice_request_amount: u64,
+}
+
+/// Represents that the amount to use for the invoice request is specified in both the offer and the
+/// invoice request.
+#[derive(Clone, Debug)]
+pub struct OfferAndInvoiceRequest {
+	/// The quantity of items as specified in the invoice request. If `None`, the quantity is assumed to be `1`.
+	pub quantity: Option<u64>,
+	/// The amount specified in the offer.
+	pub offer_amount: Amount,
+	/// The amount specified in the invoice request.
+	pub invoice_request_amount: u64,
+}
+
+impl OfferAndInvoiceRequest {
+	pub fn verify_amount_to_use<C: CurrencyConversion>(&self, converter: &C) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin { amount_msats } => {
+				let total = amount_msats.saturating_mul(self.quantity.unwrap_or(1));
+				if self.invoice_request_amount < total {
+					Err(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					Ok(self.invoice_request_amount)
+				}
+			},
+			Amount::Currency { iso4217_code, amount } => {
+				let amount_msats = converter.convert_to_bitcoin(iso4217_code, amount)?;
+				if self.invoice_request_amount < amount_msats {
+					Err(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					Ok(self.invoice_request_amount)
+				}
+			},
+		}
+	}
+}
+
+#[derive(Clone, Debug)]
+pub enum AmountNature {
+	BitcoinAmount(InvoiceRequestOnly),
+	VerificationNeeded(OfferAndInvoiceRequest),
+	DerivationNeeded(OfferOnly),
+}
 
 impl UnsignedInvoiceRequest {
 	offer_accessors!(self, self.contents.inner.offer);
