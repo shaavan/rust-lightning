@@ -620,7 +620,7 @@ pub struct VerifiedInvoiceRequestLegacy {
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
-pub(super) struct InvoiceRequestContents {
+pub(crate) struct InvoiceRequestContents {
 	pub(super) inner: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: PublicKey,
 }
@@ -698,6 +698,142 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.offer_from_hrn()
 	}
 } }
+
+/// A blank trait  for types that can be used as the source of an amount in an invoice request.
+pub trait AmountSource {}
+
+/// Represents that the amount to use for the invoice request is derived from the offer only.
+/// The amount is derived from the offer's amount and the quantity specified in the invoice request.
+#[derive(Clone, Debug)]
+pub struct OfferOnly {
+	/// The quantity of items as specified in the invoice request. If `None`, the quantity is assumed to be `1`.
+	pub quantity: Option<u64>,
+	/// The amount to use for the invoice request, as specified in the offer.
+	pub offer_amount: Amount,
+}
+
+/// Represents that the amount to use for the invoice request is specified in the invoice request only.
+#[derive(Clone, Debug)]
+pub struct InvoiceRequestOnly {
+	/// The amount to use for the invoice request, as specified in the invoice request.
+	pub invoice_request_amount: u64,
+}
+
+/// Represents that the amount to use for the invoice request is specified in both the offer and the
+/// invoice request.
+#[derive(Clone, Debug)]
+pub struct OfferAndInvoiceRequest {
+	/// The quantity of items as specified in the invoice request. If `None`, the quantity is assumed to be `1`.
+	pub quantity: Option<u64>,
+	/// The amount specified in the offer.
+	pub offer_amount: Amount,
+	/// The amount specified in the invoice request.
+	pub invoice_request_amount: u64,
+}
+
+impl AmountSource for OfferOnly {}
+impl AmountSource for InvoiceRequestOnly {}
+impl AmountSource for OfferAndInvoiceRequest {}
+
+/// Derives the amount to use for the OfferOnly case.
+pub trait AmountDerivable {
+	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
+}
+
+impl AmountDerivable for OfferOnly {
+	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin { amount_msats } => {
+				Ok(amount_msats.saturating_mul(self.quantity.unwrap_or(1)))
+			},
+			Amount::Currency { .. } => Err(Bolt12SemanticError::UnsupportedCurrency),
+		}
+	}
+}
+
+/// Verifies the amount to use for the invoice request in the OfferAndInvoiceRequest case.
+pub trait AmountVerifiable {
+	/// Verifies the amount to use for the invoice request.
+	///
+	/// Returns the amount to use for the invoice request.
+	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError>;
+}
+
+impl AmountVerifiable for OfferAndInvoiceRequest {
+	fn verify_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
+		match self.offer_amount {
+			Amount::Bitcoin { amount_msats } => {
+				let total = amount_msats.saturating_mul(self.quantity.unwrap_or(1));
+				if self.invoice_request_amount < total {
+					Err(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					Ok(self.invoice_request_amount)
+				}
+			},
+			Amount::Currency { .. } => Err(Bolt12SemanticError::UnsupportedCurrency),
+		}
+	}
+}
+
+/// Represents the source of the amount used in an invoice request.
+#[derive(Clone, Debug)]
+pub enum ResolvedAmountSource {
+	/// The amount was specified in the invoice request.
+	InvoiceRequestOnly(InvoiceRequestOnly),
+	/// The amount was specified in the offer.
+	OfferOnly(OfferOnly),
+	/// The amount was specified in both the offer and the invoice request.
+	OfferAndInvoiceRequest(OfferAndInvoiceRequest),
+}
+
+impl ResolvedAmountSource {
+	/// Returns the amount in msats, if available.
+	pub(crate) fn resolve_amount_source(
+		invoice_request_contents: &InvoiceRequestContents,
+	) -> Result<Self, Bolt12SemanticError> {
+		let ir_amount = invoice_request_contents.inner.amount_msats();
+		let offer_amount = invoice_request_contents.inner.offer.amount();
+		let quantity = invoice_request_contents.quantity();
+
+		match (ir_amount, offer_amount) {
+			(Some(ir_amount), Some(offer_amount)) => {
+				if let Amount::Bitcoin { amount_msats } = offer_amount {
+					if ir_amount < amount_msats {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
+
+				Ok(ResolvedAmountSource::OfferAndInvoiceRequest(OfferAndInvoiceRequest {
+					quantity,
+					offer_amount,
+					invoice_request_amount: ir_amount,
+				}))
+			},
+
+			(Some(amount_msats), None) => {
+				Ok(ResolvedAmountSource::InvoiceRequestOnly(InvoiceRequestOnly {
+					invoice_request_amount: amount_msats,
+				}))
+			},
+
+			(None, Some(amount)) => {
+				Ok(ResolvedAmountSource::OfferOnly(OfferOnly { quantity, offer_amount: amount }))
+			},
+
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}
+	}
+
+	pub fn resolved_amount_msats(&self) -> Result<u64, Bolt12SemanticError> {
+		match self {
+			Self::InvoiceRequestOnly(ir_only) => Ok(ir_only.invoice_request_amount),
+			Self::OfferOnly(offer_only) => offer_only.derive_amount_to_use(),
+			Self::OfferAndInvoiceRequest(offer_and_invoice_request) => {
+				offer_and_invoice_request.verify_amount_to_use()
+			},
+		}
+	}
+}
 
 impl UnsignedInvoiceRequest {
 	offer_accessors!(self, self.contents.inner.offer);
