@@ -590,10 +590,10 @@ pub trait AmountDerivable {
 impl AmountDerivable for OfferOnly {
 	fn derive_amount_to_use(&self) -> Result<u64, Bolt12SemanticError> {
 		match self.offer_amount {
-			Amount::Bitcoin{amount_msats} => {
+			Amount::Bitcoin { amount_msats } => {
 				Ok(amount_msats.saturating_mul(self.quantity.unwrap_or(1)))
 			},
-			Amount::Currency{..} => Err(Bolt12SemanticError::UnsupportedCurrency),
+			Amount::Currency { .. } => Err(Bolt12SemanticError::UnsupportedCurrency),
 		}
 	}
 }
@@ -615,8 +615,8 @@ impl AmountVerifiable for OfferAndInvoiceRequest {
 				} else {
 					Ok(self.invoice_request_amount)
 				}
-			}
-			Amount::Currency{..} => Err(Bolt12SemanticError::UnsupportedCurrency),
+			},
+			Amount::Currency { .. } => Err(Bolt12SemanticError::UnsupportedCurrency),
 		}
 	}
 }
@@ -673,7 +673,9 @@ impl ResolvedAmountSource {
 		match self {
 			Self::InvoiceRequestOnly(ir_only) => Ok(ir_only.invoice_request_amount),
 			Self::OfferOnly(offer_only) => offer_only.derive_amount_to_use(),
-			Self::OfferAndInvoiceRequest(offer_and_invoice_request) => offer_and_invoice_request.verify_amount_to_use(),
+			Self::OfferAndInvoiceRequest(offer_and_invoice_request) => {
+				offer_and_invoice_request.verify_amount_to_use()
+			},
 		}
 	}
 }
@@ -745,10 +747,10 @@ impl TryFrom<InvoiceRequestKeyContext> for VerifiedInvoiceRequestEnumWithAmountT
 		match request {
 			InvoiceRequestKeyContext::WithKeys(inner) => {
 				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(inner.try_into()?))
-			}
+			},
 			InvoiceRequestKeyContext::WithoutKeys(inner) => {
 				Ok(VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(inner.try_into()?))
-			}
+			},
 		}
 	}
 }
@@ -792,7 +794,7 @@ pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
 	pub(crate) inner: InvoiceRequest,
 
 	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
- 	/// [`Offer`] or the [`InvoiceRequest`], or both.
+	/// [`Offer`] or the [`InvoiceRequest`], or both.
 	pub resolved_amount_msats: u64,
 
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
@@ -813,7 +815,9 @@ pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
 	pub keys: S,
 }
 
-impl<S: SigningPubkeyStrategy> TryFrom<VerifiedInvoiceRequest<S>> for VerifiedInvoiceRequestWithAmountToUse<S> {
+impl<S: SigningPubkeyStrategy> TryFrom<VerifiedInvoiceRequest<S>>
+	for VerifiedInvoiceRequestWithAmountToUse<S>
+{
 	type Error = Bolt12SemanticError;
 
 	fn try_from(request: VerifiedInvoiceRequest<S>) -> Result<Self, Self::Error> {
@@ -859,7 +863,9 @@ impl VerifiedInvoiceRequestEnumWithAmountToUse {
 	pub fn resolved_amount_msats(&self) -> u64 {
 		match self {
 			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => req.resolved_amount_msats,
-			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.resolved_amount_msats,
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => {
+				req.resolved_amount_msats
+			},
 		}
 	}
 }
@@ -1033,7 +1039,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 
 macro_rules! invoice_request_verify_method {
 	($self: ident, $self_type: ty) => {
-	/// Verifies that the request was for an offer created using the given key by checking the
+/// Verifies that the request was for an offer created using the given key by checking the
 	/// metadata from the offer.
 	///
 	/// Returns the verified request which contains the derived keys needed to sign a
@@ -1083,7 +1089,7 @@ macro_rules! invoice_request_verify_method {
 		Ok(verified)
 	}
 
-	/// Verifies that the request was for an offer created using the given key by checking a nonce
+/// Verifies that the request was for an offer created using the given key by checking a nonce
 	/// included with the [`BlindedMessagePath`] for which the request was sent through.
 	///
 	/// Returns the verified request which contains the derived keys needed to sign a

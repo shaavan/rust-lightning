@@ -41,7 +41,8 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestWithAmountToUse,
+	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestKeyContext,
+	VerifiedInvoiceRequestWithAmountToUse,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -353,7 +354,7 @@ where
 	/// - The verification process (via recipient context data or metadata) fails.
 	pub fn verify_invoice_request(
 		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
-	) -> Result<VerifiedInvoiceRequestEnum, ()> {
+	) -> Result<InvoiceRequestKeyContext, ()> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -779,8 +780,8 @@ where
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, ES: Deref, R: Deref>(
 		&'a self, router: &R, entropy_source: ES,
-		invoice_request: &'a VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey>, amount_msats: u64,
-		payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		invoice_request: &'a VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey>,
+		amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret,
 		usable_channels: Vec<ChannelDetails>,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
@@ -844,8 +845,8 @@ where
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, ES: Deref, R: Deref>(
 		&'a self, router: &R, entropy_source: ES,
-		invoice_request: &'a VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey>, amount_msats: u64,
-		payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		invoice_request: &'a VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey>,
+		amount_msats: u64, payment_hash: PaymentHash, payment_secret: PaymentSecret,
 		usable_channels: Vec<ChannelDetails>,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where

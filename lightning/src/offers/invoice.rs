@@ -316,8 +316,9 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer_using_keys(
-			invoice_request: &'a InvoiceRequest, resolved_amount_msats: u64, payment_paths: Vec<BlindedPaymentPath>,
-			created_at: Duration, payment_hash: PaymentHash, keys: Keypair,
+			invoice_request: &'a InvoiceRequest, resolved_amount_msats: u64,
+			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
+			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {
 			let amount_msats = resolved_amount_msats;
 			let signing_pubkey = keys.public_key();
@@ -1792,8 +1793,8 @@ mod tests {
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::DecodeError;
 	use crate::offers::invoice_request::{
-		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
-		VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestWithAmountToUse,
+		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestKeyContext,
+		InvoiceRequestTlvStreamRef, VerifiedInvoiceRequestWithAmountToUse,
 	};
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
@@ -2216,8 +2217,9 @@ mod tests {
 			.unwrap();
 
 		match verified_request {
-			VerifiedInvoiceRequestEnum::WithKeys(req) => {
-				let req_with_amount: VerifiedInvoiceRequestWithAmountToUse<_> = req.try_into().unwrap();
+			InvoiceRequestKeyContext::WithKeys(req) => {
+				let req_with_amount: VerifiedInvoiceRequestWithAmountToUse<_> =
+					req.try_into().unwrap();
 				let invoice = req_with_amount
 					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
 					.unwrap()
@@ -2227,7 +2229,7 @@ mod tests {
 					panic!("error building invoice: {:?}", e);
 				}
 			},
-			VerifiedInvoiceRequestEnum::WithoutKeys(_) => {
+			InvoiceRequestKeyContext::WithoutKeys(_) => {
 				panic!("expected invoice request with keys");
 			},
 		}
@@ -2253,10 +2255,10 @@ mod tests {
 			invoice_request.verify_using_metadata(&expanded_key, &secp_ctx).unwrap();
 
 		match verified_request {
-			VerifiedInvoiceRequestEnum::WithKeys(_) => {
+			InvoiceRequestKeyContext::WithKeys(_) => {
 				panic!("expected invoice request without keys")
 			},
-			VerifiedInvoiceRequestEnum::WithoutKeys(_) => (),
+			InvoiceRequestKeyContext::WithoutKeys(_) => (),
 		}
 	}
 

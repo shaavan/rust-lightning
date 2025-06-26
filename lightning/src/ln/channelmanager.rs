@@ -86,12 +86,9 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
-use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, UnsignedBolt12Invoice,
-	DEFAULT_RELATIVE_EXPIRY,
-};
+use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice, DEFAULT_RELATIVE_EXPIRY};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestEnumWithAmountToUse};
+use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequestEnumWithAmountToUse};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
