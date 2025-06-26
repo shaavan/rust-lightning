@@ -558,6 +558,28 @@ macro_rules! unsigned_invoice_request_sign_method { (
 	}
 } }
 
+pub trait AmountSource {}
+
+#[derive(Clone, Debug)]
+pub struct OfferOnly {
+	pub offer_amount: Amount,
+}
+
+#[derive(Clone, Debug)]
+pub struct InvoiceRequestOnly {
+	pub invoice_request_amount: u64,
+}
+
+#[derive(Clone, Debug)]
+pub struct OfferAndInvoiceRequest {
+	pub offer_amount: Amount,
+	pub invoice_request_amount: u64,
+}
+
+impl AmountSource for OfferOnly {}
+impl AmountSource for InvoiceRequestOnly {}
+impl AmountSource for OfferAndInvoiceRequest {}
+
 #[cfg(not(c_bindings))]
 impl UnsignedInvoiceRequest {
 	unsigned_invoice_request_sign_method!(self, Self, mut);
@@ -626,6 +648,10 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	/// The verified request.
 	pub(crate) inner: InvoiceRequest,
 
+	/// The amount source for the invoice request, which may be from the offer, the invoice request,
+	/// or both.
+	pub amount_source: AmountSourceEnum,
+
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
 	#[cfg_attr(
@@ -642,6 +668,53 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub keys: S,
+}
+
+#[derive(Clone, Debug)]
+pub enum AmountSourceEnum {
+	/// The amount was specified in the invoice request.
+	InvoiceRequestOnly(InvoiceRequestOnly),
+	/// The amount was specified in the offer.
+	OfferOnly(OfferOnly),
+	/// The amount was specified in both the offer and the invoice request.
+	OfferAndInvoiceRequest(OfferAndInvoiceRequest),
+}
+
+impl AmountSourceEnum {
+	/// Returns the amount in msats, if available.
+	pub fn amount_msats(
+		invoice_request_contents: &InvoiceRequestContents,
+	) -> Result<Self, Bolt12SemanticError> {
+		let ir_amount = invoice_request_contents.amount_msats();
+		let offer_amount = invoice_request_contents.inner.offer.amount();
+
+		match (ir_amount, offer_amount) {
+			(Some(ir_amount), Some(offer_amount)) => {
+				if let Amount::Bitcoin { amount_msats } = offer_amount {
+					if ir_amount < amount_msats {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
+
+				Ok(AmountSourceEnum::OfferAndInvoiceRequest(OfferAndInvoiceRequest {
+					offer_amount,
+					invoice_request_amount: ir_amount,
+				}))
+			},
+
+			(Some(amount_msats), None) => {
+				Ok(AmountSourceEnum::InvoiceRequestOnly(InvoiceRequestOnly {
+					invoice_request_amount: amount_msats,
+				}))
+			},
+
+			(None, Some(amount)) => {
+				Ok(AmountSourceEnum::OfferOnly(OfferOnly { offer_amount: amount }))
+			},
+
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}
+	}
 }
 
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
@@ -842,15 +915,20 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let amount_source = AmountSourceEnum::amount_msats(&inner.contents)
+   			.map_err(|_| ())?;
+
 		let verified = match keys {
 			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				amount_source,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				amount_source,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -888,15 +966,20 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let amount_source = AmountSourceEnum::amount_msats(&inner.contents)
+   			.map_err(|_| ())?;
+
 		let verified = match keys {
 			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				amount_source,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				amount_source,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
