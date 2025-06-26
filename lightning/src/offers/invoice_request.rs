@@ -802,6 +802,13 @@ impl VerifiedInvoiceRequestEnumWithAmountToUse {
 			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.offer_id,
 		}
 	}
+
+	pub fn amount_to_use(&self) -> u64 {
+		match self {
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => req.amount_to_use,
+			VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => req.amount_to_use,
+		}
+	}
 }
 
 #[derive(Clone, Debug)]

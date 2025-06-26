@@ -1793,7 +1793,7 @@ mod tests {
 	use crate::ln::msgs::DecodeError;
 	use crate::offers::invoice_request::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
-		VerifiedInvoiceRequestEnum,
+		VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestWithAmountToUse,
 	};
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
@@ -2217,7 +2217,8 @@ mod tests {
 
 		match verified_request {
 			VerifiedInvoiceRequestEnum::WithKeys(req) => {
-				let invoice = req
+				let req_with_amount: VerifiedInvoiceRequestWithAmountToUse<_> = req.try_into().unwrap();
+				let invoice = req_with_amount
 					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
 					.unwrap()
 					.build_and_sign(&secp_ctx);

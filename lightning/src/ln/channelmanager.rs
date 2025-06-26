@@ -91,7 +91,7 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequestEnum};
+use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestEnumWithAmountToUse};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
@@ -12683,12 +12683,12 @@ where
 					Err(_) => return None,
 				};
 
-				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner()
-				) {
-					Ok(amount_msats) => amount_msats,
+				let invoice_request_with_amount: VerifiedInvoiceRequestEnumWithAmountToUse = match invoice_request.try_into() {
+					Ok(invoice_request_with_amount) => invoice_request_with_amount,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
 				};
+
+				let amount_msats = invoice_request_with_amount.amount_to_use();
 
 				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 				let (payment_hash, payment_secret) = match self.create_inbound_payment(
@@ -12701,8 +12701,8 @@ where
 					},
 				};
 
-				let (result, context) = match &invoice_request {
-					VerifiedInvoiceRequestEnum::WithKeys(req) => {
+				let (result, context) = match &invoice_request_with_amount {
+					VerifiedInvoiceRequestEnumWithAmountToUse::WithKeys(req) => {
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&*self.entropy_source,
@@ -12729,7 +12729,7 @@ where
 							},
 						}
 					},
-					VerifiedInvoiceRequestEnum::WithoutKeys(req) => {
+					VerifiedInvoiceRequestEnumWithAmountToUse::WithoutKeys(req) => {
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&*self.entropy_source,

@@ -57,7 +57,7 @@ use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, NodeAnnou
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, VerifiedInvoiceRequestEnum};
+use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestWithAmountToUse};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::onion_message::messenger::{Destination, PeeledOnion, MessageSendInstructions};
@@ -2235,7 +2235,8 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		VerifiedInvoiceRequestEnum::WithKeys(req) => {
-			req.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+			let req_with_amount: VerifiedInvoiceRequestWithAmountToUse<_> = req.try_into().unwrap();
+			req_with_amount.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
