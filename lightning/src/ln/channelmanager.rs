@@ -86,11 +86,9 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
-use crate::offers::invoice::{
-	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, DEFAULT_RELATIVE_EXPIRY,
-};
+use crate::offers::invoice::{Bolt12Invoice, DEFAULT_RELATIVE_EXPIRY};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{InvoiceRequest, VerifiedInvoiceRequestWithAmountToUseEnum};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;
@@ -6634,7 +6632,7 @@ where
 												}
 											};
 											let payment_purpose_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
-												offer_id: verified_invreq.offer_id,
+												offer_id: verified_invreq.offer_id(),
 												invoice_request: verified_invreq.fields(),
 											});
 											match events::PaymentPurpose::from_parts(
@@ -12680,12 +12678,12 @@ where
 					Err(_) => return None,
 				};
 
-				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner
-				) {
-					Ok(amount_msats) => amount_msats,
+				let verified_invoice_request: VerifiedInvoiceRequestWithAmountToUseEnum = match invoice_request.try_into() {
+					Ok(verified_invoice_request) => verified_invoice_request,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
 				};
+
+				let amount_msats = verified_invoice_request.resolved_amount_msats();
 
 				let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 				let (payment_hash, payment_secret) = match self.create_inbound_payment(
@@ -12700,7 +12698,7 @@ where
 
 				let entropy = &*self.entropy_source;
 				let (response, context) = self.flow.create_response_for_invoice_request(
-					&self.node_signer, &self.router, entropy, invoice_request, amount_msats,
+					&self.node_signer, &self.router, entropy, verified_invoice_request,
 					payment_hash, payment_secret, self.list_usable_channels()
 				);
 
