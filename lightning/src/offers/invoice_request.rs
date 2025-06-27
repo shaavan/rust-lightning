@@ -917,7 +917,7 @@ impl AmountNature {
 		match (ir_amount, offer_amount) {
 			(Some(ir_amount), Some(offer_amount)) => {
 				if let Amount::Bitcoin { amount_msats } = offer_amount {
-					if ir_amount < amount_msats {
+					if ir_amount < amount_msats * quantity.unwrap_or(1) { // Correction
 						return Err(Bolt12SemanticError::InsufficientAmount);
 					}
 				}
@@ -1046,17 +1046,37 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
+	) -> Result<VerifiedInvoiceRequestEnum, ()> {
 		let (offer_id, keys) =
 			$self.contents.inner.offer.verify_using_metadata(&$self.bytes, key, secp_ctx)?;
-		Ok(VerifiedInvoiceRequestLegacy {
-			offer_id,
+
+		let inner = {
 			#[cfg(not(c_bindings))]
-			inner: $self,
+			{ $self }
+
 			#[cfg(c_bindings)]
-			inner: $self.clone(),
-			keys,
-		})
+			{ $self.clone() }
+		};
+
+		let amount_nature = AmountNature::resolve_amount_nature(&inner.contents)
+   			.map_err(|_| ())?;
+
+		let verified = match keys {
+			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				amount_nature,
+				keys: ExplicitSigningPubkey {},
+			}),
+			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				amount_nature,
+				keys: DerivedSigningPubkey(keys),
+			}),
+		};
+
+		Ok(verified)
 	}
 
 /// Verifies that the request was for an offer created using the given key by checking a nonce
@@ -1076,18 +1096,38 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
+	) -> Result<VerifiedInvoiceRequestEnum, ()> {
 		let (offer_id, keys) = $self.contents.inner.offer.verify_using_recipient_data(
 			&$self.bytes, nonce, key, secp_ctx
 		)?;
-		Ok(VerifiedInvoiceRequestLegacy {
-			offer_id,
+
+		let inner = {
 			#[cfg(not(c_bindings))]
-			inner: $self,
+			{ $self }
+
 			#[cfg(c_bindings)]
-			inner: $self.clone(),
-			keys,
-		})
+			{ $self.clone() }
+		};
+
+		let amount_nature = AmountNature::resolve_amount_nature(&inner.contents)
+   			.map_err(|_| ())?;
+
+		let verified = match keys {
+			None => VerifiedInvoiceRequestEnum::WithoutKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				amount_nature,
+				keys: ExplicitSigningPubkey {},
+			}),
+			Some(keys) => VerifiedInvoiceRequestEnum::WithKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				amount_nature,
+				keys: DerivedSigningPubkey(keys),
+			}),
+		};
+
+		Ok(verified)
 	}
 	};
 }
@@ -1190,10 +1230,8 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		let keys = match $self.keys {
-			None => return Err(Bolt12SemanticError::InvalidMetadata),
-			Some(keys) => keys,
-		};
+		let keys = $self.keys.0;
+		let amount_msats = $self.resolved_amount_msats;
 
 		match $contents.contents.inner.offer.issuer_signing_pubkey() {
 			Some(signing_pubkey) => debug_assert_eq!(signing_pubkey, keys.public_key()),
@@ -1201,7 +1239,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		<$builder>::for_offer_using_keys(
-			&$self.inner, payment_paths, created_at, payment_hash, keys
+			&$self.inner, amount_msats, payment_paths, created_at, payment_hash, keys
 		)
 	}
 } }
@@ -1241,30 +1279,6 @@ impl VerifiedInvoiceRequestLegacy {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
-	#[cfg(not(c_bindings))]
-	invoice_request_respond_with_explicit_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceBuilder<ExplicitSigningPubkey>
-	);
-	#[cfg(c_bindings)]
-	invoice_request_respond_with_explicit_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceWithExplicitSigningPubkeyBuilder
-	);
-	#[cfg(not(c_bindings))]
-	invoice_request_respond_with_derived_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceBuilder<DerivedSigningPubkey>
-	);
-	#[cfg(c_bindings)]
-	invoice_request_respond_with_derived_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceWithDerivedSigningPubkeyBuilder
-	);
 }
 
 impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
@@ -1283,12 +1297,38 @@ impl VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
+
+	#[cfg(not(c_bindings))]
+	invoice_request_respond_with_derived_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceBuilder<DerivedSigningPubkey>
+	);
+	#[cfg(c_bindings)]
+	invoice_request_respond_with_derived_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceWithDerivedSigningPubkeyBuilder
+	);
 }
 
 impl VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
+
+	#[cfg(not(c_bindings))]
+	invoice_request_respond_with_explicit_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceBuilder<ExplicitSigningPubkey>
+	);
+	#[cfg(c_bindings)]
+	invoice_request_respond_with_explicit_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceWithExplicitSigningPubkeyBuilder
+	);
 }
 
 impl VerifiedInvoiceRequestEnum {
@@ -3283,7 +3323,7 @@ mod tests {
 		match invoice_request.verify_using_metadata(&expanded_key, &secp_ctx) {
 			Ok(invoice_request) => {
 				let fields = invoice_request.fields();
-				assert_eq!(invoice_request.offer_id, offer.id());
+				assert_eq!(invoice_request.offer_id(), offer.id());
 				assert_eq!(
 					fields,
 					InvoiceRequestFields {

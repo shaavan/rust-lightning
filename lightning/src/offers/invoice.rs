@@ -316,10 +316,11 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer_using_keys(
-			invoice_request: &'a InvoiceRequest, payment_paths: Vec<BlindedPaymentPath>,
-			created_at: Duration, payment_hash: PaymentHash, keys: Keypair,
+			invoice_request: &'a InvoiceRequest, resolved_amount_msats: u64,
+			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
+			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {
-			let amount_msats = Self::amount_msats(invoice_request)?;
+			let amount_msats = resolved_amount_msats;
 			let signing_pubkey = keys.public_key();
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
@@ -1791,8 +1792,9 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::DecodeError;
-	use crate::offers::invoice_request::{
-		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
+	use crate::offers::flow::DefaultCurrencyConversion;
+use crate::offers::invoice_request::{
+		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef, VerifiedInvoiceRequestEnum
 	};
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
@@ -2209,15 +2211,27 @@ mod tests {
 				.build_and_sign()
 				.unwrap();
 
-		if let Err(e) = invoice_request
+		let verified_request = invoice_request
 			.clone()
 			.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx)
-			.unwrap()
-			.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
-			.unwrap()
-			.build_and_sign(&secp_ctx)
-		{
-			panic!("error building invoice: {:?}", e);
+			.unwrap();
+
+		match verified_request {
+			VerifiedInvoiceRequestEnum::WithKeys(req) => {
+				let invoice = req
+					.try_into_with_converter(&DefaultCurrencyConversion {})
+					.unwrap()
+					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
+					.unwrap()
+					.build_and_sign(&secp_ctx);
+
+				if let Err(e) = invoice {
+					panic!("error building invoice: {:?}", e);
+				}
+			},
+			VerifiedInvoiceRequestEnum::WithoutKeys(_) => {
+				panic!("expected invoice request with keys");
+			},
 		}
 
 		let expanded_key = ExpandedKey::new([41; 32]);
@@ -2237,13 +2251,14 @@ mod tests {
 				.build_and_sign()
 				.unwrap();
 
-		match invoice_request
-			.verify_using_metadata(&expanded_key, &secp_ctx)
-			.unwrap()
-			.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
-		{
-			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
+		let verified_request =
+			invoice_request.verify_using_metadata(&expanded_key, &secp_ctx).unwrap();
+
+		match verified_request {
+			VerifiedInvoiceRequestEnum::WithKeys(_) => {
+				panic!("expected invoice request without keys")
+			},
+			VerifiedInvoiceRequestEnum::WithoutKeys(_) => (),
 		}
 	}
 

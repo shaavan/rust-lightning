@@ -51,13 +51,14 @@ use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, Paym
 use crate::blinded_path::message::OffersContext;
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{Bolt12PaymentError, MAX_SHORT_LIVED_RELATIVE_EXPIRY, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry, self};
+use crate::offers::flow::DefaultCurrencyConversion;
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, NodeAnnouncement, OnionMessage, OnionMessageHandler, RoutingMessageHandler, SocketAddress, UnsignedGossipMessage, UnsignedNodeAnnouncement};
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
+use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, VerifiedInvoiceRequestEnum, VerifiedInvoiceRequestWithAmountToUse};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::onion_message::messenger::{Destination, PeeledOnion, MessageSendInstructions};
@@ -2229,11 +2230,21 @@ fn fails_paying_invoice_with_unknown_required_features() {
 	let secp_ctx = Secp256k1::new();
 
 	let created_at = alice.node.duration_since_epoch();
-	let invoice = invoice_request
-		.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx).unwrap()
-		.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
-		.features_unchecked(Bolt12InvoiceFeatures::unknown())
-		.build_and_sign(&secp_ctx).unwrap();
+
+	let verified_invoice_request = invoice_request
+		.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx).unwrap();
+
+	let invoice = match verified_invoice_request {
+		VerifiedInvoiceRequestEnum::WithKeys(req) => {
+			let req_with_amount = req.try_into_with_converter(&DefaultCurrencyConversion {}).unwrap();
+			req_with_amount.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+				.features_unchecked(Bolt12InvoiceFeatures::unknown())
+				.build_and_sign(&secp_ctx).unwrap()
+		},
+		VerifiedInvoiceRequestEnum::WithoutKeys(_) => {
+			panic!("Expected invoice request with keys");
+		},
+	};
 
 	// Enqueue an onion message containing the new invoice.
 	let instructions = MessageSendInstructions::WithoutReplyPath {
