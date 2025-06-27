@@ -648,6 +648,63 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	pub keys: S,
 }
 
+impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	pub fn resolve_amount_synchronously<C: CurrencyConversion>(
+		self, converter: &C,
+	) -> Result<VerifiedInvoiceRequestWithAmountToUse<S>, Bolt12SemanticError> {
+		let resolved_amount_msats = match &self.amount_nature {
+			AmountNature::BitcoinAmount(ir_only) => ir_only.invoice_request_amount,
+			AmountNature::VerificationNeeded(offer_and_ir) => {
+				offer_and_ir.verify_amount_to_use(converter)?
+			},
+			AmountNature::DerivationNeeded(offer_only) => {
+				offer_only.derive_amount_to_use(converter)?
+			},
+		};
+
+		Ok(VerifiedInvoiceRequestWithAmountToUse {
+			offer_id: self.offer_id,
+			inner: self.inner,
+			resolved_amount_msats,
+			keys: self.keys,
+		})
+	}
+
+	pub fn resolve_amount_asynchronously<C: CurrencyConversion>(
+		self, resolved_amount_to_use: u64, converter: Option<&C>,
+	) -> Result<VerifiedInvoiceRequestWithAmountToUse<S>, Bolt12SemanticError> {
+		// Optional sanity checks
+		match &self.amount_nature {
+			AmountNature::BitcoinAmount(ir_only) => {
+				if ir_only.invoice_request_amount != resolved_amount_to_use {
+					return Err(Bolt12SemanticError::UnexpectedAmount);
+				}
+			},
+			AmountNature::VerificationNeeded(offer_and_ir) => {
+				if let Some(converter) = converter {
+					if offer_and_ir.verify_amount_to_use(converter)? != resolved_amount_to_use {
+						return Err(Bolt12SemanticError::UnexpectedAmount);
+					}
+				}
+			},
+			AmountNature::DerivationNeeded(offer_only) => {
+				if let Some(converter) = converter {
+					if offer_only.derive_amount_to_use(converter)? != resolved_amount_to_use {
+						return Err(Bolt12SemanticError::UnexpectedAmount);
+					}
+				}
+			},
+		}
+
+		Ok(VerifiedInvoiceRequestWithAmountToUse {
+			offer_id: self.offer_id,
+			inner: self.inner.clone(),
+			resolved_amount_msats: resolved_amount_to_use,
+			keys: self.keys,
+		})
+	}
+}
+
 /// An enum representing a verified invoice request, which can either have derived signing keys or
 /// require explicit signing keys.
 pub enum VerifiedInvoiceRequestEnum {
@@ -673,6 +730,38 @@ impl VerifiedInvoiceRequestEnum {
 			VerifiedInvoiceRequestEnum::WithoutKeys(req) => req.offer_id,
 		}
 	}
+}
+
+/// Represents a verified invoice request with resolved amount that will be utilised within the [`InvoiceBuilder`]
+#[derive(Clone, Debug)]
+pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
+	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
+	pub offer_id: OfferId,
+
+	/// The verified request.
+	pub(crate) inner: InvoiceRequest,
+
+	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
+	/// [`Offer`] or the [`InvoiceRequest`], or both.
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub resolved_amount_msats: u64,
+
+	/// Keys for signing a [`Bolt12Invoice`] for the request.
+	#[cfg_attr(
+		feature = "std",
+		doc = "If `DerivedSigningPubkey`, must call [`respond_using_derived_keys`] when responding. Otherwise, call [`respond_with`]."
+	)]
+	#[cfg_attr(feature = "std", doc = "")]
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	#[cfg_attr(
+		feature = "std",
+		doc = "[`respond_using_derived_keys`]: Self::respond_using_derived_keys"
+	)]
+	#[cfg_attr(feature = "std", doc = "[`respond_with`]: Self::respond_with")]
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub keys: S,
 }
 
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
@@ -760,7 +849,9 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 } }
 
 pub trait CurrencyConversion {
-	fn convert_to_bitcoin(&self, _iso4217_code: [u8; 3], _amount: u64) -> Result<u64, Bolt12SemanticError> {
+	fn convert_to_bitcoin(
+		&self, _iso4217_code: [u8; 3], _amount: u64,
+	) -> Result<u64, Bolt12SemanticError> {
 		Err(Bolt12SemanticError::UnsupportedCurrency)
 	}
 }
@@ -811,7 +902,9 @@ pub struct OfferAndInvoiceRequest {
 }
 
 impl OfferAndInvoiceRequest {
-	pub fn verify_amount_to_use<C: CurrencyConversion>(&self, converter: &C) -> Result<u64, Bolt12SemanticError> {
+	pub fn verify_amount_to_use<C: CurrencyConversion>(
+		&self, converter: &C,
+	) -> Result<u64, Bolt12SemanticError> {
 		match self.offer_amount {
 			Amount::Bitcoin { amount_msats } => {
 				let total = amount_msats.saturating_mul(self.quantity.unwrap_or(1));
@@ -1170,6 +1263,18 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 }
 
 impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
