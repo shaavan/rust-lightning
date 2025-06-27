@@ -649,6 +649,55 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	pub keys: S,
 }
 
+impl<S: SigningPubkeyStrategy> TryFrom<VerifiedInvoiceRequest<S>>
+	for VerifiedInvoiceRequestWithAmountToUse<S>
+{
+	type Error = Bolt12SemanticError;
+
+	fn try_from(request: VerifiedInvoiceRequest<S>) -> Result<Self, Self::Error> {
+		let resolved_amount_msats = request.amount_source.resolved_amount_msats()?;
+
+		Ok(VerifiedInvoiceRequestWithAmountToUse {
+			offer_id: request.offer_id,
+			inner: request.inner,
+			resolved_amount_msats,
+			keys: request.keys,
+		})
+	}
+}
+
+/// Represents a verified invoice request with resolved amount that will be utilised within the [`InvoiceBuilder`]
+#[derive(Clone, Debug)]
+pub struct VerifiedInvoiceRequestWithAmountToUse<S: SigningPubkeyStrategy> {
+	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
+	pub offer_id: OfferId,
+
+	/// The verified request.
+	pub(crate) inner: InvoiceRequest,
+
+	/// The amount to use for the corresponding [`Bolt12Invoice`], which may be derived from the
+	/// [`Offer`] or the [`InvoiceRequest`], or both.
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub resolved_amount_msats: u64,
+
+	/// Keys for signing a [`Bolt12Invoice`] for the request.
+	#[cfg_attr(
+		feature = "std",
+		doc = "If `DerivedSigningPubkey`, must call [`respond_using_derived_keys`] when responding. Otherwise, call [`respond_with`]."
+	)]
+	#[cfg_attr(feature = "std", doc = "")]
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	#[cfg_attr(
+		feature = "std",
+		doc = "[`respond_using_derived_keys`]: Self::respond_using_derived_keys"
+	)]
+	#[cfg_attr(feature = "std", doc = "[`respond_with`]: Self::respond_with")]
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub keys: S,
+}
+
 /// An enum representing a verified invoice request, which can either have derived signing keys or
 /// require explicit signing keys.
 pub enum VerifiedInvoiceRequestEnum {
@@ -672,6 +721,59 @@ impl VerifiedInvoiceRequestEnum {
 		match self {
 			VerifiedInvoiceRequestEnum::WithKeys(req) => req.offer_id,
 			VerifiedInvoiceRequestEnum::WithoutKeys(req) => req.offer_id,
+		}
+	}
+}
+
+impl TryFrom<VerifiedInvoiceRequestEnum> for VerifiedInvoiceRequestWithAmountToUseEnum {
+	type Error = Bolt12SemanticError;
+
+	fn try_from(request: VerifiedInvoiceRequestEnum) -> Result<Self, Self::Error> {
+		match request {
+			VerifiedInvoiceRequestEnum::WithKeys(inner) => {
+				Ok(VerifiedInvoiceRequestWithAmountToUseEnum::WithKeys(inner.try_into()?))
+			},
+			VerifiedInvoiceRequestEnum::WithoutKeys(inner) => {
+				Ok(VerifiedInvoiceRequestWithAmountToUseEnum::WithoutKeys(inner.try_into()?))
+			},
+		}
+	}
+}
+
+/// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
+/// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
+/// on whether the signing keys were derived.
+#[derive(Clone, Debug)]
+pub enum VerifiedInvoiceRequestWithAmountToUseEnum {
+	/// An invoice request with signing keys that can be derived from the metadata.
+	WithKeys(VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey>),
+	/// An invoice request without derived signing keys, which must be explicitly provided.
+	WithoutKeys(VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey>),
+}
+
+impl VerifiedInvoiceRequestWithAmountToUseEnum {
+	/// Returns a reference to the underlying `InvoiceRequest`.
+	pub fn inner(&self) -> &InvoiceRequest {
+		match self {
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithKeys(req) => &req.inner,
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithoutKeys(req) => &req.inner,
+		}
+	}
+
+	/// Returns the `OfferId` of the offer this invoice request is for.
+	pub fn offer_id(&self) -> OfferId {
+		match self {
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithKeys(req) => req.offer_id,
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithoutKeys(req) => req.offer_id,
+		}
+	}
+
+	pub fn resolved_amount_msats(&self) -> u64 {
+		match self {
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithKeys(req) => req.resolved_amount_msats,
+			VerifiedInvoiceRequestWithAmountToUseEnum::WithoutKeys(req) => {
+				req.resolved_amount_msats
+			},
 		}
 	}
 }
@@ -1231,7 +1333,25 @@ impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
 	fields_accessor!(self, self.inner.contents);
 }
 
+impl VerifiedInvoiceRequestWithAmountToUse<DerivedSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequestWithAmountToUse<ExplicitSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
 impl VerifiedInvoiceRequestEnum {
+	offer_accessors!(self, self.inner().contents.inner.offer);
+	invoice_request_accessors!(self, self.inner().contents);
+	fields_accessor!(self, self.inner().contents);
+}
+
+impl VerifiedInvoiceRequestWithAmountToUseEnum {
 	offer_accessors!(self, self.inner().contents.inner.offer);
 	invoice_request_accessors!(self, self.inner().contents);
 	fields_accessor!(self, self.inner().contents);
