@@ -228,11 +228,13 @@ pub trait SigningPubkeyStrategy {}
 /// [`Bolt12Invoice::signing_pubkey`] was explicitly set.
 ///
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
+#[derive(Clone, Debug)]
 pub struct ExplicitSigningPubkey {}
 
 /// [`Bolt12Invoice::signing_pubkey`] was derived.
 ///
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
+#[derive(Clone, Debug)]
 pub struct DerivedSigningPubkey(pub(super) Keypair);
 
 impl SigningPubkeyStrategy for ExplicitSigningPubkey {}
