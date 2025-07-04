@@ -40,7 +40,7 @@ use crate::ln::msgs::{
 };
 use crate::ln::onion_utils;
 use crate::routing::gossip::{NetworkGraph, NodeId, ReadOnlyNetworkGraph};
-use crate::sign::{EntropySource, NodeSigner, Recipient};
+use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::{InitFeatures, NodeFeatures};
 use crate::util::async_poll::{MultiResultFuturePoller, ResultFuture};
 use crate::util::logger::{Logger, WithContext};
@@ -496,7 +496,7 @@ pub trait MessageRouter {
 	/// be direct peers with the `recipient`.
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
-		secp_ctx: &Secp256k1<T>,
+		secp_ctx: &Secp256k1<T>, local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()>;
 
 	/// Creates compact [`BlindedMessagePath`]s to the `recipient` node. The nodes in `peers` are
@@ -514,13 +514,13 @@ pub trait MessageRouter {
 	/// ignoring the short channel ids.
 	fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
-		secp_ctx: &Secp256k1<T>,
+		secp_ctx: &Secp256k1<T>, local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		let peers = peers
 			.into_iter()
 			.map(|MessageForwardNode { node_id, short_channel_id: _ }| node_id)
 			.collect();
-		self.create_blinded_paths(recipient, context, peers, secp_ctx)
+		self.create_blinded_paths(recipient, context, peers, secp_ctx, local_node_receive_key)
 	}
 }
 
@@ -557,6 +557,7 @@ where
 	>(
 		network_graph: &G, recipient: PublicKey, context: MessageContext, peers: I,
 		entropy_source: &ES, secp_ctx: &Secp256k1<T>, compact_paths: bool,
+		local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		// Limit the number of blinded paths that are computed.
 		const MAX_PATHS: usize = 3;
@@ -595,7 +596,7 @@ where
 		let paths = peer_info
 			.into_iter()
 			.map(|(peer, _, _)| {
-				BlindedMessagePath::new(&[peer], recipient, context.clone(), entropy, secp_ctx)
+				BlindedMessagePath::new(&[peer], recipient, context.clone(), entropy, secp_ctx, local_node_receive_key)
 			})
 			.take(MAX_PATHS)
 			.collect::<Result<Vec<_>, _>>();
@@ -604,7 +605,7 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedMessagePath::new(&[], recipient, context, &**entropy_source, secp_ctx)
+					BlindedMessagePath::new(&[], recipient, context, &**entropy_source, secp_ctx, local_node_receive_key)
 						.map(|path| vec![path])
 				} else {
 					Err(())
@@ -664,7 +665,7 @@ where
 
 	pub(crate) fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		network_graph: &G, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
-		entropy_source: &ES, secp_ctx: &Secp256k1<T>,
+		entropy_source: &ES, secp_ctx: &Secp256k1<T>, local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		let peers =
 			peers.into_iter().map(|node_id| MessageForwardNode { node_id, short_channel_id: None });
@@ -676,12 +677,14 @@ where
 			entropy_source,
 			secp_ctx,
 			false,
+			local_node_receive_key,
 		)
 	}
 
 	pub(crate) fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		network_graph: &G, recipient: PublicKey, context: MessageContext,
 		peers: Vec<MessageForwardNode>, entropy_source: &ES, secp_ctx: &Secp256k1<T>,
+		local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		Self::create_blinded_paths_from_iter(
 			network_graph,
@@ -691,6 +694,7 @@ where
 			entropy_source,
 			secp_ctx,
 			true,
+			local_node_receive_key,
 		)
 	}
 }
@@ -709,7 +713,7 @@ where
 
 	fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<PublicKey>,
-		secp_ctx: &Secp256k1<T>,
+		secp_ctx: &Secp256k1<T>, local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		Self::create_blinded_paths(
 			&self.network_graph,
@@ -718,12 +722,13 @@ where
 			peers,
 			&self.entropy_source,
 			secp_ctx,
+			local_node_receive_key,
 		)
 	}
 
 	fn create_compact_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
 		&self, recipient: PublicKey, context: MessageContext, peers: Vec<MessageForwardNode>,
-		secp_ctx: &Secp256k1<T>,
+		secp_ctx: &Secp256k1<T>, local_node_receive_key: ReceiveAuthKey,
 	) -> Result<Vec<BlindedMessagePath>, ()> {
 		Self::create_compact_blinded_paths(
 			&self.network_graph,
@@ -732,6 +737,7 @@ where
 			peers,
 			&self.entropy_source,
 			secp_ctx,
+			local_node_receive_key,
 		)
 	}
 }
@@ -1429,7 +1435,7 @@ where
 		};
 
 		self.message_router
-			.create_blinded_paths(recipient, context, peers, secp_ctx)
+			.create_blinded_paths(recipient, context, peers, secp_ctx, self.node_signer.get_receive_auth_key())
 			.and_then(|paths| paths.into_iter().next().ok_or(()))
 			.map_err(|_| SendError::PathNotFound)
 	}
