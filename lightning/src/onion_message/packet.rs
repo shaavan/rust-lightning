@@ -21,6 +21,7 @@ use crate::blinded_path::message::{BlindedMessagePath, ForwardTlvs, NextMessageH
 use crate::crypto::streams::{ChaChaDualPolyReadAdapter, ChaChaPolyWriteAdapter};
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
+use crate::sign::ReceiveAuthKey;
 use crate::util::logger::Logger;
 use crate::util::ser::{
 	BigSize, FixedLengthReader, LengthLimitedRead, LengthReadable, LengthReadableArgs, Readable,
@@ -262,11 +263,11 @@ impl<T: OnionMessageContents> Writeable for (Payload<T>, [u8; 32]) {
 
 // Uses the provided secret to simultaneously decode and decrypt the control TLVs and data TLV.
 impl<H: CustomOnionMessageHandler + ?Sized, L: Logger + ?Sized>
-	ReadableArgs<(SharedSecret, &H, [u8; 32], &L)>
+	ReadableArgs<(SharedSecret, &H, ReceiveAuthKey, &L)>
 	for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomMessage>>
 {
 	fn read<R: Read>(
-		r: &mut R, args: (SharedSecret, &H, [u8; 32], &L),
+		r: &mut R, args: (SharedSecret, &H, ReceiveAuthKey, &L),
 	) -> Result<Self, DecodeError> {
 		let (encrypted_tlvs_ss, handler, receive_tlvs_key, logger) = args;
 
@@ -279,7 +280,7 @@ impl<H: CustomOnionMessageHandler + ?Sized, L: Logger + ?Sized>
 		let mut message = None;
 		decode_tlv_stream_with_custom_tlv_decode!(&mut rd, {
 			(2, reply_path, option),
-			(4, read_adapter, (option: LengthReadableArgs, (rho, receive_tlvs_key))),
+			(4, read_adapter, (option: LengthReadableArgs, (rho, receive_tlvs_key.inner))),
 		}, |msg_type, msg_reader| {
 			if msg_type < 64 { return Ok(false) }
 			// Don't allow reading more than one data TLV from an onion message.

@@ -22,6 +22,7 @@ use crate::crypto::streams::chachapoly_encrypt_with_swapped_aad;
 use crate::io;
 use crate::ln::onion_utils;
 use crate::onion_message::messenger::Destination;
+use crate::sign::ReceiveAuthKey;
 use crate::util::ser::{Writeable, Writer};
 
 use core::borrow::Borrow;
@@ -157,7 +158,7 @@ where
 
 struct PublicKeyWithTlvs<W: Writeable> {
 	pubkey: PublicKey,
-	hop_recv_key: Option<[u8; 32]>,
+	hop_recv_key: Option<ReceiveAuthKey>,
 	tlvs: W,
 }
 
@@ -172,7 +173,7 @@ pub(crate) fn construct_blinded_hops<'a, T, I, W>(
 ) -> Result<Vec<BlindedHop>, secp256k1::Error>
 where
 	T: secp256k1::Signing + secp256k1::Verification,
-	I: Iterator<Item = ((PublicKey, Option<[u8; 32]>), W)>,
+	I: Iterator<Item = ((PublicKey, Option<ReceiveAuthKey>), W)>,
 	W: Writeable,
 {
 	let mut blinded_hops = Vec::with_capacity(unblinded_path.size_hint().0);
@@ -201,11 +202,11 @@ where
 
 /// Encrypt TLV payload to be used as a [`crate::blinded_path::BlindedHop::encrypted_payload`].
 fn encrypt_payload<P: Writeable>(
-	payload: P, encrypted_tlvs_rho: [u8; 32], hop_recv_key: Option<[u8; 32]>,
+	payload: P, encrypted_tlvs_rho: [u8; 32], hop_recv_key: Option<ReceiveAuthKey>,
 ) -> Vec<u8> {
 	let mut payload_data = payload.encode();
 	if let Some(hop_recv_key) = hop_recv_key {
-		chachapoly_encrypt_with_swapped_aad(payload_data, encrypted_tlvs_rho, hop_recv_key)
+		chachapoly_encrypt_with_swapped_aad(payload_data, encrypted_tlvs_rho, hop_recv_key.inner)
 	} else {
 		let mut chacha = ChaCha20Poly1305RFC::new(&encrypted_tlvs_rho, &[0; 12], &[]);
 		let mut tag = [0; 16];
