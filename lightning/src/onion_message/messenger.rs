@@ -40,7 +40,7 @@ use crate::ln::msgs::{
 };
 use crate::ln::onion_utils;
 use crate::routing::gossip::{NetworkGraph, NodeId, ReadOnlyNetworkGraph};
-use crate::sign::{EntropySource, NodeSigner, Recipient};
+use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::{InitFeatures, NodeFeatures};
 use crate::util::async_poll::{MultiResultFuturePoller, ResultFuture};
 use crate::util::logger::{Logger, WithContext};
@@ -1074,7 +1074,7 @@ where
 			},
 		}
 	};
-	let receiving_context_auth_key = [41; 32]; // TODO: pass this in
+	let receiving_context_auth_key = ReceiveAuthKey { inner: [41; 32] }; // TODO: pass this in
 	let next_hop = onion_utils::decode_next_untagged_hop(
 		onion_decode_ss,
 		&msg.onion_routing_packet.hop_data[..],
