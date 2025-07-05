@@ -46,7 +46,7 @@ use crate::routing::router::{
 };
 use crate::routing::scoring::{ChannelUsage, ScoreLookUp, ScoreUpdate};
 use crate::routing::utxo::{UtxoLookup, UtxoLookupError, UtxoResult};
-use crate::sign;
+use crate::sign::{self, ReceiveAuthKey};
 use crate::sign::{ChannelSigner, PeerStorageKey};
 use crate::sync::RwLock;
 use crate::types::features::{ChannelFeatures, InitFeatures, NodeFeatures};
@@ -1495,6 +1495,10 @@ impl NodeSigner for TestNodeSigner {
 		unreachable!()
 	}
 
+	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
+		ReceiveAuthKey { inner: [41; 32] }
+	}
+
 	fn get_node_id(&self, recipient: Recipient) -> Result<PublicKey, ()> {
 		let node_secret = match recipient {
 			Recipient::Node => Ok(&self.node_secret),
@@ -1577,6 +1581,10 @@ impl NodeSigner for TestKeysInterface {
 
 	fn get_peer_storage_key(&self) -> PeerStorageKey {
 		self.backing.get_peer_storage_key()
+	}
+
+	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
+		ReceiveAuthKey { inner: [41; 32] }
 	}
 
 	fn sign_bolt12_invoice(
