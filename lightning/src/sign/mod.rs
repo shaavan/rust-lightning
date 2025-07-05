@@ -803,6 +803,13 @@ pub struct PeerStorageKey {
 	pub inner: [u8; 32],
 }
 
+/// Represents the key material used to authenticate receiving funds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ReceiveAuthKey {
+	/// Represents the key used to authenticate receiving funds.
+	pub inner: [u8; 32],
+}
+
 /// Specifies the recipient of an invoice.
 ///
 /// This indicates to [`NodeSigner::sign_invoice`] what node secret key should be used to sign
@@ -849,6 +856,8 @@ pub trait NodeSigner {
 	/// Thus, if you wish to rely on recovery using this method, you should use a key which
 	/// can be re-derived from data which would be available after state loss (eg the wallet seed).
 	fn get_peer_storage_key(&self) -> PeerStorageKey;
+
+	fn get_receive_auth_key(&self) -> ReceiveAuthKey;
 
 	/// Get node id based on the provided [`Recipient`].
 	///
@@ -1826,6 +1835,7 @@ pub struct KeysManager {
 	channel_master_key: Xpriv,
 	channel_child_index: AtomicUsize,
 	peer_storage_key: PeerStorageKey,
+	receive_auth_key: ReceiveAuthKey,
 
 	#[cfg(test)]
 	pub(crate) entropy_source: RandomBytes,
@@ -1863,6 +1873,7 @@ impl KeysManager {
 		const CHANNEL_MASTER_KEY_INDEX: ChildNumber = ChildNumber::Hardened { index: 3 };
 		const INBOUND_PAYMENT_KEY_INDEX: ChildNumber = ChildNumber::Hardened { index: 5 };
 		const PEER_STORAGE_KEY_INDEX: ChildNumber = ChildNumber::Hardened { index: 6 };
+		const RECEIVE_AUTH_KEY_INDEX: ChildNumber = ChildNumber::Hardened { index: 7 };
 
 		let secp_ctx = Secp256k1::new();
 		// Note that when we aren't serializing the key, network doesn't matter
@@ -1905,6 +1916,11 @@ impl KeysManager {
 					.expect("Your RNG is busted")
 					.private_key;
 
+				let receive_auth_key = master_key
+					.derive_priv(&secp_ctx, &RECEIVE_AUTH_KEY_INDEX)
+					.expect("Your RNG is busted")
+					.private_key;
+
 				let mut rand_bytes_engine = Sha256::engine();
 				rand_bytes_engine.input(&starting_time_secs.to_be_bytes());
 				rand_bytes_engine.input(&starting_time_nanos.to_be_bytes());
@@ -1920,6 +1936,7 @@ impl KeysManager {
 					inbound_payment_key: ExpandedKey::new(inbound_pmt_key_bytes),
 
 					peer_storage_key: PeerStorageKey { inner: peer_storage_key.secret_bytes() },
+					receive_auth_key: ReceiveAuthKey { inner: receive_auth_key.secret_bytes() },
 
 					destination_script,
 					shutdown_pubkey,
@@ -2150,6 +2167,10 @@ impl NodeSigner for KeysManager {
 		self.peer_storage_key.clone()
 	}
 
+	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
+		self.receive_auth_key.clone()
+	}
+
 	fn sign_invoice(
 		&self, invoice: &RawBolt11Invoice, recipient: Recipient,
 	) -> Result<RecoverableSignature, ()> {
@@ -2313,6 +2334,10 @@ impl NodeSigner for PhantomKeysManager {
 
 	fn get_peer_storage_key(&self) -> PeerStorageKey {
 		self.inner.peer_storage_key.clone()
+	}
+
+	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
+		self.inner.receive_auth_key.clone()
 	}
 
 	fn sign_invoice(

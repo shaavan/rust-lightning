@@ -25,7 +25,7 @@ use crate::ln::onion_utils;
 use crate::offers::nonce::Nonce;
 use crate::onion_message::packet::ControlTlvs;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
-use crate::sign::{EntropySource, NodeSigner, Recipient};
+use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::payment::PaymentHash;
 use crate::util::scid_utils;
 use crate::util::ser::{FixedLengthReader, LengthReadableArgs, Readable, Writeable, Writer};
@@ -55,13 +55,13 @@ impl Readable for BlindedMessagePath {
 impl BlindedMessagePath {
 	/// Create a one-hop blinded path for a message.
 	pub fn one_hop<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
-		recipient_node_id: PublicKey, context: MessageContext, entropy_source: ES,
-		secp_ctx: &Secp256k1<T>,
+		recipient_node_id: PublicKey, local_node_receive_key: ReceiveAuthKey,
+		context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()>
 	where
 		ES::Target: EntropySource,
 	{
-		Self::new(&[], recipient_node_id, context, entropy_source, secp_ctx)
+		Self::new(&[], recipient_node_id, local_node_receive_key, context, entropy_source, secp_ctx)
 	}
 
 	/// Create a path for an onion message, to be forwarded along `node_pks`. The last node
@@ -71,7 +71,8 @@ impl BlindedMessagePath {
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[MessageForwardNode], recipient_node_id: PublicKey,
-		context: MessageContext, entropy_source: ES, secp_ctx: &Secp256k1<T>,
+		local_node_receive_key: ReceiveAuthKey, context: MessageContext,
+		entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()>
 	where
 		ES::Target: EntropySource,
@@ -90,9 +91,9 @@ impl BlindedMessagePath {
 				secp_ctx,
 				intermediate_nodes,
 				recipient_node_id,
+				local_node_receive_key,
 				context,
 				&blinding_secret,
-				[41; 32], // TODO: Pass this in
 			)
 			.map_err(|_| ())?,
 		}))
@@ -514,8 +515,8 @@ pub(crate) const MESSAGE_PADDING_ROUND_OFF: usize = 100;
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[MessageForwardNode],
-	recipient_node_id: PublicKey, context: MessageContext, session_priv: &SecretKey,
-	local_node_receive_key: [u8; 32],
+	recipient_node_id: PublicKey, local_node_receive_key: ReceiveAuthKey,
+	context: MessageContext, session_priv: &SecretKey,
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes
 		.iter()
