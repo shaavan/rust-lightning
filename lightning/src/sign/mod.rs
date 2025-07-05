@@ -803,6 +803,13 @@ pub struct PeerStorageKey {
 	pub inner: [u8; 32],
 }
 
+/// Represents the secret key material used for receiving authentication
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct ReceiveAuthKey {
+	/// Represents the key used to authenticate incoming payments.
+	pub inner: [u8; 32],
+}
+
 /// Specifies the recipient of an invoice.
 ///
 /// This indicates to [`NodeSigner::sign_invoice`] what node secret key should be used to sign
