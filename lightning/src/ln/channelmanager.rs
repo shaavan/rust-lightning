@@ -3750,7 +3750,7 @@ where
 		let flow = OffersMessageFlow::new(
 			ChainHash::using_genesis_block(params.network), params.best_block,
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), message_router
+			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router
 		);
 
 		ChannelManager {
@@ -15754,7 +15754,7 @@ where
 		let flow = OffersMessageFlow::new(
 			chain_hash, best_block, our_network_pubkey,
 			highest_seen_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), args.message_router
+			args.node_signer.get_receive_auth_key(), secp_ctx.clone(), args.message_router
 		).with_async_payments_offers_cache(async_receive_offer_cache);
 
 		let channel_manager = ChannelManager {
