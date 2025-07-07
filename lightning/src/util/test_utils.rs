@@ -1496,7 +1496,7 @@ impl NodeSigner for TestNodeSigner {
 	}
 
 	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
-		ReceiveAuthKey { inner: [41; 32] }
+		ReceiveAuthKey { inner: self.node_secret.secret_bytes() }
 	}
 
 	fn get_node_id(&self, recipient: Recipient) -> Result<PublicKey, ()> {
@@ -1584,7 +1584,7 @@ impl NodeSigner for TestKeysInterface {
 	}
 
 	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
-		ReceiveAuthKey { inner: [41; 32] }
+		self.backing.get_receive_auth_key()
 	}
 
 	fn sign_bolt12_invoice(

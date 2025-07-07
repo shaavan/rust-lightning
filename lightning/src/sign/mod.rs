@@ -2168,7 +2168,7 @@ impl NodeSigner for KeysManager {
 	}
 
 	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
-		ReceiveAuthKey { inner: [41; 32] }
+		self.receive_auth_key.clone()
 	}
 
 	fn sign_invoice(
@@ -2337,7 +2337,7 @@ impl NodeSigner for PhantomKeysManager {
 	}
 
 	fn get_receive_auth_key(&self) -> ReceiveAuthKey {
-		ReceiveAuthKey { inner: [41; 32] }
+		self.inner.receive_auth_key.clone()
 	}
 
 	fn sign_invoice(
