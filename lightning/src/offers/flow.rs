@@ -41,7 +41,7 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -81,9 +81,10 @@ use {
 ///
 /// [`OffersMessageFlow`] is parameterized by a [`MessageRouter`], which is responsible
 /// for finding message paths when initiating and retrying onion messages.
-pub struct OffersMessageFlow<MR: Deref>
+pub struct OffersMessageFlow<MR: Deref, CC: Deref>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 {
 	chain_hash: ChainHash,
 	best_block: RwLock<BestBlock>,
@@ -97,7 +98,7 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
-	pub(crate) currency_conversion: DefaultCurrencyConversion,
+	pub(crate) currency_conversion: CC,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
@@ -116,15 +117,17 @@ where
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 }
 
-impl<MR: Deref> OffersMessageFlow<MR>
+impl<MR: Deref, CC: Deref> OffersMessageFlow<MR, CC>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 {
 	/// Creates a new [`OffersMessageFlow`]
 	pub fn new(
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
 		receive_auth_key: ReceiveAuthKey, secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
+		currency_conversion: CC,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -139,7 +142,7 @@ where
 			secp_ctx,
 			message_router,
 
-			currency_conversion: DefaultCurrencyConversion {},
+			currency_conversion,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -276,9 +279,10 @@ const DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration = Duration::from_secs(365 * 2
 pub(crate) const TEST_DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration =
 	DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY;
 
-impl<MR: Deref> OffersMessageFlow<MR>
+impl<MR: Deref, CC: Deref> OffersMessageFlow<MR, CC>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 {
 	/// [`BlindedMessagePath`]s for an async recipient to communicate with this node and interactively
 	/// build [`Offer`]s and [`StaticInvoice`]s for receiving async payments.
@@ -426,9 +430,10 @@ pub enum InvreqResponseInstructions {
 	},
 }
 
-impl<MR: Deref> OffersMessageFlow<MR>
+impl<MR: Deref, CC: Deref> OffersMessageFlow<MR, CC>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 {
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the [`InvoiceRequest::metadata`].
 	///
