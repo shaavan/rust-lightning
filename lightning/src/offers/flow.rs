@@ -40,7 +40,8 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, InvoiceSigningInfo, VerifiedInvoiceRequest,
+	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, InvoiceSigningInfo,
+	VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -937,22 +938,30 @@ where
 	/// - User call the function with [`VerifiedInvoiceRequest<ExplicitSigningPubkey>`].
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, ES: Deref, R: Deref, F>(
-		&'a self, router: &R, entropy_source: ES,
+	pub fn create_invoice_builder_from_invoice_request_with_keys<
+		'a,
+		ES: Deref,
+		R: Deref,
+		CC: Deref,
+		F,
+	>(
+		&'a self, router: &R, entropy_source: ES, currency_conversion: &CC,
 		invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
-
 		R::Target: Router,
+		CC::Target: CurrencyConversion,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let entropy = &*entropy_source;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			currency_conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -974,9 +983,14 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(
+			currency_conversion,
+			payment_paths,
+			payment_hash,
+		);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
+			currency_conversion,
 			payment_paths,
 			payment_hash,
 			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
@@ -1003,21 +1017,30 @@ where
 	/// - User call the function with [`VerifiedInvoiceRequest<DerivedSigningPubkey>`].
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, ES: Deref, R: Deref, F>(
-		&'a self, router: &R, entropy_source: ES,
+	pub fn create_invoice_builder_from_invoice_request_without_keys<
+		'a,
+		ES: Deref,
+		R: Deref,
+		CC: Deref,
+		F,
+	>(
+		&'a self, router: &R, entropy_source: ES, currency_conversion: &CC,
 		invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 		R::Target: Router,
+		CC::Target: CurrencyConversion,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let entropy = &*entropy_source;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			currency_conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1039,9 +1062,10 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
+		let builder = invoice_request.respond_with(currency_conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_with_no_std(
+			currency_conversion,
 			payment_paths,
 			payment_hash,
 			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
