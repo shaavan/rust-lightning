@@ -76,8 +76,9 @@ use crate::offers::merkle::{
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
-	OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	Amount, CurrencyCode, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer,
+	OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES,
+	OFFER_TYPES,
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
@@ -94,6 +95,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::network::Network;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder};
@@ -570,6 +572,35 @@ impl UnsignedInvoiceRequest {
 impl AsRef<TaggedHash> for UnsignedInvoiceRequest {
 	fn as_ref(&self) -> &TaggedHash {
 		&self.tagged_hash
+	}
+}
+
+/// A trait for converting fiat currencies into millisatoshi values.
+///
+/// This is used for handling conversions between fiat currencies and Bitcoin denominated in millisatoshis
+/// when working with Bolt12 invoice requests.
+///
+/// Implementors must provide a method to convert from a specified fiat currency (using ISO 4217 currency codes)
+/// to millisatoshis, handling any potential conversion errors.
+pub trait CurrencyConversion {
+	/// Converts a fiat currency specified by its ISO 4217 code to millisatoshis.
+	fn fiat_to_msats(&self, iso4217_code: CurrencyCode) -> Result<u64, Bolt12SemanticError>;
+}
+
+/// A default implementation of the `CurrencyConversion` trait that does not support any currency conversions.
+pub struct DefaultCurrencyConversion {}
+
+impl Deref for DefaultCurrencyConversion {
+	type Target = Self;
+
+	fn deref(&self) -> &Self::Target {
+		self
+	}
+}
+
+impl CurrencyConversion for DefaultCurrencyConversion {
+	fn fiat_to_msats(&self, _iso4217_code: CurrencyCode) -> Result<u64, Bolt12SemanticError> {
+		Err(Bolt12SemanticError::UnsupportedCurrency)
 	}
 }
 
