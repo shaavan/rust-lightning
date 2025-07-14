@@ -78,6 +78,18 @@ fn privkey(byte: u8) -> SecretKey {
 	SecretKey::from_slice(&[byte; 32]).unwrap()
 }
 
+struct FuzzCurrencyConversion;
+
+impl CurrencyConversion for FuzzCurrencyConversion {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		unreachable!()
+	}
+
+	fn tolerance_percent(&self) -> u8 {
+		unreachable!()
+	}
+}
+
 fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
 	invoice_request: &InvoiceRequest, secp_ctx: &Secp256k1<T>,
 ) -> Result<UnsignedBolt12Invoice, Bolt12SemanticError> {
