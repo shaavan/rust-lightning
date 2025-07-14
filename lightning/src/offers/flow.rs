@@ -41,7 +41,7 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -97,6 +97,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	pub(crate) currency_conversion: DefaultCurrencyConversion,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -136,6 +138,8 @@ where
 
 			secp_ctx,
 			message_router,
+
+			currency_conversion: DefaultCurrencyConversion {},
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -968,9 +972,14 @@ where
 
 		let response = if invoice_request.keys.is_some() {
 			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+			let builder = invoice_request.respond_using_derived_keys(
+				&self.currency_conversion,
+				payment_paths,
+				payment_hash,
+			);
 			#[cfg(not(feature = "std"))]
 			let builder = invoice_request.respond_using_derived_keys_no_std(
+				&self.currency_conversion,
 				payment_paths,
 				payment_hash,
 				created_at,
@@ -981,9 +990,14 @@ where
 				.map_err(InvoiceError::from)
 		} else {
 			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_with(payment_paths, payment_hash);
+			let builder = invoice_request.respond_with(&self.currency_conversion, payment_paths, payment_hash);
 			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
+			let builder = invoice_request.respond_with_no_std(
+				&self.currency_conversion,
+				payment_paths,
+				payment_hash,
+				created_at,
+			);
 			builder
 				.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
 				.and_then(|builder| builder.allow_mpp().build())

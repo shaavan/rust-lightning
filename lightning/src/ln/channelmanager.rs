@@ -5283,6 +5283,7 @@ where
 			let features = self.bolt12_invoice_features();
 			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
 				invoice,
+				&self.flow.currency_conversion,
 				payment_id,
 				features,
 				best_block_height,
@@ -14214,7 +14215,7 @@ where
 				};
 
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner
+					&invoice_request.inner, &self.flow.currency_conversion
 				) {
 					Ok(amount_msats) => amount_msats,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
