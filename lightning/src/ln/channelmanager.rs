@@ -5113,7 +5113,7 @@ where
 			let best_block_height = self.best_block.read().unwrap().height;
 			let features = self.bolt12_invoice_features();
 			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
-				invoice, payment_id, features, best_block_height, self.duration_since_epoch(),
+				invoice, &self.flow.currency_conversion, payment_id, features, best_block_height, self.duration_since_epoch(),
 				&*self.entropy_source, &self.pending_events
 			);
 			match outbound_pmts_res {
@@ -12682,7 +12682,7 @@ where
 				};
 
 				let amount_msats = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-					&invoice_request.inner()
+					&invoice_request.inner(), &self.flow.currency_conversion
 				) {
 					Ok(amount_msats) => amount_msats,
 					Err(error) => return Some((OffersMessage::InvoiceError(error.into()), responder.respond())),
@@ -12705,7 +12705,6 @@ where
 							&self.router,
 							&*self.entropy_source,
 							&request,
-							amount_msats,
 							payment_hash,
 							payment_secret,
 							self.list_usable_channels(),
@@ -12732,7 +12731,6 @@ where
 							&self.router,
 							&*self.entropy_source,
 							&request,
-							amount_msats,
 							payment_hash,
 							payment_secret,
 							self.list_usable_channels(),

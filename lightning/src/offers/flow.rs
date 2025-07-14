@@ -41,7 +41,7 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest, VerifiedInvoiceRequestEnum,
+	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest, VerifiedInvoiceRequestEnum
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -91,6 +91,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	pub currency_conversion: DefaultCurrencyConversion,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -124,6 +126,8 @@ where
 
 			secp_ctx,
 			message_router,
+
+			currency_conversion: DefaultCurrencyConversion {},
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -779,7 +783,7 @@ where
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, ES: Deref, R: Deref>(
 		&'a self, router: &R, entropy_source: ES,
-		invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>, amount_msats: u64,
+		invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
 		payment_hash: PaymentHash, payment_secret: PaymentSecret,
 		usable_channels: Vec<ChannelDetails>,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
@@ -792,6 +796,10 @@ where
 		let expanded_key = &self.inbound_payment_key;
 
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner, &self.currency_conversion
+		)?;
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
@@ -811,7 +819,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(&self.currency_conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
@@ -845,7 +853,7 @@ where
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, ES: Deref, R: Deref>(
 		&'a self, router: &R, entropy_source: ES,
-		invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>, amount_msats: u64,
+		invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
 		payment_hash: PaymentHash, payment_secret: PaymentSecret,
 		usable_channels: Vec<ChannelDetails>,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
@@ -857,6 +865,10 @@ where
 		let expanded_key = &self.inbound_payment_key;
 
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner, &self.currency_conversion
+		)?;
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
@@ -876,7 +888,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
+		let builder = invoice_request.respond_with(&self.currency_conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_with_no_std(
 			payment_paths,
