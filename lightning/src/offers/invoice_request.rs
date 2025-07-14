@@ -65,6 +65,7 @@
 //! # }
 //! ```
 
+use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -571,6 +572,35 @@ impl UnsignedInvoiceRequest {
 impl AsRef<TaggedHash> for UnsignedInvoiceRequest {
 	fn as_ref(&self) -> &TaggedHash {
 		&self.tagged_hash
+	}
+}
+
+/// A trait for converting fiat currencies into millisatoshi values.
+///
+/// This is used for handling conversions between fiat currencies and Bitcoin denominated in millisatoshis
+/// when working with Bolt12 invoice requests.
+///
+/// Implementors must provide a method to convert from a specified fiat currency (using ISO 4217 currency codes)
+/// to millisatoshis, handling any potential conversion errors.
+pub trait CurrencyConversion {
+	/// Converts a fiat currency specified by its ISO 4217 code to millisatoshis.
+	fn fiat_to_msats(&self, iso4217_code: [u8; 3]) -> Result<u64, Bolt12SemanticError>;
+}
+
+/// A default implementation of the `CurrencyConversion` trait that does not support any currency conversions.
+pub struct DefaultCurrencyConversion {}
+
+impl Deref for DefaultCurrencyConversion {
+	type Target = Self;
+
+	fn deref(&self) -> &Self::Target {
+		self
+	}
+}
+
+impl CurrencyConversion for DefaultCurrencyConversion {
+	fn fiat_to_msats(&self, _iso4217_code: [u8; 3]) -> Result<u64, Bolt12SemanticError> {
+		Err(Bolt12SemanticError::UnsupportedCurrency)
 	}
 }
 
