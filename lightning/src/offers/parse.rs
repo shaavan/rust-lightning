@@ -11,6 +11,7 @@
 
 use crate::io;
 use crate::ln::msgs::DecodeError;
+use crate::offers::offer::CurrencyCode;
 use crate::util::ser::CursorReadable;
 use bech32::primitives::decode::CheckedHrpstringError;
 use bitcoin::secp256k1;
@@ -104,6 +105,69 @@ mod sealed {
 			}
 		}
 	}
+}
+
+/// A trait for converting fiat currencies into millisatoshis (msats).
+///
+/// Implementations must return the conversion rate in **msats per minor unit** of the currency,
+/// where the minor unit is determined by its ISO 4217 exponent:
+///
+/// - USD (exponent 2) → per **cent** (0.01 USD), not per dollar  
+/// - JPY (exponent 0) → per **yen**  
+/// - KWD (exponent 3) → per **fils** (0.001 KWD)
+///
+/// # Caution
+///
+/// Returning msats per *major* unit will result in values off by a factor of 10^exponent  
+/// (e.g., 100× for USD). This convention ensures precise, integer-only arithmetic when parsing
+/// and validating BOLT12 invoice requests.
+pub trait CurrencyConversion {
+	/// Converts a fiat currency specified by its ISO 4217 code into **msats per minor unit**.
+	fn fiat_to_msats(&self, iso4217_code: CurrencyCode) -> Result<u64, Bolt12SemanticError>;
+}
+
+/// A default [`CurrencyConversion`] implementation that does not support any currency conversions.
+pub struct DefaultCurrencyConversion;
+
+impl CurrencyConversion for DefaultCurrencyConversion {
+	fn fiat_to_msats(&self, _iso4217_code: CurrencyCode) -> Result<u64, Bolt12SemanticError> {
+		Err(Bolt12SemanticError::UnsupportedCurrency)
+	}
+}
+
+/// A fallible conversion trait similar to [`TryFrom`], but with an additional
+/// conversion context or helper.
+///
+/// This trait allows constructing a type (`Self`) from another value (`T`) while using
+/// an external converter (`C`) to interpret or transform parts of the input
+/// (for example, converting between fiat currencies and millisatoshis).
+///
+/// Implementations should return an appropriate error if the conversion fails.
+///
+/// # Examples
+///
+/// ```ignore
+/// let offer = Offer::try_from_with_conversion(bytes, &DefaultCurrencyConversion)?;
+/// ```
+///
+/// # Type Parameters
+///
+/// * `T` — The input type to convert from.  
+/// * `C` — The conversion helper or context used during conversion.
+///
+/// # Associated Types
+///
+/// * `Error` — The error type returned when the conversion fails.
+pub trait TryFromWithConversion<T, C>: Sized {
+	/// The error type returned when conversion fails.
+	type Error;
+
+	/// Performs the fallible conversion from the input type `T`
+	/// using the provided conversion context `C`.
+	///
+	/// Implementations should return an appropriate error if the conversion cannot
+	/// be performed successfully.
+	fn try_from_with_conversion(t: T, converter: &C) -> Result<Self, Self::Error>;
 }
 
 /// A wrapper for reading a message as a TLV stream `T` from a byte sequence, while still
