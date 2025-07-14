@@ -55,6 +55,7 @@ use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, NodeAnnouncement, OnionMessage, OnionMessageHandler, RoutingMessageHandler, SocketAddress, UnsignedGossipMessage, UnsignedNodeAnnouncement};
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
+use crate::offers::currency::DefaultCurrencyConversion;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
@@ -2331,7 +2332,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-			request.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+			request.respond_using_derived_keys_no_std(&DefaultCurrencyConversion, payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
