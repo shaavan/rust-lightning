@@ -95,7 +95,9 @@ use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
 use crate::offers::flow::{HeldHtlcReplyPath, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
+use crate::offers::invoice_request::{
+	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestVerifiedFromOffer,
+};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
@@ -5698,6 +5700,7 @@ where
 			let features = self.bolt12_invoice_features();
 			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
 				invoice,
+				&DefaultCurrencyConversion,
 				payment_id,
 				features,
 				best_block_height,
@@ -15273,6 +15276,7 @@ where
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&*self.entropy_source,
+							&DefaultCurrencyConversion,
 							&request,
 							self.list_usable_channels(),
 							get_payment_info,
@@ -15298,6 +15302,7 @@ where
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&*self.entropy_source,
+							&DefaultCurrencyConversion,
 							&request,
 							self.list_usable_channels(),
 							get_payment_info,
