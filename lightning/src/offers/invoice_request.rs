@@ -77,8 +77,9 @@ use crate::offers::merkle::{
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
-	OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	Amount, CurrencyCode, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer,
+	OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES,
+	OFFER_TYPES,
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
@@ -571,6 +572,43 @@ impl UnsignedInvoiceRequest {
 impl AsRef<TaggedHash> for UnsignedInvoiceRequest {
 	fn as_ref(&self) -> &TaggedHash {
 		&self.tagged_hash
+	}
+}
+
+/// A trait for converting fiat currencies into millisatoshis (msats).
+///
+/// Implementations must return the conversion rate in **msats per minor unit**
+/// of the currency. For example:
+///
+/// USD (exponent 2) → per **cent** (0.01 USD), not per dollar.
+///
+/// This convention ensures amounts remain precise and purely integer-based when parsing and
+/// validating BOLT12 invoice requests.
+pub trait CurrencyConversion {
+	/// Returns the conversion rate in **msats per minor unit** for the given
+	/// ISO-4217 currency code.
+	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()>;
+
+	/// Returns the acceptable tolerance, expressed as a percentage, used when
+	/// deriving conversion ranges.
+	///
+	/// This represents a user-level policy (e.g., allowance for exchange-rate
+	/// drift or cached data) and does not directly affect fiat-to-msat conversion
+	/// outside of range computation.
+	fn tolerance_percent(&self) -> u8;
+}
+
+/// A [`CurrencyConversion`] implementation that does not support
+/// any fiat currency conversions.
+pub struct DefaultCurrencyConversion;
+
+impl CurrencyConversion for DefaultCurrencyConversion {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		Err(())
+	}
+
+	fn tolerance_percent(&self) -> u8 {
+		0
 	}
 }
 
