@@ -46,6 +46,7 @@ use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
+use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
 use crate::onion_message::async_payments::{
 	AsyncPaymentsMessage, HeldHtlcAvailable, OfferPaths, OfferPathsRequest, ServeStaticInvoice,
 	StaticInvoicePersisted,
@@ -57,7 +58,6 @@ use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::router::Router;
 use crate::sign::{EntropySource, ReceiveAuthKey};
-use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
 use crate::sync::{Mutex, RwLock};
 use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::util::ser::Writeable;
