@@ -20,6 +20,7 @@ use lightning::ln::peer_handler::{
 	IgnoringMessageHandler, MessageHandler, PeerManager, SocketDescriptor,
 };
 
+use lightning::offers::invoice_request::DefaultCurrencyConversion;
 use lightning::onion_message::messenger::DefaultMessageRouter;
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 use lightning::routing::router::{CandidateRouteHop, DefaultRouter, Path};
@@ -91,6 +92,7 @@ type ChannelManager = channelmanager::ChannelManager<
 			Arc<KeysManager>,
 		>,
 	>,
+	Arc<DefaultCurrencyConversion>,
 	Arc<test_utils::TestLogger>,
 >;
 
@@ -420,6 +422,7 @@ pub(crate) fn create_liquidity_node(
 	));
 	let msg_router =
 		Arc::new(DefaultMessageRouter::new(Arc::clone(&network_graph), Arc::clone(&keys_manager)));
+	let currency_conversion = Arc::new(DefaultCurrencyConversion {});
 	let chain_source = Arc::new(test_utils::TestChainSource::new(Network::Bitcoin));
 	let kv_store =
 		Arc::new(FilesystemStore::new(format!("{}_persister_{}", &persist_dir, i).into()));
@@ -438,6 +441,7 @@ pub(crate) fn create_liquidity_node(
 		tx_broadcaster.clone(),
 		router.clone(),
 		msg_router.clone(),
+		currency_conversion,
 		logger.clone(),
 		keys_manager.clone(),
 		keys_manager.clone(),

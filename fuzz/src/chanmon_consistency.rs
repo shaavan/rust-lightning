@@ -147,6 +147,14 @@ impl MessageRouter for FuzzRouter {
 	}
 }
 
+struct FuzzCurrencyConversion {}
+
+impl CurrencyConversion for FuzzCurrencyConversion {
+	fn fiat_to_msats(&self, _iso4217_code: [u8; 3]) -> Result<u64, Bolt12SemanticError> {
+		unreachable!()
+	}
+}
+
 pub struct TestBroadcaster {}
 impl BroadcasterInterface for TestBroadcaster {
 	fn broadcast_transactions(&self, _txs: &[&Transaction]) {}
@@ -619,6 +627,7 @@ pub fn do_test<Out: Output>(data: &[u8], underlying_out: Out, anchors: bool) {
 	let out = SearchingOutput::new(underlying_out);
 	let broadcast = Arc::new(TestBroadcaster {});
 	let router = FuzzRouter {};
+	let currency_conversion = FuzzCurrencyConversion {};
 
 	macro_rules! make_node {
 		($node_id: expr, $fee_estimator: expr) => {{
@@ -752,6 +761,7 @@ pub fn do_test<Out: Output>(data: &[u8], underlying_out: Out, anchors: bool) {
 			tx_broadcaster: broadcast.clone(),
 			router: &router,
 			message_router: &router,
+			currency_conversion: &currency_conversion,
 			logger,
 			default_config: config,
 			channel_monitors: monitor_refs,
