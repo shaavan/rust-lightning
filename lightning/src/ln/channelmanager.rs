@@ -3735,7 +3735,7 @@ where
 		let flow = OffersMessageFlow::new(
 			ChainHash::using_genesis_block(params.network), params.best_block,
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
-			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router
+			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router, false,
 		);
 
 		ChannelManager {
@@ -14339,6 +14339,17 @@ where
 					Err(_) => return None,
 				};
 
+				if self.flow.enable_events {
+					let flow_event = FlowEvents::InvoiceRequestReceived {
+						invoice_request,
+						reply_path: responder.into_blinded_path(),
+					};
+
+					self.flow.enqueue_flow_event(flow_event);
+
+					return None
+				}
+
 				let get_payment_info = |amount_msats, relative_expiry| {
 					self.create_inbound_payment(
 						Some(amount_msats),
@@ -16959,6 +16970,7 @@ where
 			args.node_signer.get_receive_auth_key(),
 			secp_ctx.clone(),
 			args.message_router,
+			false,
 		)
 		.with_async_payments_offers_cache(async_receive_offer_cache);
 
