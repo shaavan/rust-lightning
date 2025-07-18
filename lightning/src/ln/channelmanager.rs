@@ -3702,7 +3702,7 @@ where
 		let flow = OffersMessageFlow::new(
 			ChainHash::using_genesis_block(params.network), params.best_block,
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), message_router
+			secp_ctx.clone(), message_router, false,
 		);
 
 		ChannelManager {
@@ -14982,7 +14982,7 @@ where
 		let flow = OffersMessageFlow::new(
 			chain_hash, best_block, our_network_pubkey,
 			highest_seen_timestamp, expanded_inbound_key,
-			secp_ctx.clone(), args.message_router
+			secp_ctx.clone(), args.message_router, false,
 		);
 
 		let channel_manager = ChannelManager {
