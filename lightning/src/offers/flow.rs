@@ -72,6 +72,20 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
 
+pub enum FlowEvents {
+	/// Notifies that an [`InvoiceRequest`] has been received,
+	/// 
+	InvoiceRequestReceived {
+		invoice_request: VerifiedInvoiceRequestEnum,
+		reply_path: BlindedMessagePath,
+	},
+
+	InvoiceReceived {
+		invoice: Bolt12Invoice,
+		reply_path: Option<BlindedMessagePath>,
+	}
+}
+
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
 ///
@@ -91,6 +105,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	enable_events: bool,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -102,6 +118,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	pending_flow_events: Mutex<Vec<FlowEvents>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -112,7 +130,7 @@ where
 	pub fn new(
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
-		secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
+		secp_ctx: Secp256k1<secp256k1::All>, message_router: MR, enable_events: bool,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -125,6 +143,8 @@ where
 			secp_ctx,
 			message_router,
 
+			enable_events,
+
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
@@ -132,6 +152,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			pending_flow_events: Mutex::new(Vec::new()),
 		}
 	}
 
@@ -1118,6 +1140,10 @@ where
 		Ok(())
 	}
 
+	pub fn enqueue_flow_event(&self, flow_event: FlowEvents) {
+		self.pending_flow_events.lock().unwrap().push(flow_event);
+	}
+
 	/// Gets the enqueued [`OffersMessage`] with their corresponding [`MessageSendInstructions`].
 	pub fn release_pending_offers_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
@@ -1136,5 +1162,9 @@ where
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+	}
+
+	pub fn release_pending_flow_events(&self) -> Vec<FlowEvents> {
+		core::mem::take(&mut self.pending_flow_events.lock().unwrap())
 	}
 }
