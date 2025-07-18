@@ -77,6 +77,25 @@ use {
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
 
+pub enum FlowEvents {
+	/// Notifies that an [`InvoiceRequest`] has been received,
+	///
+	/// To respond to this message:
+	/// - Based the variant of [`InvoiceSigningInfo`], use the appropriate
+	/// invoice builder.
+	/// 	- [`InvoiceSigningInfo::DerivedKeys`] - Use [`OffersMessageFlow::create_invoice_builder_from_invoice_request_with_keys`].
+	/// 	- [`InvoiceSigningInfo::ExplicitKeys`] - Use [`OffersMessageFlow::create_invoice_builder_from_invoice_request_without_keys`].
+	/// After successfully creating the invoice builder, sign the invoice, and send it back
+	/// using the provided reply path using [`OffersMessageFlow::enqueue_invoice_using_reply_paths`].
+	///
+	/// However, if the invoice request is invalid, you can respond with an
+	/// [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`].
+	InvoiceRequestReceived {
+		invoice_request: InvoiceSigningInfo,
+		reply_path: BlindedMessagePath,
+	},
+}
+
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
 ///
@@ -98,6 +117,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	enable_events: bool,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -113,6 +134,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	pending_flow_events: Mutex<Vec<FlowEvents>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -123,7 +146,8 @@ where
 	pub fn new(
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
-		receive_auth_key: ReceiveAuthKey, secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
+		receive_auth_key: ReceiveAuthKey, secp_ctx: Secp256k1<secp256k1::All>,
+		message_router: MR, enable_events: bool,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -138,6 +162,8 @@ where
 			secp_ctx,
 			message_router,
 
+			enable_events,
+
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
@@ -148,6 +174,8 @@ where
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
 			paths_to_static_invoice_server: Mutex::new(Vec::new()),
+
+			pending_flow_events: Mutex::new(Vec::new()),
 		}
 	}
 
@@ -1350,6 +1378,10 @@ where
 		Ok(())
 	}
 
+	pub fn enqueue_flow_event(&self, flow_event: FlowEvents) {
+		self.pending_flow_events.lock().unwrap().push(flow_event);
+	}
+
 	/// Gets the enqueued [`OffersMessage`] with their corresponding [`MessageSendInstructions`].
 	pub fn release_pending_offers_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
@@ -1800,5 +1832,9 @@ where
 	/// Get the `AsyncReceiveOfferCache` for persistence.
 	pub(crate) fn writeable_async_receive_offer_cache(&self) -> impl Writeable + '_ {
 		&self.async_receive_offer_cache
+	}
+
+	pub fn release_pending_flow_events(&self) -> Vec<FlowEvents> {
+		core::mem::take(&mut self.pending_flow_events.lock().unwrap())
 	}
 }
