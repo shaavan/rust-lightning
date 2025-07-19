@@ -571,6 +571,25 @@ where
 		// recipient's node_id.
 		const MIN_PEER_CHANNELS: usize = 3;
 
+		// Add a random number (0 to `MAX_DUMMY_HOPS`) of dummy hops to each non-compact blinded path
+		// to make it harder to infer the recipient's position.
+		//
+		// # Note on compact paths:
+		//
+		// Compact paths are optimized for minimal size. Adding dummy hops to them
+		// would increase their size and undermine their primary advantage.
+		// Therefore, we avoid adding dummy hops to compact paths.
+		const MAX_DUMMY_HOPS: usize = 3;
+
+		let dummy_hops_count = if compact_paths {
+			0
+		} else {
+			{
+				let random_byte: usize = entropy_source.get_secure_random_bytes()[0].into();
+				random_byte % (MAX_DUMMY_HOPS + 1)
+			}
+		};
+
 		let network_graph = network_graph.deref().read_only();
 		let is_recipient_announced =
 			network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient));
@@ -605,9 +624,10 @@ where
 		let paths = peer_info
 			.into_iter()
 			.map(|(peer, _, _)| {
-				BlindedMessagePath::new(
+				BlindedMessagePath::new_with_dummy_hops(
 					&[peer],
 					recipient,
+					dummy_hops_count,
 					local_node_receive_key,
 					context.clone(),
 					entropy,
@@ -621,9 +641,10 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if is_recipient_announced {
-					BlindedMessagePath::new(
+					BlindedMessagePath::new_with_dummy_hops(
 						&[],
 						recipient,
+						dummy_hops_count,
 						local_node_receive_key,
 						context,
 						&**entropy_source,
