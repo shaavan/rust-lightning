@@ -77,6 +77,26 @@ impl BlindedMessagePath {
 	where
 		ES::Target: EntropySource,
 	{
+		BlindedMessagePath::new_with_dummy_hops(
+			intermediate_nodes,
+			recipient_node_id,
+			0,
+			local_node_receive_key,
+			context,
+			entropy_source,
+			secp_ctx,
+		)
+	}
+
+	/// Same as [`BlindedMessagePath::new`] but allow specifying a number of dummy hops
+	pub fn new_with_dummy_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+		intermediate_nodes: &[MessageForwardNode], recipient_node_id: PublicKey,
+		dummy_hop_count: u8, local_node_receive_key: ReceiveAuthKey, context: MessageContext,
+		entropy_source: ES, secp_ctx: &Secp256k1<T>,
+	) -> Result<Self, ()>
+	where
+		ES::Target: EntropySource,
+	{
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(recipient_node_id, |n| n.node_id),
 		);
@@ -91,6 +111,7 @@ impl BlindedMessagePath {
 				secp_ctx,
 				intermediate_nodes,
 				recipient_node_id,
+				dummy_hop_count,
 				context,
 				&blinding_secret,
 				local_node_receive_key,
@@ -641,12 +662,16 @@ pub(crate) const MESSAGE_PADDING_ROUND_OFF: usize = 100;
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[MessageForwardNode],
-	recipient_node_id: PublicKey, context: MessageContext, session_priv: &SecretKey,
-	local_node_receive_key: ReceiveAuthKey,
+	recipient_node_id: PublicKey, dummy_hop_count: u8, context: MessageContext,
+	session_priv: &SecretKey, local_node_receive_key: ReceiveAuthKey,
 ) -> Result<Vec<BlindedHop>, secp256k1::Error> {
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| (node.node_id, None))
+		.chain(
+			core::iter::repeat((recipient_node_id, Some(local_node_receive_key)))
+				.take(dummy_hop_count as usize),
+		)
 		.chain(core::iter::once((recipient_node_id, Some(local_node_receive_key))));
 	let is_compact = intermediate_nodes.iter().any(|node| node.short_channel_id.is_some());
 
@@ -661,6 +686,7 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.map(|next_hop| {
 			ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })
 		})
+		.chain((0..dummy_hop_count).map(|_| ControlTlvs::Dummy(DummyTlv {})))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 
 	if is_compact {
