@@ -77,6 +77,26 @@ impl BlindedMessagePath {
 	where
 		ES::Target: EntropySource,
 	{
+		BlindedMessagePath::new_with_dummy_hops(
+			intermediate_nodes,
+			recipient_node_id,
+			0,
+			local_node_receive_key,
+			context,
+			entropy_source,
+			secp_ctx,
+		)
+	}
+
+	/// Same as [`BlindedMessagePath::new`] but allow specifying a number of dummy hops
+	pub fn new_with_dummy_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+		intermediate_nodes: &[MessageForwardNode], recipient_node_id: PublicKey,
+		dummy_hop_count: usize, local_node_receive_key: ReceiveAuthKey, context: MessageContext,
+		entropy_source: ES, secp_ctx: &Secp256k1<T>,
+	) -> Result<Self, ()>
+	where
+		ES::Target: EntropySource,
+	{
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(recipient_node_id, |n| n.node_id),
 		);
@@ -91,6 +111,7 @@ impl BlindedMessagePath {
 				secp_ctx,
 				intermediate_nodes,
 				recipient_node_id,
+				dummy_hop_count,
 				context,
 				&blinding_secret,
 				local_node_receive_key,
@@ -638,15 +659,30 @@ impl_writeable_tlv_based!(DNSResolverContext, {
 /// to pad message blinded path's [`BlindedHop`]
 pub(crate) const MESSAGE_PADDING_ROUND_OFF: usize = 100;
 
+const MAX_DUMMY_HOPS_COUNT: usize = 10;
+
+pub enum BlindedPathConstructionError {
+	/// The number of dummy hops exceeds the maximum allowed.
+	TooManyDummyHops,
+	Secp256k1Error(secp256k1::Error),
+}
+
 /// Construct blinded onion message hops for the given `intermediate_nodes` and `recipient_node_id`.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[MessageForwardNode],
-	recipient_node_id: PublicKey, context: MessageContext, session_priv: &SecretKey,
-	local_node_receive_key: ReceiveAuthKey,
-) -> Result<Vec<BlindedHop>, secp256k1::Error> {
+	recipient_node_id: PublicKey, dummy_hop_count: usize, context: MessageContext,
+	session_priv: &SecretKey, local_node_receive_key: ReceiveAuthKey,
+) -> Result<Vec<BlindedHop>, BlindedPathConstructionError> {
+	if dummy_hop_count > MAX_DUMMY_HOPS_COUNT {
+		return Err(BlindedPathConstructionError::TooManyDummyHops);
+	}
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| (node.node_id, None))
+		.chain(
+			core::iter::repeat((recipient_node_id, Some(local_node_receive_key)))
+				.take(dummy_hop_count),
+		)
 		.chain(core::iter::once((recipient_node_id, Some(local_node_receive_key))));
 	let is_compact = intermediate_nodes.iter().any(|node| node.short_channel_id.is_some());
 
@@ -661,11 +697,13 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.map(|next_hop| {
 			ControlTlvs::Forward(ForwardTlvs { next_hop, next_blinding_override: None })
 		})
+		.chain((0..dummy_hop_count).map(|_| ControlTlvs::Dummy(DummyTlv {})))
 		.chain(core::iter::once(ControlTlvs::Receive(ReceiveTlvs { context: Some(context) })));
 
 	if is_compact {
 		let path = pks.zip(tlvs);
 		utils::construct_blinded_hops(secp_ctx, path, session_priv)
+			.map_err(BlindedPathConstructionError::Secp256k1Error)
 	} else {
 		let path =
 			pks.zip(tlvs.map(|tlv| BlindedPathWithPadding {
@@ -673,5 +711,6 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 				round_off: MESSAGE_PADDING_ROUND_OFF,
 			}));
 		utils::construct_blinded_hops(secp_ctx, path, session_priv)
+			.map_err(BlindedPathConstructionError::Secp256k1Error)
 	}
 }
