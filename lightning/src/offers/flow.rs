@@ -27,6 +27,7 @@ use crate::blinded_path::payment::{
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 
+use crate::offers::invoice_error::InvoiceError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -41,7 +42,8 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest, VerifiedInvoiceRequestEnum
+	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	VerifiedInvoiceRequestEnum,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -74,16 +76,29 @@ use {
 
 pub enum FlowEvents {
 	/// Notifies that an [`InvoiceRequest`] has been received,
-	/// 
+	/// To respond to this message:
+	/// - Based the variant of [`VerifiedInvoiceRequestEnum`], use the appropriate
+	/// invoice builder.
+	/// 	- [`VerifiedInvoiceRequestEnum::WithKeys`] - Use [`Self::create_invoice_builder_from_invoice_request_with_keys`].
+	/// 	- [`VerifiedInvoiceRequestEnum::WithoutKeys`] - Use [`Self::create_invoice_builder_from_invoice_request_without_keys`].
+	/// After successfully creating the invoice builder, sign the invoice, and send it back
+	/// using the provided reply path using [`OffersMessageFlow::enqueue_invoice_manually`].
+	///
+	/// However, if the invoice request is invalid, you can respond with an
+	/// [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`].
 	InvoiceRequestReceived {
 		invoice_request: VerifiedInvoiceRequestEnum,
 		reply_path: BlindedMessagePath,
 	},
 
+	/// Notifies that an [`Bolt12Invoice`] has been received.
+	/// You can study the invoice, and pay it.
+	///
+	/// If the invoice is invalid, you can respond with an [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`].
 	InvoiceReceived {
 		invoice: Bolt12Invoice,
 		reply_path: Option<BlindedMessagePath>,
-	}
+	},
 }
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
@@ -733,8 +748,7 @@ where
 	/// blinded path can be constructed.
 	pub fn create_invoice_builder_from_refund<'a, ES: Deref, R: Deref, F>(
 		&'a self, router: &R, entropy_source: ES, refund: &'a Refund,
-		usable_channels: Vec<ChannelDetails>,
-		get_payment_info: F,
+		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
@@ -803,11 +817,16 @@ where
 	/// - User call the function with [`VerifiedInvoiceRequest::WithoutKeys`].
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, ES: Deref, R: Deref, CC: Deref, F>(
+	pub fn create_invoice_builder_from_invoice_request_with_keys<
+		'a,
+		ES: Deref,
+		R: Deref,
+		CC: Deref,
+		F,
+	>(
 		&'a self, router: &R, entropy_source: ES,
 		invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
-		currency_conversion: &CC, usable_channels: Vec<ChannelDetails>,
-		get_payment_info: F,
+		currency_conversion: &CC, usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
@@ -821,7 +840,8 @@ where
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-			&invoice_request.inner, currency_conversion
+			&invoice_request.inner,
+			currency_conversion,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
@@ -844,7 +864,11 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(currency_conversion, payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(
+			currency_conversion,
+			payment_paths,
+			payment_hash,
+		);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
@@ -876,17 +900,22 @@ where
 	/// - User call the function with [`VerifiedInvoiceRequest::WithKeys`].
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, ES: Deref, R: Deref, CC: Deref, F>(
+	pub fn create_invoice_builder_from_invoice_request_without_keys<
+		'a,
+		ES: Deref,
+		R: Deref,
+		CC: Deref,
+		F,
+	>(
 		&'a self, router: &R, entropy_source: ES,
 		invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
-		currency_conversion: &CC, usable_channels: Vec<ChannelDetails>,
-		get_payment_info: F,
+		currency_conversion: &CC, usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 		R::Target: Router,
 		CC::Target: CurrencyConversion,
-		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>
+		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let entropy = &*entropy_source;
 		let expanded_key = &self.inbound_payment_key;
@@ -894,7 +923,8 @@ where
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-			&invoice_request.inner, currency_conversion
+			&invoice_request.inner,
+			currency_conversion,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
@@ -1054,6 +1084,55 @@ where
 				&mut pending_offers_messages,
 			);
 		}
+
+		Ok(())
+	}
+
+	pub fn enqueue_invoice_manually<ES: Deref>(
+		&self, entropy_source: ES, invoice: Bolt12Invoice, reply_path: BlindedMessagePath,
+		peers: Vec<MessageForwardNode>,
+	) -> Result<(), Bolt12SemanticError>
+	where
+		ES::Target: EntropySource,
+	{
+		let expanded_key = &self.inbound_payment_key;
+		let entropy = &*entropy_source;
+
+		let payment_hash = invoice.payment_hash();
+
+		let nonce = Nonce::from_entropy_source(entropy);
+		let hmac = payment_hash.hmac_for_offer_payment(nonce, expanded_key);
+
+		let context =
+			MessageContext::Offers(OffersContext::InboundPayment { payment_hash, nonce, hmac });
+
+		let reply_paths = self
+			.create_blinded_paths(peers, context)
+			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
+
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		let message = OffersMessage::Invoice(invoice);
+		enqueue_onion_message_with_reply_paths(
+			message,
+			&[reply_path],
+			reply_paths,
+			&mut pending_offers_messages,
+		);
+
+		Ok(())
+	}
+
+	pub fn enqueue_invoice_error(
+		&self, invoice_error: InvoiceError, reply_path: BlindedMessagePath,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		let message = OffersMessage::InvoiceError(invoice_error);
+		let instructions =
+			MessageSendInstructions::WithoutReplyPath { destination: Destination::BlindedPath(reply_path) };
+
+		pending_offers_messages.push((message, instructions));
 
 		Ok(())
 	}

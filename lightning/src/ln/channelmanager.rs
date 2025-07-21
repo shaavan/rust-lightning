@@ -88,7 +88,9 @@ use crate::ln::types::ChannelId;
 use crate::offers::flow::OffersMessageFlow;
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{DefaultCurrencyConversion, InvoiceRequest, VerifiedInvoiceRequestEnum};
+use crate::offers::invoice_request::{
+	DefaultCurrencyConversion, InvoiceRequest, VerifiedInvoiceRequestEnum,
+};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Offer;
 use crate::offers::parse::Bolt12SemanticError;

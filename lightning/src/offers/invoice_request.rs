@@ -65,7 +65,6 @@
 //! # }
 //! ```
 
-use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -96,6 +95,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::network::Network;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder};
@@ -1752,7 +1752,12 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with_no_std(&DefaultCurrencyConversion {}, payment_paths(), payment_hash(), now())
+			.respond_with_no_std(
+				&DefaultCurrencyConversion {},
+				payment_paths(),
+				payment_hash(),
+				now(),
+			)
 			.unwrap()
 			.experimental_baz(42)
 			.build()
@@ -2333,8 +2338,12 @@ mod tests {
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(&DefaultCurrencyConversion {}, payment_paths(), payment_hash(), now())
-		{
+			.respond_with_no_std(
+				&DefaultCurrencyConversion {},
+				payment_paths(),
+				payment_hash(),
+				now(),
+			) {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),
 		}
