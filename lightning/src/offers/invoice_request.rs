@@ -71,6 +71,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -96,7 +97,7 @@ use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
 
 #[cfg(not(c_bindings))]
-use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder};
+use crate::offers::invoice::InvoiceBuilder;
 #[cfg(c_bindings)]
 use crate::offers::invoice::{
 	InvoiceWithDerivedSigningPubkeyBuilder, InvoiceWithExplicitSigningPubkeyBuilder,
@@ -615,6 +616,63 @@ pub struct VerifiedInvoiceRequestLegacy {
 	pub keys: Option<Keypair>,
 }
 
+/// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
+/// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
+/// on whether the signing keys were derived.
+#[derive(Clone, Debug)]
+pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
+	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
+	pub offer_id: OfferId,
+
+	/// The verified request.
+	pub(crate) inner: InvoiceRequest,
+
+	/// Keys for signing a [`Bolt12Invoice`] for the request.
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub keys: S,
+}
+
+/// Represents a [`VerifiedInvoiceRequest`], along with information about how the resulting
+/// [`Bolt12Invoice`] should be signed.
+///
+/// The signing strategy determines whether the signing keys are:
+/// - Derived either from the originating [`Offer`]’s metadata or recipient_data, or
+/// - Explicitly provided.
+///
+/// This distinction is required to produce a valid, signed [`Bolt12Invoice`] from a verified request.
+///
+/// For more on key derivation strategies, see:
+/// [`InvoiceRequest::verify_using_metadata`] and [`InvoiceRequest::verify_using_recipient_data`].
+///
+/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+pub enum InvoiceRequestVerifiedFromOffer {
+	/// A verified invoice request that uses signing keys derived from the originating [`Offer`]’s metadata or recipient_data.
+	DerivedKeys(VerifiedInvoiceRequest<DerivedSigningPubkey>),
+	/// A verified invoice request that requires explicitly provided signing keys to sign the resulting [`Bolt12Invoice`].
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	ExplicitKeys(VerifiedInvoiceRequest<ExplicitSigningPubkey>),
+}
+
+impl InvoiceRequestVerifiedFromOffer {
+	/// Returns a reference to the underlying `InvoiceRequest`.
+	fn inner(&self) -> &InvoiceRequest {
+		match self {
+			InvoiceRequestVerifiedFromOffer::DerivedKeys(req) => &req.inner,
+			InvoiceRequestVerifiedFromOffer::ExplicitKeys(req) => &req.inner,
+		}
+	}
+
+	/// Returns the `OfferId` of the offer this invoice request is for.
+	pub fn offer_id(&self) -> OfferId {
+		match self {
+			InvoiceRequestVerifiedFromOffer::DerivedKeys(req) => req.offer_id,
+			InvoiceRequestVerifiedFromOffer::ExplicitKeys(req) => req.offer_id,
+		}
+	}
+}
+
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
 ///
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
@@ -1022,6 +1080,24 @@ impl VerifiedInvoiceRequestLegacy {
 		self.inner,
 		InvoiceWithDerivedSigningPubkeyBuilder
 	);
+}
+
+impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl InvoiceRequestVerifiedFromOffer {
+	offer_accessors!(self, self.inner().contents.inner.offer);
+	invoice_request_accessors!(self, self.inner().contents);
+	fields_accessor!(self, self.inner().contents);
 }
 
 /// `String::truncate(new_len)` panics if you split inside a UTF-8 code point,
