@@ -592,7 +592,7 @@ pub struct InvoiceRequest {
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
 #[derive(Clone, Debug)]
-pub struct VerifiedInvoiceRequest {
+pub struct VerifiedInvoiceRequestLegacy {
 	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
 	pub offer_id: OfferId,
 
@@ -745,7 +745,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// If the originating [`Offer`] was created using [`OfferBuilder::deriving_signing_pubkey`],
 	/// then first use [`InvoiceRequest::verify_using_metadata`] or
-	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`VerifiedInvoiceRequest`] methods
+	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`VerifiedInvoiceRequestLegacy`] methods
 	/// instead.
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
@@ -801,10 +801,10 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequest, ()> {
+	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
 		let (offer_id, keys) =
 			$self.contents.inner.offer.verify_using_metadata(&$self.bytes, key, secp_ctx)?;
-		Ok(VerifiedInvoiceRequest {
+		Ok(VerifiedInvoiceRequestLegacy {
 			offer_id,
 			#[cfg(not(c_bindings))]
 			inner: $self,
@@ -831,11 +831,11 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequest, ()> {
+	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
 		let (offer_id, keys) = $self.contents.inner.offer.verify_using_recipient_data(
 			&$self.bytes, nonce, key, secp_ctx
 		)?;
-		Ok(VerifiedInvoiceRequest {
+		Ok(VerifiedInvoiceRequestLegacy {
 			offer_id,
 			#[cfg(not(c_bindings))]
 			inner: $self,
@@ -961,7 +961,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	}
 } }
 
-impl VerifiedInvoiceRequest {
+impl VerifiedInvoiceRequestLegacy {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	#[cfg(not(c_bindings))]

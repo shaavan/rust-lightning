@@ -41,7 +41,7 @@ use crate::offers::invoice::{
 };
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
+	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequestLegacy,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
@@ -406,7 +406,7 @@ fn enqueue_onion_message_with_reply_paths<T: OnionMessageContents + Clone>(
 pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
-	SendInvoice(VerifiedInvoiceRequest),
+	SendInvoice(VerifiedInvoiceRequestLegacy),
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_id` and calling
 	/// `OffersMessageFlow::enqueue_static_invoice`.
@@ -920,7 +920,7 @@ where
 		Ok(builder.into())
 	}
 
-	/// Creates a response for the provided [`VerifiedInvoiceRequest`].
+	/// Creates a response for the provided [`VerifiedInvoiceRequestLegacy`].
 	///
 	/// A response can be either an [`OffersMessage::Invoice`] with additional [`MessageContext`],
 	/// or an [`OffersMessage::InvoiceError`], depending on the [`InvoiceRequest`].
@@ -930,8 +930,9 @@ where
 	/// - We fail to generate a valid signed [`Bolt12Invoice`] for the [`InvoiceRequest`].
 	pub fn create_response_for_invoice_request<ES: Deref, NS: Deref, R: Deref>(
 		&self, signer: &NS, router: &R, entropy_source: ES,
-		invoice_request: VerifiedInvoiceRequest, amount_msats: u64, payment_hash: PaymentHash,
-		payment_secret: PaymentSecret, usable_channels: Vec<ChannelDetails>,
+		invoice_request: VerifiedInvoiceRequestLegacy, amount_msats: u64,
+		payment_hash: PaymentHash, payment_secret: PaymentSecret,
+		usable_channels: Vec<ChannelDetails>,
 	) -> (OffersMessage, Option<MessageContext>)
 	where
 		ES::Target: EntropySource,
