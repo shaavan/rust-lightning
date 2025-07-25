@@ -94,6 +94,13 @@ pub enum FlowEvents {
 		reply_path: BlindedMessagePath,
 	},
 
+	/// Notifies that an [`Bolt12Invoice`] has been received.
+	/// 
+	/// To respond to this message:
+	/// - If the invoice is valid, you can pay it using [`OffersMessageFlow::send_payment_for_bolt12_invoice`].
+	/// - If the invoice is invalid, you can respond with an [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`] if reply_path is present.
+	///
+	/// If the invoice is not valid, you can also abandon the payment using [`OffersMessageFlow::abandon_payment`].
 	InvoiceReceived {
 		invoice: Bolt12Invoice,
 		reply_path: Option<BlindedMessagePath>,
