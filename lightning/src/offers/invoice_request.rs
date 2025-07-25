@@ -71,6 +71,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -96,7 +97,7 @@ use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
 
 #[cfg(not(c_bindings))]
-use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder};
+use crate::offers::invoice::InvoiceBuilder;
 #[cfg(c_bindings)]
 use crate::offers::invoice::{
 	InvoiceWithDerivedSigningPubkeyBuilder, InvoiceWithExplicitSigningPubkeyBuilder,
@@ -615,6 +616,50 @@ pub struct VerifiedInvoiceRequestLegacy {
 	pub keys: Option<Keypair>,
 }
 
+/// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
+/// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
+/// on whether the signing keys were derived.
+#[derive(Clone, Debug)]
+pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
+	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
+	pub offer_id: OfferId,
+
+	/// The verified request.
+	pub(crate) inner: InvoiceRequest,
+
+	/// Keys for signing a [`Bolt12Invoice`] for the request.
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	pub keys: S,
+}
+
+/// An enum representing a verified invoice request, which can either have derived signing keys or
+/// require explicit signing keys.
+pub enum VerifiedInvoiceRequestEnum {
+	/// An invoice request with signing keys that can be derived from the metadata.
+	WithKeys(VerifiedInvoiceRequest<DerivedSigningPubkey>),
+	/// An invoice request without derived signing keys, which must be explicitly provided.
+	WithoutKeys(VerifiedInvoiceRequest<ExplicitSigningPubkey>),
+}
+
+impl VerifiedInvoiceRequestEnum {
+	/// Returns a reference to the underlying `InvoiceRequest`.
+	pub fn inner(&self) -> &InvoiceRequest {
+		match self {
+			VerifiedInvoiceRequestEnum::WithKeys(req) => &req.inner,
+			VerifiedInvoiceRequestEnum::WithoutKeys(req) => &req.inner,
+		}
+	}
+
+	/// Returns the `OfferId` of the offer this invoice request is for.
+	pub fn offer_id(&self) -> OfferId {
+		match self {
+			VerifiedInvoiceRequestEnum::WithKeys(req) => req.offer_id,
+			VerifiedInvoiceRequestEnum::WithoutKeys(req) => req.offer_id,
+		}
+	}
+}
+
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
 ///
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
@@ -1020,6 +1065,24 @@ impl VerifiedInvoiceRequestLegacy {
 		self.inner,
 		InvoiceWithDerivedSigningPubkeyBuilder
 	);
+}
+
+impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
+	offer_accessors!(self, self.inner.contents.inner.offer);
+	invoice_request_accessors!(self, self.inner.contents);
+	fields_accessor!(self, self.inner.contents);
+}
+
+impl VerifiedInvoiceRequestEnum {
+	offer_accessors!(self, self.inner().contents.inner.offer);
+	invoice_request_accessors!(self, self.inner().contents);
+	fields_accessor!(self, self.inner().contents);
 }
 
 /// `String::truncate(new_len)` panics if you split inside a UTF-8 code point,
