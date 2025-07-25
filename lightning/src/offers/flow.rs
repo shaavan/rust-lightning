@@ -27,6 +27,7 @@ use crate::blinded_path::payment::{
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 
+use crate::offers::invoice_error::InvoiceError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -1138,6 +1139,21 @@ where
 				},
 			));
 		}
+
+		Ok(())
+	}
+
+	pub fn enqueue_invoice_error(
+		&self, invoice_error: InvoiceError, reply_path: BlindedMessagePath,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		let instructions = MessageSendInstructions::WithoutReplyPath {
+			destination: Destination::BlindedPath(reply_path),
+		};
+
+		let message = OffersMessage::InvoiceError(invoice_error);
+		pending_offers_messages.push((message, instructions));
 
 		Ok(())
 	}
