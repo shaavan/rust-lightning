@@ -12768,29 +12768,34 @@ where
 				})
 			},
 			OffersMessage::Invoice(invoice) => {
-				let payment_id = match self.flow.verify_bolt12_invoice(&invoice, context.as_ref()) {
-					Ok(payment_id) => payment_id,
-					Err(()) => return None,
-				};
+				// Once we fully integrate flow based event model this will be removed.
+				{
+					let payment_id = match self.flow.verify_bolt12_invoice(&invoice, context.as_ref()) {
+						Ok(payment_id) => payment_id,
+						Err(()) => return None,
+					};
+
+					if self.default_configuration.manually_handle_bolt12_invoices {
+						// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
+						// This ensures that event generation remains idempotent in case we receive
+						// the same invoice multiple times.
+						self.pending_outbound_payments.mark_invoice_received(&invoice, payment_id).ok()?;
+
+						let event = Event::InvoiceReceived {
+							payment_id, invoice, context, responder,
+						};
+						self.pending_events.lock().unwrap().push_back((event, None));
+						return None;
+					}
+				}
+
+				let res = self.flow.send_payment_for_bolt12_invoice(&invoice, context.as_ref(), |_, payment_id| {
+					self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id)
+				});
 
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
-
-				if self.default_configuration.manually_handle_bolt12_invoices {
-					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
-					// This ensures that event generation remains idempotent in case we receive
-					// the same invoice multiple times.
-					self.pending_outbound_payments.mark_invoice_received(&invoice, payment_id).ok()?;
-
-					let event = Event::InvoiceReceived {
-						payment_id, invoice, context, responder,
-					};
-					self.pending_events.lock().unwrap().push_back((event, None));
-					return None;
-				}
-
-				let res = self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
 			},
 			#[cfg(async_payments)]

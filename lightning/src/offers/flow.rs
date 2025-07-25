@@ -27,20 +27,20 @@ use crate::blinded_path::payment::{
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 
-use crate::offers::invoice_error::InvoiceError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
 use crate::chain::BestBlock;
 use crate::ln::channel_state::ChannelDetails;
 use crate::ln::channelmanager::{
-	Verification, {PaymentId, CLTV_FAR_FAR_AWAY, MAX_SHORT_LIVED_RELATIVE_EXPIRY},
+	Bolt12PaymentError, Verification, {PaymentId, CLTV_FAR_FAR_AWAY, MAX_SHORT_LIVED_RELATIVE_EXPIRY},
 };
 use crate::ln::inbound_payment;
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
 	DEFAULT_RELATIVE_EXPIRY,
 };
+use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
 	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 	VerifiedInvoiceRequestEnum,
@@ -97,7 +97,7 @@ pub enum FlowEvents {
 	InvoiceReceived {
 		invoice: Bolt12Invoice,
 		reply_path: Option<BlindedMessagePath>,
-	}
+	},
 }
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
@@ -370,6 +370,32 @@ fn enqueue_onion_message_with_reply_paths<T: OnionMessageContents + Clone>(
 			};
 			queue.push((message.clone(), instructions));
 		});
+}
+
+impl<MR: Deref> OffersMessageFlow<MR>
+where
+	MR::Target: MessageRouter,
+{
+	pub fn send_payment_for_bolt12_invoice<F>(
+		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>, payer: F,
+	) -> Result<(), Bolt12PaymentError>
+	where
+		F: Fn(&Bolt12Invoice, PaymentId) -> Result<(), Bolt12PaymentError>,
+	{
+		let payment_id = match self.verify_bolt12_invoice(&invoice, context) {
+			Ok(payment_id) => payment_id,
+			Err(()) => return Err(Bolt12PaymentError::UnexpectedInvoice),
+		};
+
+		payer(&invoice, payment_id)
+	}
+
+	pub fn abandon_payment<F>(&self, abandoner: F)
+	where
+		F: Fn() -> (),
+	{
+		abandoner()
+	}
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
