@@ -759,6 +759,11 @@ impl OnionMessagePath {
 	}
 }
 
+pub enum DestinationInfo<'a> {
+	Node(PublicKey),
+	BlindedPaths(&'a [BlindedMessagePath]),
+}
+
 /// The destination of an onion message.
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum Destination {

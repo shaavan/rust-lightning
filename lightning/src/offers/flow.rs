@@ -49,7 +49,9 @@ use crate::offers::offer::{DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
-use crate::onion_message::messenger::{Destination, MessageRouter, MessageSendInstructions};
+use crate::onion_message::messenger::{
+	Destination, DestinationInfo, MessageRouter, MessageSendInstructions,
+};
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::OnionMessageContents;
 use crate::routing::router::Router;
@@ -1007,7 +1009,7 @@ where
 	///
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
 	pub fn enqueue_invoice<ES: Deref>(
-		&self, entropy_source: ES, invoice: Bolt12Invoice, refund: &Refund,
+		&self, entropy_source: ES, invoice: Bolt12Invoice, destination_info: DestinationInfo,
 		peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError>
 	where
@@ -1030,23 +1032,29 @@ where
 
 		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
 
-		if refund.paths().is_empty() {
-			for reply_path in reply_paths {
-				let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
-					destination: Destination::Node(refund.payer_signing_pubkey()),
-					reply_path,
-				};
-				let message = OffersMessage::Invoice(invoice.clone());
-				pending_offers_messages.push((message, instructions));
-			}
-		} else {
-			let message = OffersMessage::Invoice(invoice);
-			enqueue_onion_message_with_reply_paths(
-				message,
-				refund.paths(),
-				reply_paths,
-				&mut pending_offers_messages,
-			);
+		match destination_info {
+			DestinationInfo::BlindedPaths(destinations) => {
+				if reply_paths.is_empty() {
+					return Err(Bolt12SemanticError::MissingPaths);
+				}
+				let message = OffersMessage::Invoice(invoice);
+				enqueue_onion_message_with_reply_paths(
+					message,
+					&destinations,
+					reply_paths,
+					&mut pending_offers_messages,
+				);
+			},
+			DestinationInfo::Node(node_id) => {
+				for reply_path in reply_paths {
+					let instructions = MessageSendInstructions::WithSpecifiedReplyPath {
+						destination: Destination::Node(node_id),
+						reply_path,
+					};
+					let message = OffersMessage::Invoice(invoice.clone());
+					pending_offers_messages.push((message, instructions));
+				}
+			},
 		}
 
 		Ok(())

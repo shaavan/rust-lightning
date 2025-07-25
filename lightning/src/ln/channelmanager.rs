@@ -101,7 +101,7 @@ use crate::onion_message::async_payments::{
 };
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::onion_message::messenger::{
-	MessageRouter, MessageSendInstructions, Responder, ResponseInstruction,
+	DestinationInfo, MessageRouter, MessageSendInstructions, Responder, ResponseInstruction,
 };
 use crate::onion_message::offers::{OffersMessage, OffersMessageHandler};
 use crate::routing::router::{
@@ -10795,7 +10795,13 @@ where
 
 		let invoice = builder.allow_mpp().build_and_sign(secp_ctx)?;
 
-		self.flow.enqueue_invoice(entropy, invoice.clone(), refund, self.get_peers_for_blinded_path())?;
+		let destination_info = if refund.paths().is_empty() {
+			DestinationInfo::Node(refund.payer_signing_pubkey())
+		} else {
+			DestinationInfo::BlindedPaths(refund.paths())
+		};
+
+		self.flow.enqueue_invoice(entropy, invoice.clone(), destination_info, self.get_peers_for_blinded_path())?;
 		Ok(invoice)
 	}
 
