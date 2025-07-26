@@ -593,33 +593,6 @@ pub struct InvoiceRequest {
 /// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
 /// on whether the signing keys were derived.
 #[derive(Clone, Debug)]
-pub struct VerifiedInvoiceRequestLegacy {
-	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
-	pub offer_id: OfferId,
-
-	/// The verified request.
-	pub(crate) inner: InvoiceRequest,
-
-	/// Keys used for signing a [`Bolt12Invoice`] if they can be derived.
-	///
-	#[cfg_attr(
-		feature = "std",
-		doc = "If `Some`, must call [`respond_using_derived_keys`] when responding. Otherwise, call [`respond_with`]."
-	)]
-	#[cfg_attr(feature = "std", doc = "")]
-	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	#[cfg_attr(
-		feature = "std",
-		doc = "[`respond_using_derived_keys`]: Self::respond_using_derived_keys"
-	)]
-	#[cfg_attr(feature = "std", doc = "[`respond_with`]: Self::respond_with")]
-	pub keys: Option<Keypair>,
-}
-
-/// An [`InvoiceRequest`] that has been verified by [`InvoiceRequest::verify_using_metadata`] or
-/// [`InvoiceRequest::verify_using_recipient_data`] and exposes different ways to respond depending
-/// on whether the signing keys were derived.
-#[derive(Clone, Debug)]
 pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	/// The identifier of the [`Offer`] for which the [`InvoiceRequest`] was made.
 	pub offer_id: OfferId,
@@ -629,7 +602,17 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
+	#[cfg_attr(
+		feature = "std",
+		doc = "If `DerivedSigningPubkey`, must call [`respond_using_derived_keys`] when responding. Otherwise, call [`respond_with`]."
+	)]
+	#[cfg_attr(feature = "std", doc = "")]
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	#[cfg_attr(
+		feature = "std",
+		doc = "[`respond_using_derived_keys`]: Self::respond_using_derived_keys"
+	)]
+	#[cfg_attr(feature = "std", doc = "[`respond_with`]: Self::respond_with")]
 	pub keys: S,
 }
 
@@ -657,7 +640,7 @@ pub enum InvoiceSigningInfo {
 
 impl InvoiceSigningInfo {
 	/// Returns a reference to the underlying `InvoiceRequest`.
-	fn inner(&self) -> &InvoiceRequest {
+	pub(crate) fn inner(&self) -> &InvoiceRequest {
 		match self {
 			InvoiceSigningInfo::DerivedKeys(req) => &req.inner,
 			InvoiceSigningInfo::ExplicitKeys(req) => &req.inner,
@@ -803,7 +786,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// If the originating [`Offer`] was created using [`OfferBuilder::deriving_signing_pubkey`],
 	/// then first use [`InvoiceRequest::verify_using_metadata`] or
-	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`VerifiedInvoiceRequestLegacy`] methods
+	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`InvoiceSigningInfo`] methods
 	/// instead.
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
@@ -859,17 +842,30 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
+	) -> Result<InvoiceSigningInfo, ()> {
 		let (offer_id, keys) =
 			$self.contents.inner.offer.verify_using_metadata(&$self.bytes, key, secp_ctx)?;
-		Ok(VerifiedInvoiceRequestLegacy {
-			offer_id,
+		let inner = {
 			#[cfg(not(c_bindings))]
-			inner: $self,
+			{ $self }
 			#[cfg(c_bindings)]
-			inner: $self.clone(),
-			keys,
-		})
+			{ $self.clone() }
+		};
+
+		let verified = match keys {
+			None => InvoiceSigningInfo::ExplicitKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				keys: ExplicitSigningPubkey {},
+			}),
+			Some(keys) => InvoiceSigningInfo::DerivedKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				keys: DerivedSigningPubkey(keys),
+			}),
+		};
+
+		Ok(verified)
 	}
 
 /// Verifies that the request was for an offer created using the given key by checking a nonce
@@ -889,18 +885,32 @@ macro_rules! invoice_request_verify_method {
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
-	) -> Result<VerifiedInvoiceRequestLegacy, ()> {
+	) -> Result<InvoiceSigningInfo, ()> {
 		let (offer_id, keys) = $self.contents.inner.offer.verify_using_recipient_data(
 			&$self.bytes, nonce, key, secp_ctx
 		)?;
-		Ok(VerifiedInvoiceRequestLegacy {
-			offer_id,
+
+		let inner = {
 			#[cfg(not(c_bindings))]
-			inner: $self,
+			{ $self }
 			#[cfg(c_bindings)]
-			inner: $self.clone(),
-			keys,
-		})
+			{ $self.clone() }
+		};
+
+		let verified = match keys {
+			None => InvoiceSigningInfo::ExplicitKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				keys: ExplicitSigningPubkey {},
+			}),
+			Some(keys) => InvoiceSigningInfo::DerivedKeys(VerifiedInvoiceRequest {
+				offer_id,
+				inner,
+				keys: DerivedSigningPubkey(keys),
+			}),
+		};
+
+		Ok(verified)
 	}
 	};
 }
@@ -1003,10 +1013,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		let keys = match $self.keys {
-			None => return Err(Bolt12SemanticError::InvalidMetadata),
-			Some(keys) => keys,
-		};
+		let keys = $self.keys.0;
 
 		match $contents.contents.inner.offer.issuer_signing_pubkey() {
 			Some(signing_pubkey) => debug_assert_eq!(signing_pubkey, keys.public_key()),
@@ -1052,22 +1059,11 @@ macro_rules! fields_accessor {
 	};
 }
 
-impl VerifiedInvoiceRequestLegacy {
+impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
-	#[cfg(not(c_bindings))]
-	invoice_request_respond_with_explicit_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceBuilder<ExplicitSigningPubkey>
-	);
-	#[cfg(c_bindings)]
-	invoice_request_respond_with_explicit_signing_pubkey_methods!(
-		self,
-		self.inner,
-		InvoiceWithExplicitSigningPubkeyBuilder
-	);
+
 	#[cfg(not(c_bindings))]
 	invoice_request_respond_with_derived_signing_pubkey_methods!(
 		self,
@@ -1082,16 +1078,23 @@ impl VerifiedInvoiceRequestLegacy {
 	);
 }
 
-impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
-	offer_accessors!(self, self.inner.contents.inner.offer);
-	invoice_request_accessors!(self, self.inner.contents);
-	fields_accessor!(self, self.inner.contents);
-}
-
 impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
+
+	#[cfg(not(c_bindings))]
+	invoice_request_respond_with_explicit_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceBuilder<ExplicitSigningPubkey>
+	);
+	#[cfg(c_bindings)]
+	invoice_request_respond_with_explicit_signing_pubkey_methods!(
+		self,
+		self.inner,
+		InvoiceWithExplicitSigningPubkeyBuilder
+	);
 }
 
 impl InvoiceSigningInfo {
@@ -3092,7 +3095,7 @@ mod tests {
 		match invoice_request.verify_using_metadata(&expanded_key, &secp_ctx) {
 			Ok(invoice_request) => {
 				let fields = invoice_request.fields();
-				assert_eq!(invoice_request.offer_id, offer.id());
+				assert_eq!(invoice_request.offer_id(), offer.id());
 				assert_eq!(
 					fields,
 					InvoiceRequestFields {
