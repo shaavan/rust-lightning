@@ -831,6 +831,14 @@ impl OnionMessagePath {
 	}
 }
 
+/// Information about the destination of an onion message, used for routing.
+pub enum DestinationInfo<'a> {
+	/// The destination is a node identified by its public key.
+	Node(PublicKey),
+	/// The destinations are a set of blinded paths.
+	BlindedPaths(&'a [BlindedMessagePath]),
+}
+
 /// The destination of an onion message.
 #[derive(Clone, Hash, Debug, PartialEq, Eq)]
 pub enum Destination {
