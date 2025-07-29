@@ -33,7 +33,7 @@ use crate::prelude::*;
 
 use crate::chain::BestBlock;
 use crate::ln::channel_state::ChannelDetails;
-use crate::ln::channelmanager::{PaymentId, CLTV_FAR_FAR_AWAY};
+use crate::ln::channelmanager::{Bolt12PaymentError, PaymentId, CLTV_FAR_FAR_AWAY};
 use crate::ln::inbound_payment;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
 use crate::offers::invoice::{
@@ -423,6 +423,27 @@ pub enum InvreqResponseInstructions {
 		/// An identifier for the specific invoice being requested by the payer.
 		invoice_id: u128,
 	},
+}
+
+impl<MR: Deref> OffersMessageFlow<MR>
+where
+	MR::Target: MessageRouter,
+{
+	pub fn send_payment_for_bolt12_invoice<F>(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, payer: F,
+	) -> Result<(), Bolt12PaymentError>
+	where
+		F: Fn(&Bolt12Invoice, PaymentId) -> Result<(), Bolt12PaymentError>,
+	{
+		payer(&invoice, payment_id)
+	}
+
+	pub fn abandon_payment<F>(&self, abandoner: F)
+	where
+		F: Fn() -> (),
+	{
+		abandoner()
+	}
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
