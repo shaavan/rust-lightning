@@ -90,7 +90,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::flow::{InvreqResponseInstructions, OffersMessageFlow};
+use crate::offers::flow::{DeterminedBehavior, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
@@ -3721,7 +3721,8 @@ where
 		let flow = OffersMessageFlow::new(
 			ChainHash::using_genesis_block(params.network), params.best_block,
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
-			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router
+			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router,
+			false,
 		);
 
 		ChannelManager {
@@ -14179,27 +14180,18 @@ where
 				})
 			},
 			OffersMessage::Invoice(invoice) => {
-				let payment_id = match self.flow.verify_bolt12_invoice(&invoice, context.as_ref()) {
-					Ok(payment_id) => payment_id,
+				let payment_id = match self.flow.determine_invoice_handling(&invoice, context.as_ref(), &responder) {
+					Ok(DeterminedBehavior::VerifiedAndHandleSync(payment_id)) => payment_id,
+					Ok(DeterminedBehavior::VerifiedAndHandleAsync(payment_id)) => {
+						self.pending_outbound_payments.mark_invoice_received(&invoice, payment_id).ok()?;
+						return None
+					}
 					Err(()) => return None,
 				};
 
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
-
-				if self.default_configuration.manually_handle_bolt12_invoices {
-					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
-					// This ensures that event generation remains idempotent in case we receive
-					// the same invoice multiple times.
-					self.pending_outbound_payments.mark_invoice_received(&invoice, payment_id).ok()?;
-
-					let event = Event::InvoiceReceived {
-						payment_id, invoice, context, responder,
-					};
-					self.pending_events.lock().unwrap().push_back((event, None));
-					return None;
-				}
 
 				let res = self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
@@ -16743,6 +16735,7 @@ where
 			args.node_signer.get_receive_auth_key(),
 			secp_ctx.clone(),
 			args.message_router,
+			false,
 		)
 		.with_async_payments_offers_cache(async_receive_offer_cache);
 

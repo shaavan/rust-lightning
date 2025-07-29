@@ -51,6 +51,7 @@ use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::AsyncPaymentsMessage;
 use crate::onion_message::messenger::{
 	Destination, DestinationInfo, MessageRouter, MessageSendInstructions,
+	Responder,
 };
 use crate::onion_message::offers::OffersMessage;
 use crate::onion_message::packet::OnionMessageContents;
@@ -70,7 +71,6 @@ use {
 		HeldHtlcAvailable, OfferPaths, OfferPathsRequest, ServeStaticInvoice,
 		StaticInvoicePersisted,
 	},
-	crate::onion_message::messenger::Responder,
 };
 
 #[cfg(feature = "dnssec")]
@@ -78,6 +78,49 @@ use {
 	crate::blinded_path::message::DNSResolverContext,
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
+
+pub enum FlowEvents {
+	/// Notifies that an [`InvoiceRequest`] has been received,
+	///
+	/// To respond to this message:
+	/// - Based the variant of [`VerifiedInvoiceRequestEnum`], use the appropriate
+	/// invoice builder.
+	/// 	- [`VerifiedInvoiceRequestEnum::WithKeys`] - Use [`Self::create_invoice_builder_from_invoice_request_with_keys`].
+	/// 	- [`VerifiedInvoiceRequestEnum::WithoutKeys`] - Use [`Self::create_invoice_builder_from_invoice_request_without_keys`].
+	/// After successfully creating the invoice builder, sign the invoice, and send it back
+	/// using the provided reply path using [`OffersMessageFlow::enqueue_invoice`].
+	///
+	/// However, if the invoice request is invalid, you can respond with an
+	/// [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`].
+	InvoiceRequestReceived {
+		invoice_request: VerifiedInvoiceRequestEnum,
+		reply_path: BlindedMessagePath,
+	},
+
+	/// Notifies that an [`Bolt12Invoice`] has been received, with the corresponding [`PaymentId`].
+	///
+	/// To respond to this message:
+	/// - If the invoice is valid, you can pay it using [`OffersMessageFlow::send_payment_for_bolt12_invoice`].
+	/// - If the invoice is invalid, you can respond with an [`InvoiceError`] message using [`OffersMessageFlow::enqueue_invoice_error`] if reply_path is present.
+	///
+	/// If the invoice is not valid, you can also abandon the payment using [`OffersMessageFlow::abandon_payment`].
+	InvoiceReceived {
+		/// The `payment_id` associated with payment for the invoice.
+		payment_id: PaymentId,
+		/// The invoice to pay.
+		invoice: Bolt12Invoice,
+		/// The context of the [`BlindedMessagePath`] used to send the invoice.
+		///
+		/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+		context: Option<OffersContext>,
+		/// A responder for replying with an [`InvoiceError`] if needed.
+		///
+		/// `None` if the invoice wasn't sent with a reply path.
+		///
+		/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
+		responder: Option<Responder>,
+	},
+}
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
@@ -100,6 +143,11 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	#[cfg(test)]
+	pub(crate) enable_events: bool,
+	#[cfg(not(test))]
+	enable_events: bool,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -115,6 +163,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	pending_flow_events: Mutex<Vec<FlowEvents>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -126,6 +176,7 @@ where
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
 		receive_auth_key: ReceiveAuthKey, secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
+		enable_events: bool,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -140,6 +191,8 @@ where
 			secp_ctx,
 			message_router,
 
+			enable_events,
+
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
@@ -147,6 +200,8 @@ where
 			hrn_resolver: OMNameResolver::new(current_timestamp, best_block.height),
 			#[cfg(feature = "dnssec")]
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
+
+			pending_flow_events: Mutex::new(Vec::new()),
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
 			paths_to_static_invoice_server: Mutex::new(Vec::new()),
@@ -446,10 +501,35 @@ where
 	}
 }
 
+pub enum DeterminedBehavior {
+	VerifiedAndHandleAsync(PaymentId),
+	VerifiedAndHandleSync(PaymentId),
+}
+
 impl<MR: Deref> OffersMessageFlow<MR>
 where
 	MR::Target: MessageRouter,
 {
+
+	pub fn determine_invoice_handling(&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>, responder: &Option<Responder>) -> Result<DeterminedBehavior, ()> {
+		let payment_id = self.verify_bolt12_invoice(invoice, context)?;
+
+		if self.enable_events {
+			self.enqueue_flow_event(
+				FlowEvents::InvoiceReceived {
+					payment_id,
+					invoice: invoice.clone(),
+					context: context.cloned(),
+					responder: responder.clone(),
+				},
+			);
+			Ok(DeterminedBehavior::VerifiedAndHandleAsync(payment_id))
+		} else {
+			// If we don't have events enabled, we just handle the invoice synchronously.
+			Ok(DeterminedBehavior::VerifiedAndHandleSync(payment_id))
+		}
+	}
+
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the [`InvoiceRequest::metadata`].
 	///
 	/// - If an [`OffersContext::InvoiceRequest`] with a `nonce` is provided, verification is performed using recipient context data.
@@ -1320,6 +1400,10 @@ where
 		Ok(())
 	}
 
+	pub fn enqueue_flow_event(&self, flow_event: FlowEvents) {
+		self.pending_flow_events.lock().unwrap().push(flow_event);
+	}
+
 	/// Gets the enqueued [`OffersMessage`] with their corresponding [`MessageSendInstructions`].
 	pub fn release_pending_offers_messages(&self) -> Vec<(OffersMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_offers_messages.lock().unwrap())
@@ -1338,6 +1422,10 @@ where
 		&self,
 	) -> Vec<(DNSResolverMessage, MessageSendInstructions)> {
 		core::mem::take(&mut self.pending_dns_onion_messages.lock().unwrap())
+	}
+
+	pub fn release_pending_flow_events(&self) -> Vec<FlowEvents> {
+		core::mem::take(&mut self.pending_flow_events.lock().unwrap())
 	}
 
 	/// Retrieve an [`Offer`] for receiving async payments as an often-offline recipient. Will only
