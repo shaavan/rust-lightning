@@ -27,6 +27,7 @@ use crate::blinded_path::payment::{
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 
+use crate::offers::invoice_error::InvoiceError;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -1220,6 +1221,41 @@ where
 			reply_paths,
 			&mut pending_offers_messages,
 		);
+
+		Ok(())
+	}
+
+	/// Enqueues an [`InvoiceError`] to be sent to the counterparty via a specified
+	/// [`BlindedMessagePath`].
+	///
+	/// This is typically used when invoice creation or validation fails and an error
+	/// response needs to be sent back to the requesting node. Since the counterparty
+	/// has already provided a blinded path (e.g., in an [`InvoiceRequest`]), this method
+	/// uses that path to return the [`InvoiceError`] without expecting a reply.
+	///
+	/// # Parameters
+	///
+	/// - `invoice_error`: The [`InvoiceError`] to be sent back to the counterparty.
+	/// - `path`: A [`BlindedMessagePath`] provided by the counterparty for receiving
+	///   onion-routed responses.
+	///
+	/// # Returns
+	///
+	/// Returns `Ok(())` if the error message was successfully queued for delivery, or a
+	/// [`Bolt12SemanticError`] if queuing fails.
+	///
+	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
+	pub fn enqueue_invoice_error(
+		&self, invoice_error: InvoiceError, path: BlindedMessagePath,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		let instructions = MessageSendInstructions::WithoutReplyPath {
+			destination: Destination::BlindedPath(path),
+		};
+
+		let message = OffersMessage::InvoiceError(invoice_error);
+		pending_offers_messages.push((message, instructions));
 
 		Ok(())
 	}
