@@ -39,6 +39,7 @@ use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
 	DEFAULT_RELATIVE_EXPIRY,
 };
+use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
 	CurrencyConversion, InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer,
 	VerifiedInvoiceRequest,
@@ -1080,9 +1081,6 @@ where
 	/// The user must provide a list of [`MessageForwardNode`] that will be used to generate
 	/// valid reply paths for the counterparty to send back the corresponding [`Bolt12Invoice`]
 	/// or [`InvoiceError`].
-	///
-	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
-	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
 	pub fn enqueue_invoice_request(
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Nonce,
 		peers: Vec<MessageForwardNode>,
@@ -1129,8 +1127,6 @@ where
 	/// Reply paths are generated from the given `peers` to allow the counterparty to return
 	/// an [`InvoiceError`] in case they fail to process the invoice. If valid reply paths
 	/// cannot be constructed, this method returns a [`Bolt12SemanticError::MissingPaths`].
-	///
-	/// [`InvoiceError`]: crate::offers::invoice_error::InvoiceError
 	pub fn enqueue_invoice_using_node_id(
 		&self, invoice: Bolt12Invoice, destination: PublicKey, peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
@@ -1185,6 +1181,26 @@ where
 		Ok(())
 	}
 
+	/// Enqueues an [`InvoiceError`] to be sent to the counterparty via a specified
+	/// [`BlindedMessagePath`].
+	///
+	/// Since this method returns the invoice error to the counterparty without
+	/// expecting back a response, we enqueue it without a reply path.
+	pub fn enqueue_invoice_error(
+		&self, invoice_error: InvoiceError, path: BlindedMessagePath,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+
+		let instructions = MessageSendInstructions::WithoutReplyPath {
+			destination: Destination::BlindedPath(path),
+		};
+
+		let message = OffersMessage::InvoiceError(invoice_error);
+		pending_offers_messages.push((message, instructions));
+
+		Ok(())
+	}
+
 	/// Forwards a [`StaticInvoice`] over the provided [`Responder`] in response to an
 	/// [`InvoiceRequest`] that we as a static invoice server received on behalf of an often-offline
 	/// recipient.
@@ -1215,7 +1231,6 @@ where
 	/// reply paths for the recipient to send back the corresponding [`ReleaseHeldHtlc`] onion message.
 	///
 	/// [`ReleaseHeldHtlc`]: crate::onion_message::async_payments::ReleaseHeldHtlc
-	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
 	pub fn enqueue_held_htlc_available(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId, peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
@@ -1247,8 +1262,6 @@ where
 	/// The user must provide a list of [`MessageForwardNode`] that will be used to generate
 	/// valid reply paths for the counterparty to send back the corresponding response for
 	/// the [`DNSSECQuery`] message.
-	///
-	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
 	#[cfg(feature = "dnssec")]
 	pub fn enqueue_dns_onion_message(
 		&self, message: DNSSECQuery, context: DNSResolverContext, dns_resolvers: Vec<Destination>,
