@@ -92,7 +92,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::flow::{InvreqResponseInstructions, OffersMessageFlow};
+use crate::offers::flow::{FlowEvents, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestVerifiedFromOffer};
@@ -2522,10 +2522,13 @@ pub struct ChannelManager<
 	fee_estimator: LowerBoundedFeeEstimator<F>,
 	chain_monitor: M,
 	tx_broadcaster: T,
+	#[cfg(test)]
+	pub(crate) router: R,
+	#[cfg(not(test))]
 	router: R,
 
 	#[cfg(test)]
-	pub(super) flow: OffersMessageFlow<MR>,
+	pub(crate) flow: OffersMessageFlow<MR>,
 	#[cfg(not(test))]
 	flow: OffersMessageFlow<MR>,
 
@@ -2745,6 +2748,9 @@ pub struct ChannelManager<
 	pub(super) entropy_source: ES,
 	#[cfg(not(test))]
 	entropy_source: ES,
+	#[cfg(test)]
+	pub(super) node_signer: NS,
+	#[cfg(not(test))]
 	node_signer: NS,
 	#[cfg(test)]
 	pub(super) signer_provider: SP,
@@ -12503,7 +12509,7 @@ where
 		now
 	}
 
-	fn get_peers_for_blinded_path(&self) -> Vec<MessageForwardNode> {
+	pub(crate) fn get_peers_for_blinded_path(&self) -> Vec<MessageForwardNode> {
 		let per_peer_state = self.per_peer_state.read().unwrap();
 		per_peer_state
 			.iter()
