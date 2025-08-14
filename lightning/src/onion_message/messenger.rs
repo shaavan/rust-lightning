@@ -440,7 +440,6 @@ impl Responder {
 	}
 
 	/// Converts a [`Responder`] into its inner [`BlindedMessagePath`].
-	#[cfg(async_payments)]
 	pub(crate) fn into_blinded_path(self) -> BlindedMessagePath {
 		self.reply_path
 	}

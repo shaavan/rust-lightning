@@ -117,10 +117,7 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
-	#[cfg(test)]
 	pub(crate) enable_events: bool,
-	#[cfg(not(test))]
-	enable_events: bool,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,

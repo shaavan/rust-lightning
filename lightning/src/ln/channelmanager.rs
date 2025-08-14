@@ -90,7 +90,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::flow::{InvreqResponseInstructions, OffersMessageFlow};
+use crate::offers::flow::{FlowEvents, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{DefaultCurrencyConversion, InvoiceRequest, InvoiceSigningInfo};
@@ -2506,10 +2506,13 @@ pub struct ChannelManager<
 	fee_estimator: LowerBoundedFeeEstimator<F>,
 	chain_monitor: M,
 	tx_broadcaster: T,
+	#[cfg(test)]
+	pub(crate) router: R,
+	#[cfg(not(test))]
 	router: R,
 
 	#[cfg(test)]
-	pub(super) flow: OffersMessageFlow<MR>,
+	pub(crate) flow: OffersMessageFlow<MR>,
 	#[cfg(not(test))]
 	flow: OffersMessageFlow<MR>,
 
@@ -2729,6 +2732,9 @@ pub struct ChannelManager<
 	pub(super) entropy_source: ES,
 	#[cfg(not(test))]
 	entropy_source: ES,
+	#[cfg(test)]
+	pub(super) node_signer: NS,
+	#[cfg(not(test))]
 	node_signer: NS,
 	#[cfg(test)]
 	pub(super) signer_provider: SP,
@@ -14094,6 +14100,17 @@ where
 					},
 					Err(_) => return None,
 				};
+
+				if self.flow.enable_events {
+					let flow_event = FlowEvents::InvoiceRequestReceived {
+						invoice_request,
+						reply_path: responder.into_blinded_path(),
+					};
+
+					self.flow.enqueue_flow_event(flow_event);
+
+					return None
+				}
 
 				let get_payment_info = |amount_msats, relative_expiry| {
 					self.create_inbound_payment(

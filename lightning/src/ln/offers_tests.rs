@@ -51,11 +51,12 @@ use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, Paym
 use crate::blinded_path::message::OffersContext;
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{Bolt12PaymentError, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry, self};
+use crate::offers::flow::FlowEvents;
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, NodeAnnouncement, OnionMessage, OnionMessageHandler, RoutingMessageHandler, SocketAddress, UnsignedGossipMessage, UnsignedNodeAnnouncement};
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
-use crate::offers::invoice::Bolt12Invoice;
+use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestFields, InvoiceSigningInfo};
 use crate::offers::nonce::Nonce;
@@ -835,7 +836,15 @@ fn creates_and_manually_respond_to_ir_then_pays_for_offer_using_one_hop_blinded_
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
-	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
+ 	let flow_events = alice.node.flow.release_pending_flow_events();
+
+	let (invoice_request, reply_path) = match &flow_events[0] {
+		FlowEvents::InvoiceRequestReceived { invoice_request, reply_path } => {
+			(invoice_request, reply_path)
+		},
+		_ => panic!("Unexpected flow event"),
+	};
+
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
 		invoice_request: InvoiceRequestFields {
@@ -848,6 +857,66 @@ fn creates_and_manually_respond_to_ir_then_pays_for_offer_using_one_hop_blinded_
 	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
+
+	// Create response for invoice request manually.
+	let get_payment_info = |amount_msats, relative_expiry| {
+		alice.node.create_inbound_payment(
+			Some(amount_msats),
+			relative_expiry,
+			None
+		).map_err(|_| Bolt12SemanticError::InvalidAmount)
+	};
+
+	let invoice = match invoice_request {
+		InvoiceSigningInfo::DerivedKeys(request) => {
+			let result = alice.node.flow.create_invoice_builder_from_invoice_request_with_keys(
+				&alice.node.router,
+				&*alice.node.entropy_source,
+				&DefaultCurrencyConversion {},
+				&request,
+				alice.node.list_usable_channels(),
+				get_payment_info,
+			);
+
+			match result {
+				Ok((builder, _)) => {
+					let res = builder
+						.build_and_sign(&alice.node.secp_ctx)
+						.map_err(InvoiceError::from);
+
+					res
+				},
+				Err(_) => panic!()
+			}
+		},
+		InvoiceSigningInfo::ExplicitKeys(request) => {
+			let result = alice.node.flow.create_invoice_builder_from_invoice_request_without_keys(
+				&alice.node.router,
+				&*alice.node.entropy_source,
+				&DefaultCurrencyConversion {},
+				&request,
+				alice.node.list_usable_channels(),
+				get_payment_info,
+			);
+
+			match result {
+				Ok((builder, _)) => {
+					let res = builder
+						.build()
+						.map_err(InvoiceError::from)
+						.and_then(|invoice| {
+							#[cfg(c_bindings)]
+							let mut invoice = invoice;
+							invoice
+								.sign(|invoice: &UnsignedBolt12Invoice| alice.node.node_signer.sign_bolt12_invoice(invoice))
+								.map_err(InvoiceError::from)
+						});
+					res
+				},
+				Err(_) => panic!(),
+			}
+		}
+	};
 
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
 	bob.onion_messenger.handle_onion_message(alice_id, &onion_message);
