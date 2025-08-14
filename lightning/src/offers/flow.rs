@@ -117,6 +117,9 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	#[cfg(test)]
+	pub(crate) enable_events: bool,
+	#[cfg(not(test))]
 	enable_events: bool,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
@@ -231,6 +234,16 @@ where
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 		now
+	}
+
+	pub fn enable_events(&mut self) {
+		// Introduce logger and add a "events enabled, or events already enabled, logging" statement
+		self.enable_events = true;
+	}
+
+	pub fn disable_events(&mut self) {
+		// Introduce logger and add a "events disabled, or events already disabled, logging" statement
+		self.enable_events = false;
 	}
 
 	/// Notifies the [`OffersMessageFlow`] that a new block has been observed.
