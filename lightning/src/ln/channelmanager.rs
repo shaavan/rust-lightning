@@ -98,7 +98,7 @@ use crate::offers::invoice_request::{
 	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestVerifiedFromOffer,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferFromHrn};
+use crate::offers::offer::{Amount, Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::signer;
@@ -12499,6 +12499,13 @@ where
 	) -> Result<(), Bolt12SemanticError> {
 		let entropy = &*self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
+
+		// If the offer is for a specific currency, ensure the amount is provided.
+		if let Some(Amount::Currency { iso4217_code: _, amount: _ }) = offer.amount() {
+			if amount_msats.is_none() {
+				return Err(Bolt12SemanticError::MissingAmount);
+			}
+		}
 
 		let builder = self.flow.create_invoice_request_builder(
 			offer, nonce, payment_id,
