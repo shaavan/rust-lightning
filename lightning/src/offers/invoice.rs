@@ -1742,6 +1742,19 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				experimental_invoice_request_tlv_stream,
 			))?;
 
+			// Note: If the invoice request amount is absent and the offer amount is in currency,
+			// we currently accept whatever amount appears in the invoice.
+			//
+			// Why:
+			// `invoice_request.amount_msats()` returns `None` (not `Err`) in this case,
+			// which means the currency-based check is skipped. After this point, there is
+			// no further validation that the invoice amount is reasonable.
+			//
+			// Risk scenario:
+			// Suppose a user scans an offer for "$2". They send an invoice request without
+			// specifying an amount. A malicious offer creator could then return an invoice
+			// for "$1000". If the channel is sufficiently funded and the user doesn’t
+			// manually verify, LDK would end up paying the $1000 invoice unchecked.
 			if let Some(requested_amount_msats) = invoice_request.amount_msats() {
 				if amount_msats != requested_amount_msats {
 					return Err(Bolt12SemanticError::InvalidAmount);
