@@ -97,7 +97,7 @@ use bitcoin::network::Network;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
 use core::borrow::Borrow;
 use core::hash::{Hash, Hasher};
-use core::num::NonZeroU64;
+use core::num::{NonZeroU32, NonZeroU64};
 use core::str::FromStr;
 use core::time::Duration;
 
@@ -602,6 +602,12 @@ pub struct Offer {
 /// The contents of an [`Offer`], which may be shared with an [`InvoiceRequest`] or a
 /// [`Bolt12Invoice`].
 ///
+/// 
+/// Container for Offer fields.
+///
+/// If `recurrence` is `None`, this offer is not recurring and
+/// TLVs 26, 27, and 29 must not be present on the wire.
+///
 /// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 #[derive(Clone, Debug)]
@@ -617,8 +623,107 @@ pub(super) struct OfferContents {
 	paths: Option<Vec<BlindedMessagePath>>,
 	supported_quantity: Quantity,
 	issuer_signing_pubkey: Option<PublicKey>,
+	recurrence: Option<Recurrence>,
 	#[cfg(test)]
 	experimental_foo: Option<u64>,
+}
+
+/// Time unit for recurrence periods.
+/// Maps from `recurrence.time_unit` (byte) on the wire.
+///
+/// Allowed values:
+/// - 0: `Seconds`
+/// - 1: `Days`
+/// - 2: `Months`
+///
+/// Any other value must be rejected by the parser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TimeUnit {
+    Seconds,
+    Days,
+    Months,
+}
+
+/// A positive recurrence length expressed as a `(unit, count)` pair.
+/// Maps to `recurrence.period` (tu32) with the unit given by `recurrence.time_unit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct Period {
+    /// Unit of time for the recurrence cadence.
+    pub unit: TimeUnit,
+    /// Number of `unit`s per period. Must be > 0.
+    pub count: NonZeroU32,
+}
+
+/// Acceptance window around each period start.
+/// Maps to TLV 27 `offer_recurrence_paywindow`.
+///
+/// Semantics:
+/// A payment at time `t` counts for period `N` if
+/// `start(N) - seconds_before <= t < start(N) + seconds_after`.
+/// If this window overlaps adjacent periods, period `N` takes precedence.
+///
+/// Wire quirk:
+/// `seconds_after` is encoded as tu32 since it is the last field of the TLV.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct PayWindow {
+    /// Maximum seconds before a period start to accept payment for that period. `u32` on wire.
+    pub seconds_before: u32,
+    /// Maximum seconds after a period start to accept payment for that period. `tu32` on wire.
+    pub seconds_after: u32,
+}
+
+/// Maximum number of payments permitted for this offer.
+/// Maps to TLV 29 `offer_recurrence_limit.max_period_index`.
+/// Spec forbids zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct MaxPeriods(pub NonZeroU32);
+
+/// Fixed base schedule for periods and pricing behavior.
+/// Maps to TLV 26 `offer_recurrence_base`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RecurrenceBase {
+    /// Proportional pricing flag.
+    pub proportional: bool,
+    /// Unix timestamp of the first period start in seconds since 1970-01-01 00:00:00 UTC.
+    /// Used to derive `start(N)` for all N.
+    pub basetime: u64,
+}
+
+/// Common recurrence parameters shared by both optional and compulsory variants.
+/// Carries:
+/// - TLV 27 `offer_recurrence_paywindow` (optional)
+/// - TLV 29 `offer_recurrence_limit` (optional)
+/// along with the core `recurrence` subtype data (unit and period).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) struct RecurrenceParams {
+    /// Period length and unit. `period.count` must be > 0.
+    pub period: Period,
+    /// Acceptance window. If `None`, default acceptance is previous and current period.
+    pub paywindow: Option<PayWindow>,
+    /// Maximum number of payments. If `None`, unlimited.
+    pub limit: Option<MaxPeriods>,
+}
+
+/// Recurrence flavor for an offer.
+/// - Optional: TLV 25 `offer_recurrence_optional`
+/// - Compulsory: TLV 24 `offer_recurrence_compulsory`
+///
+/// `base` (TLV 26) is only valid with `Compulsory`. It must not appear with `Optional`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Recurrence {
+    /// Reader without recurrence support may still attempt a single payment.
+    Optional {
+        /// Core schedule and limits.
+        params: RecurrenceParams,
+    },
+    /// Reader must handle recurrence semantics to proceed.
+    Compulsory {
+        /// Core schedule and limits.
+        params: RecurrenceParams,
+        /// Fixed schedule anchor and proportional pricing flags.
+        /// If `None`, periods repeat from first invoice creation time.
+        base: Option<RecurrenceBase>,
+    },
 }
 
 macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
@@ -1178,6 +1283,8 @@ tlv_stream!(OfferTlvStream, OfferTlvStreamRef<'a>, OFFER_TYPES, {
 	(18, issuer: (String, WithoutLength)),
 	(20, quantity_max: (u64, HighZeroBytesDroppedBigSize)),
 	(OFFER_ISSUER_ID_TYPE, issuer_id: PublicKey),
+	(24, offer_recurrence_compulsory: (Recurrence, WithoutLength)),
+	// Ignoring TLV: 25 for now, for minimal PoC.
 });
 
 /// Valid type range for experimental offer TLV records.
