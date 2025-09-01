@@ -656,6 +656,18 @@ pub(super) struct Recurrence {
     pub period: NonZeroU32,
 }
 
+impl Writeable for Recurrence {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match &self.time_unit {
+			TimeUnit::Seconds => 0u8.write(writer)?,
+			TimeUnit::Days => 1u8.write(writer)?,
+			TimeUnit::Months => 2u8.write(writer)?,
+		}
+
+		self.period.write(writer)
+	}
+}
+
 /// Fixed base schedule for periods and pricing behavior.
 /// Maps to TLV 26 `recurrence_base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

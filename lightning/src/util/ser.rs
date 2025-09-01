@@ -21,6 +21,7 @@ use crate::prelude::*;
 use crate::sync::{Mutex, RwLock};
 use core::cmp;
 use core::hash::Hash;
+use core::num::NonZeroU32;
 use core::ops::Deref;
 
 use alloc::collections::BTreeMap;
@@ -646,6 +647,7 @@ macro_rules! impl_writeable_primitive {
 impl_writeable_primitive!(u128, 16);
 impl_writeable_primitive!(u64, 8);
 impl_writeable_primitive!(u32, 4);
+impl_writeable_primitive!(NonZeroU32, 4);
 impl_writeable_primitive!(u16, 2);
 impl_writeable_primitive!(i64, 8);
 impl_writeable_primitive!(i32, 4);
