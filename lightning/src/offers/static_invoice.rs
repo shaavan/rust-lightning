@@ -129,6 +129,10 @@ impl<'a> StaticInvoiceBuilder<'a> {
 			return Err(Bolt12SemanticError::UnexpectedChain);
 		}
 
+		if offer.recurrence().is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
 		if payment_paths.is_empty()
 			|| held_htlc_available_paths.is_empty()
 			|| offer.paths().is_empty()
@@ -724,8 +728,14 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 			return Err(Bolt12SemanticError::UnexpectedChain);
 		}
 
+		let offer = OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?;
+
+		if offer.recurrence().is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
 		Ok(InvoiceContents {
-			offer: OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?,
+			offer,
 			payment_paths,
 			held_htlc_available_paths,
 			created_at,
@@ -922,6 +932,11 @@ mod tests {
 					issuer: None,
 					quantity_max: None,
 					issuer_id: Some(&signing_pubkey),
+					recurrence_compulsory: None,
+					recurrence_optional: None,
+					recurrence_base: None,
+					recurrence_paywindow: None,
+					recurrence_limit: None,
 				},
 				InvoiceTlvStreamRef {
 					paths: Some(Iterable(
