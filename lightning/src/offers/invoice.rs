@@ -2090,6 +2090,10 @@ mod tests {
 					payer_note: None,
 					paths: None,
 					offer_from_hrn: None,
+					recurrence_counter: None,
+					recurrence_start: None,
+					recurrence_cancel: None,
+					recurrence_prev_state: None,
 				},
 				InvoiceTlvStreamRef {
 					paths: Some(Iterable(
@@ -2198,6 +2202,10 @@ mod tests {
 					payer_note: None,
 					paths: None,
 					offer_from_hrn: None,
+					recurrence_counter: None,
+					recurrence_start: None,
+					recurrence_cancel: None,
+					recurrence_prev_state: None,
 				},
 				InvoiceTlvStreamRef {
 					paths: Some(Iterable(

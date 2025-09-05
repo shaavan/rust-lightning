@@ -941,6 +941,30 @@ pub struct Recurrence {
 }
 
 impl Recurrence {
+	/// Returns the schedule period index for an invoice request.
+	///
+	/// For an offer with an explicit basetime, `start` identifies the initial schedule period and
+	/// the result is `start + counter`. For an offer without an explicit basetime, `start` must be
+	/// absent and `counter` is the schedule period index. Recurrence failures currently use
+	/// [`Bolt12SemanticError::InvalidRecurrence`]; more granular errors may be added later if
+	/// callers need distinctions that canonical pre-validation cannot provide.
+	pub fn period_index(
+		&self, counter: u32, start: Option<u32>,
+	) -> Result<u32, Bolt12SemanticError> {
+		match self.recurrence_type {
+			RecurrenceType::Compulsory(Some(_)) => start
+				.and_then(|start| start.checked_add(counter))
+				.ok_or(Bolt12SemanticError::InvalidRecurrence),
+			RecurrenceType::Compulsory(None) | RecurrenceType::Optional => {
+				if start.is_some() {
+					Err(Bolt12SemanticError::InvalidRecurrence)
+				} else {
+					Ok(counter)
+				}
+			},
+		}
+	}
+
 	/// Returns inclusive opening and exclusive closing UNIX timestamps for a recurrence period.
 	///
 	/// Explicit paywindows use their `seconds_before` and `seconds_after` bounds. Without an

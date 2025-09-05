@@ -805,6 +805,10 @@ impl RefundContents {
 			payer_note: self.payer_note.as_ref(),
 			paths: self.paths.as_ref(),
 			offer_from_hrn: None,
+			recurrence_counter: None,
+			recurrence_start: None,
+			recurrence_cancel: None,
+			recurrence_prev_state: None,
 		};
 
 		let experimental_offer = ExperimentalOfferTlvStreamRef {
@@ -930,6 +934,10 @@ impl TryFrom<RefundTlvStream> for RefundContents {
 				payer_note,
 				paths,
 				offer_from_hrn,
+				recurrence_counter,
+				recurrence_start,
+				recurrence_cancel,
+				recurrence_prev_state,
 			},
 			ExperimentalOfferTlvStream {
 				#[cfg(test)]
@@ -993,6 +1001,14 @@ impl TryFrom<RefundTlvStream> for RefundContents {
 		if offer_from_hrn.is_some() {
 			// Only offers can be resolved using Human Readable Names
 			return Err(Bolt12SemanticError::UnexpectedHumanReadableName);
+		}
+
+		if recurrence_counter.is_some()
+			|| recurrence_start.is_some()
+			|| recurrence_cancel.is_some()
+			|| recurrence_prev_state.is_some()
+		{
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
 		}
 
 		let amount_msats = match amount {
@@ -1137,6 +1153,10 @@ mod tests {
 					payer_note: None,
 					paths: None,
 					offer_from_hrn: None,
+					recurrence_counter: None,
+					recurrence_start: None,
+					recurrence_cancel: None,
+					recurrence_prev_state: None,
 				},
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
 				ExperimentalInvoiceRequestTlvStreamRef { experimental_bar: None },

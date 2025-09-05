@@ -594,6 +594,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -753,6 +754,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -835,6 +837,7 @@ fn router_modifies_payment_metadata_in_blinded_path() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: Some(expected_metadata),
 	});
@@ -918,6 +921,7 @@ fn pays_for_offer_with_payment_metadata_in_invoice_request_context() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: Some(expected_metadata),
 	});
@@ -1027,6 +1031,7 @@ fn pays_for_offer_without_blinded_paths() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -1296,6 +1301,7 @@ fn creates_and_pays_for_offer_with_retry() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -1363,6 +1369,7 @@ fn pays_bolt12_invoice_asynchronously() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -1461,6 +1468,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
@@ -2673,6 +2681,7 @@ fn creates_and_pays_for_phantom_offer() {
 				quantity: None,
 				payer_note_truncated: None,
 				human_readable_name: None,
+				invoice_request_recurrence: None,
 			},
 		payment_metadata: None,
 		});
@@ -2857,6 +2866,7 @@ fn get_invoice_via_offer_flow<'a, 'b, 'c>(
 			quantity: None,
 			payer_note_truncated: None,
 			human_readable_name: None,
+			invoice_request_recurrence: None,
 		},
 		payment_metadata: None,
 	});
