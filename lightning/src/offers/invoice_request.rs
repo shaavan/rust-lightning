@@ -186,7 +186,8 @@ macro_rules! invoice_request_builder_methods { (
 		InvoiceRequestContentsWithoutPayerSigningPubkey {
 			payer: PayerContents(metadata), offer, chain: None, amount_msats: None,
 			features: InvoiceRequestFeatures::empty(), quantity: None, payer_note: None,
-			offer_from_hrn: None,
+			offer_from_hrn: None, recurrence_counter: None, recurrence_start: None,
+			recurrence_cancel: None,
 			#[cfg(test)]
 			experimental_bar: None,
 		}
@@ -686,6 +687,36 @@ pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {
 	quantity: Option<u64>,
 	payer_note: Option<String>,
 	offer_from_hrn: Option<HumanReadableName>,
+	/// Recurrence counter for this invoice request.
+	///
+	/// This is the Nth invoice request the payer is making for this offer.
+	/// Important: this does *not* necessarily equal the Nth period of the recurrence.
+	///
+	/// The actual period index is:
+	///     period_index = recurrence_start + recurrence_counter
+	///
+	/// The counter implicitly assumes that all earlier payments
+	/// (0 .. recurrence_counter-1) were successfully completed.
+	/// The payee does not track past payments; it simply verifies
+	/// that the incoming counter is the next expected one.
+	recurrence_counter: Option<u32>,
+	/// Starting offset into the recurrence schedule.
+	///
+	/// Example: If the offer has a basetime of Jan 1st and recurrence period
+	/// is monthly, and the payer wants to begin on April 1st, then:
+	///     recurrence_start = 3
+	///
+	/// This field is only meaningful for offers that define a `recurrence_base`,
+	/// since offset is defined relative to a fixed basetime.
+	recurrence_start: Option<u32>,
+	/// Indicates that the payer wishes to *cancel* the recurrence.
+	///
+	/// MUST NOT be set on the first invoice request (counter = 0).
+	///
+	/// When this field is present, the request is effectively a cancellation
+	/// message; the payee should send invoice corresponding to this stub
+	/// invoice_request.
+	recurrence_cancel: Option<()>,
 	#[cfg(test)]
 	experimental_bar: Option<u64>,
 }
@@ -1200,6 +1231,18 @@ impl InvoiceRequestContentsWithoutPayerSigningPubkey {
 		self.amount_msats
 	}
 
+	pub(super) fn recurrence_counter(&self) -> Option<u32> {
+		self.recurrence_counter
+	}
+
+	pub(super) fn recurrence_start(&self) -> Option<u32> {
+		self.recurrence_start
+	}
+
+	pub(super) fn recurrence_cancel(&self) -> Option<()> {
+		self.recurrence_cancel
+	}
+
 	pub(super) fn as_tlv_stream(&self) -> PartialInvoiceRequestTlvStreamRef<'_> {
 		let payer = PayerTlvStreamRef { metadata: self.payer.0.as_bytes() };
 
@@ -1222,6 +1265,9 @@ impl InvoiceRequestContentsWithoutPayerSigningPubkey {
 			payer_note: self.payer_note.as_ref(),
 			offer_from_hrn: self.offer_from_hrn.as_ref(),
 			paths: None,
+			recurrence_counter: self.recurrence_counter,
+			recurrence_start: self.recurrence_start,
+			recurrence_cancel: self.recurrence_cancel.as_ref(),
 		};
 
 		let experimental_invoice_request = ExperimentalInvoiceRequestTlvStreamRef {
@@ -1282,6 +1328,9 @@ tlv_stream!(InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef<'a>, INVOICE_REQ
 	// Only used for Refund since the onion message of an InvoiceRequest has a reply path.
 	(90, paths: (Vec<BlindedMessagePath>, WithoutLength)),
 	(91, offer_from_hrn: HumanReadableName),
+	(92, recurrence_counter: (u32, HighZeroBytesDroppedBigSize)),
+	(93, recurrence_start: (u32, HighZeroBytesDroppedBigSize)),
+	(94, recurrence_cancel: ()),
 });
 
 /// Valid type range for experimental invoice_request TLV records.
@@ -1434,6 +1483,9 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 				payer_note,
 				paths,
 				offer_from_hrn,
+				recurrence_counter,
+				recurrence_start,
+				recurrence_cancel,
 			},
 			experimental_offer_tlv_stream,
 			ExperimentalInvoiceRequestTlvStream {
@@ -1470,6 +1522,97 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			return Err(Bolt12SemanticError::UnexpectedPaths);
 		}
 
+		let offer_recurrence = offer.recurrence_fields();
+		let offer_base = offer_recurrence.and_then(|f| f.recurrence_base);
+
+		match (offer_recurrence, offer_base, recurrence_counter, recurrence_start, recurrence_cancel) {
+			// Offer without recurrence → No recurrence fields should be in IR
+			(None, None, None, None, None) => { /* OK */ },
+			// ------------------------------------------------------------
+			// Recurrence OPTIONAL (no basetime)
+			// ------------------------------------------------------------
+			// 1. No fields → treat as normal single payment. Supports backward compatibility.
+			// Spec Suggestion:
+			//
+			// Currently the reader MUST reject any invoice_request that omits
+			// `invreq_recurrence_counter` when the offer contains recurrence_optional
+			// or recurrence_compulsory.
+			// However, recurrence_optional is explicitly intended to preserve
+			// compatibility with payers that do not implement recurrence. Such payers
+			// should be able to make a single, non-recurring payment without setting
+			// any recurrence fields.
+			// Therefore, for recurrence_optional, it should be valid to omit all
+			// recurrence-related fields (counter, start, cancel), and the invoice
+			// request should be treated as a normal single payment.
+			(Some(_), None, None, None, None) => { /* OK */ },
+			// 2. Only counter → payer supports recurrence; starting at counter
+			(Some(_), None, Some(_), None, None) => { /* OK */ },
+			// 3. counter > 0 → allowed cancellation
+			(Some(_), None, Some(c), None, Some(())) if c > 0 => { /* OK */ },
+			// INVALID optional cases:
+			(Some(_), None, _, Some(_), _) => {
+				// recurrence_start MUST NOT appear without basetime
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			(Some(_), None, Some(c), None, Some(())) if c == 0 => {
+				// cannot cancel first request
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			(Some(_), None, _, _, _) => {
+				// All other recurrence optional combinations invalid
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// ------------------------------------------------------------
+    		// Recurrence COMPULSORY (with basetime)
+    		// ------------------------------------------------------------
+
+			// 1. First request: counter=0, start present, cancel absent
+			(Some(_), Some(_), Some(0), Some(_), None) => { /* OK */ },
+			// 2. Later periods: counter>0, start present, cancel MAY be present
+			(Some(_), Some(_), Some(c), Some(_), _cancel) if c > 0 => {/* OK */},
+
+			// INVALID compulsory cases ------------------------------------
+			// Missing counter or start
+			(Some(_), Some(_), None,    _,      _) |
+			(Some(_), Some(_), _,       None,   _) => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// Cancel on first request (counter=0)
+			(Some(_), Some(_), Some(c), Some(_), Some(())) if c == 0 => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// Any other recurrence compulsory combination is invalid
+			(Some(_), Some(_), _, _, _) => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// Any other combination is invalid
+			(_, _, _, _, _) => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			}
+		}
+
+		// Limit, and Paywindow checks.
+		if let Some(fields) = &offer_recurrence {
+			if let Some(limit) = fields.recurrence_limit {
+				// Only enforce limit when recurrence is actually in use.
+				if let Some(counter) = recurrence_counter {
+					let offset = recurrence_start.unwrap_or(0);
+					let period_index = counter + offset;
+
+					if period_index > limit.0 {
+						return Err(Bolt12SemanticError::InvalidMetadata);
+					}
+				}
+			}
+			if let Some(_paywindow) = fields.recurrence_paywindow {
+				// TODO: implement once we compute:
+				// let period_start_time = ...
+				//
+				// if now < period_start_time - paywindow.seconds_before { ... }
+				// if now >= period_start_time + paywindow.seconds_after { ... }
+			}
+		}
+
 		Ok(InvoiceRequestContents {
 			inner: InvoiceRequestContentsWithoutPayerSigningPubkey {
 				payer,
@@ -1480,6 +1623,9 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 				quantity,
 				payer_note,
 				offer_from_hrn,
+				recurrence_counter,
+				recurrence_start,
+				recurrence_cancel,
 				#[cfg(test)]
 				experimental_bar,
 			},
@@ -1662,6 +1808,9 @@ mod tests {
 					payer_note: None,
 					paths: None,
 					offer_from_hrn: None,
+					recurrence_counter: None,
+					recurrence_start: None,
+					recurrence_cancel: None,
 				},
 				SignatureTlvStreamRef { signature: Some(&invoice_request.signature()) },
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
