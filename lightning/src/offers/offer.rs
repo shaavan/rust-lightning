@@ -247,6 +247,7 @@ macro_rules! offer_explicit_metadata_builder_methods {
 					paths: None,
 					supported_quantity: Quantity::One,
 					issuer_signing_pubkey: Some(signing_pubkey),
+					recurrence_fields: None,
 					#[cfg(test)]
 					experimental_foo: None,
 				},
@@ -301,6 +302,7 @@ macro_rules! offer_derived_metadata_builder_methods {
 					paths: None,
 					supported_quantity: Quantity::One,
 					issuer_signing_pubkey: Some(node_id),
+					recurrence_fields: None,
 					#[cfg(test)]
 					experimental_foo: None,
 				},
@@ -617,6 +619,12 @@ pub struct Offer {
 /// The contents of an [`Offer`], which may be shared with an [`InvoiceRequest`] or a
 /// [`Bolt12Invoice`].
 ///
+///
+/// Container for Offer fields.
+///
+/// If `recurrence` is `None`, this offer is not recurring and
+/// TLVs 26, 27, and 29 must not be present on the wire.
+///
 /// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 #[derive(Clone, Debug)]
@@ -632,8 +640,168 @@ pub(super) struct OfferContents {
 	paths: Option<Vec<BlindedMessagePath>>,
 	supported_quantity: Quantity,
 	issuer_signing_pubkey: Option<PublicKey>,
+	recurrence_fields: Option<RecurrenceFields>,
 	#[cfg(test)]
 	experimental_foo: Option<u64>,
+}
+
+/// Time unit for recurrence periods.
+/// Maps from `recurrence.time_unit` (byte) on the wire.
+///
+/// Allowed values:
+/// - 0: `Seconds`
+/// - 1: `Days`
+/// - 2: `Months`
+///
+/// Any other value must be rejected by the parser.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TimeUnit {
+	Seconds,
+	Days,
+	Months,
+}
+
+/// A positive recurrence length expressed as a `(unit, count)` pair.
+/// Maps to `recurrence.period` (tu32) with the unit given by `recurrence.time_unit`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecurrencePeriod {
+	/// Unit of time for the recurrence cadence.
+	pub time_unit: TimeUnit,
+	/// Number of `unit`s per period. Must be > 0.
+	pub period: u32,
+}
+
+impl Writeable for RecurrencePeriod {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		match &self.time_unit {
+			TimeUnit::Seconds => 0u8.write(writer)?,
+			TimeUnit::Days => 1u8.write(writer)?,
+			TimeUnit::Months => 2u8.write(writer)?,
+		}
+
+		HighZeroBytesDroppedBigSize(self.period).write(writer)
+	}
+}
+
+impl Readable for RecurrencePeriod {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let time_unit_byte = Readable::read(r)?;
+		let time_unit = match time_unit_byte {
+			0u8 => TimeUnit::Seconds,
+			1u8 => TimeUnit::Days,
+			2u8 => TimeUnit::Months,
+			_ => return Err(DecodeError::InvalidValue),
+		};
+
+		let period: HighZeroBytesDroppedBigSize<u32> = Readable::read(r)?;
+
+		if period.0 == 0 {
+			return Err(DecodeError::InvalidValue);
+		}
+
+		Ok(RecurrencePeriod { time_unit, period: period.0 })
+	}
+}
+
+/// Fixed base schedule for periods and pricing behavior.
+/// Maps to TLV 26 `recurrence_base`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecurrenceBase {
+	/// Proportional pricing flag.
+	pub proportional: bool,
+	/// Unix timestamp of the first period start in seconds since 1970-01-01 00:00:00 UTC.
+	/// Used to derive `start(N)` for all N.
+	pub basetime: u64,
+}
+
+impl Writeable for RecurrenceBase {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		(self.proportional as u8).write(writer)?;
+		HighZeroBytesDroppedBigSize(self.basetime).write(writer)
+	}
+}
+
+impl Readable for RecurrenceBase {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let proportional_byte: u8 = Readable::read(r)?;
+		let proportional = match proportional_byte {
+			0 => false,
+			1 => true,
+			_ => return Err(DecodeError::InvalidValue),
+		};
+
+		let basetime: HighZeroBytesDroppedBigSize<u64> = Readable::read(r)?;
+
+		Ok(RecurrenceBase { proportional, basetime: basetime.0 })
+	}
+}
+
+/// Acceptance window around each period start.
+/// Maps to TLV 27 `recurrence_paywindow`.
+///
+/// Semantics:
+/// A payment at time `t` counts for period `N` if
+/// `start(N) - seconds_before <= t < start(N) + seconds_after`.
+/// If this window overlaps adjacent periods, period `N` takes precedence.
+///
+/// Wire quirk:
+/// `seconds_after` is encoded as tu32 since it is the last field of the TLV.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecurrencePaywindow {
+	/// Maximum seconds before a period start to accept payment for that period. `u32` on wire.
+	pub seconds_before: u32,
+	/// Maximum seconds after a period start to accept payment for that period. `tu32` on wire.
+	pub seconds_after: u32,
+}
+
+impl Writeable for RecurrencePaywindow {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		HighZeroBytesDroppedBigSize(self.seconds_before).write(writer)?;
+		HighZeroBytesDroppedBigSize(self.seconds_after).write(writer)
+	}
+}
+
+impl Readable for RecurrencePaywindow {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let before: HighZeroBytesDroppedBigSize<u32> = Readable::read(r)?;
+		let after: HighZeroBytesDroppedBigSize<u32> = Readable::read(r)?;
+		Ok(RecurrencePaywindow { seconds_before: before.0, seconds_after: after.0 })
+	}
+}
+
+/// Maximum number of payments permitted for this offer.
+/// Maps to TLV 29 `recurrence_limit.max_period_index`.
+/// Spec forbids zero.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecurrenceLimit(pub u32);
+
+impl Writeable for RecurrenceLimit {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		HighZeroBytesDroppedBigSize(self.0).write(writer)
+	}
+}
+
+impl Readable for RecurrenceLimit {
+	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		let value: HighZeroBytesDroppedBigSize<u32> = Readable::read(r)?;
+		if value.0 == 0 {
+			return Err(DecodeError::InvalidValue);
+		}
+		Ok(RecurrenceLimit(value.0))
+	}
+}
+
+/// Recurrence flavor for an offer.
+/// - Optional: TLV 25 `recurrence_optional`
+/// - Compulsory: TLV 24 `recurrence_compulsory`
+///
+/// `base` (TLV 26) is only valid with `Compulsory`. It must not appear with `Optional`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecurrenceFields {
+	recurrence_period: RecurrencePeriod,
+	recurrence_base: Option<RecurrenceBase>,
+	recurrence_paywindow: Option<RecurrencePaywindow>,
+	recurrence_limit: Option<RecurrenceLimit>,
 }
 
 macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
@@ -707,6 +875,11 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	/// [`Bolt12Invoice::signing_pubkey`]: crate::offers::invoice::Bolt12Invoice::signing_pubkey
 	pub fn issuer_signing_pubkey(&$self) -> Option<bitcoin::secp256k1::PublicKey> {
 		$contents.issuer_signing_pubkey()
+	}
+
+	/// Returns the recurrence fields for the offer.
+	pub fn recurrence_fields(&$self) -> Option<$crate::offers::offer::RecurrenceFields> {
+		$contents.recurrence_fields()
 	}
 } }
 
@@ -993,6 +1166,10 @@ impl OfferContents {
 		self.issuer_signing_pubkey
 	}
 
+	pub fn recurrence_fields(&self) -> Option<RecurrenceFields> {
+		self.recurrence_fields
+	}
+
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(
 		&self, bytes: &[u8], key: &ExpandedKey, secp_ctx: &Secp256k1<T>,
 	) -> Result<(OfferId, Option<Keypair>), ()> {
@@ -1060,6 +1237,23 @@ impl OfferContents {
 			}
 		};
 
+		let (
+			recurrence_compulsory,
+			recurrence_optional,
+			recurrence_base,
+			recurrence_paywindow,
+			recurrence_limit,
+		) = self.recurrence_fields.as_ref().map_or((None, None, None, None, None), |r| {
+			let base = r.recurrence_base.as_ref();
+			let paywindow = r.recurrence_paywindow.as_ref();
+			let limit = r.recurrence_limit.as_ref();
+
+			match base {
+				Some(_) => (Some(&r.recurrence_period), None, base, paywindow, limit),
+				None => (None, Some(&r.recurrence_period), base, paywindow, limit),
+			}
+		});
+
 		let offer = OfferTlvStreamRef {
 			chains: self.chains.as_ref(),
 			metadata: self.metadata(),
@@ -1072,6 +1266,11 @@ impl OfferContents {
 			issuer: self.issuer.as_ref(),
 			quantity_max: self.supported_quantity.to_tlv_record(),
 			issuer_id: self.issuer_signing_pubkey.as_ref(),
+			recurrence_compulsory,
+			recurrence_optional,
+			recurrence_base,
+			recurrence_paywindow,
+			recurrence_limit,
 		};
 
 		let experimental_offer = ExperimentalOfferTlvStreamRef {
@@ -1226,6 +1425,11 @@ tlv_stream!(OfferTlvStream, OfferTlvStreamRef<'a>, OFFER_TYPES, {
 	(18, issuer: (String, WithoutLength)),
 	(20, quantity_max: (u64, HighZeroBytesDroppedBigSize)),
 	(OFFER_ISSUER_ID_TYPE, issuer_id: PublicKey),
+	(24, recurrence_compulsory: RecurrencePeriod),
+	(25, recurrence_optional: RecurrencePeriod),
+	(26, recurrence_base: RecurrenceBase),
+	(27, recurrence_paywindow: RecurrencePaywindow),
+	(29, recurrence_limit: RecurrenceLimit),
 });
 
 /// Valid type range for experimental offer TLV records.
@@ -1295,6 +1499,11 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 				issuer,
 				quantity_max,
 				issuer_id,
+				recurrence_compulsory,
+				recurrence_optional,
+				recurrence_base,
+				recurrence_paywindow,
+				recurrence_limit,
 			},
 			ExperimentalOfferTlvStream {
 				#[cfg(test)]
@@ -1341,6 +1550,35 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			(issuer_id, paths) => (issuer_id, paths),
 		};
 
+		if recurrence_compulsory.is_some() && recurrence_optional.is_some() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+
+		let recurrence_fields = match (recurrence_compulsory, recurrence_optional, recurrence_base)
+		{
+			// Case 1: No recurrence info at all
+			(None, None, None) => None,
+
+			// Case 2: Base absent → recurrence_optional carries the period
+			(None, Some(period), None) => Some(RecurrenceFields {
+				recurrence_period: period,
+				recurrence_base: None,
+				recurrence_paywindow,
+				recurrence_limit,
+			}),
+
+			// Case 3: Base present → recurrence_compulsory carries the period
+			(Some(period), None, Some(base)) => Some(RecurrenceFields {
+				recurrence_period: period,
+				recurrence_base: Some(base),
+				recurrence_paywindow,
+				recurrence_limit,
+			}),
+
+			// Case 4: Any invalid combination
+			_ => return Err(Bolt12SemanticError::InvalidMetadata),
+		};
+
 		Ok(OfferContents {
 			chains,
 			metadata,
@@ -1352,6 +1590,7 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			paths,
 			supported_quantity,
 			issuer_signing_pubkey,
+			recurrence_fields,
 			#[cfg(test)]
 			experimental_foo,
 		})
@@ -1429,6 +1668,7 @@ mod tests {
 		assert_eq!(offer.supported_quantity(), Quantity::One);
 		assert!(!offer.expects_quantity());
 		assert_eq!(offer.issuer_signing_pubkey(), Some(pubkey(42)));
+		assert_eq!(offer.recurrence_fields(), None);
 
 		assert_eq!(
 			offer.as_tlv_stream(),
@@ -1445,6 +1685,11 @@ mod tests {
 					issuer: None,
 					quantity_max: None,
 					issuer_id: Some(&pubkey(42)),
+					recurrence_compulsory: None,
+					recurrence_optional: None,
+					recurrence_base: None,
+					recurrence_paywindow: None,
+					recurrence_limit: None,
 				},
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
 			),
