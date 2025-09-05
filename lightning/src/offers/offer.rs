@@ -85,6 +85,7 @@ use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
+use crate::offers::recurrence;
 use crate::offers::signer::{self, Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::OfferFeatures;
@@ -247,6 +248,7 @@ macro_rules! offer_explicit_metadata_builder_methods {
 					paths: None,
 					supported_quantity: Quantity::One,
 					issuer_signing_pubkey: Some(signing_pubkey),
+					recurrence: None,
 					#[cfg(test)]
 					experimental_foo: None,
 				},
@@ -301,6 +303,7 @@ macro_rules! offer_derived_metadata_builder_methods {
 					paths: None,
 					supported_quantity: Quantity::One,
 					issuer_signing_pubkey: Some(node_id),
+					recurrence: None,
 					#[cfg(test)]
 					experimental_foo: None,
 				},
@@ -398,6 +401,15 @@ macro_rules! offer_builder_methods { (
 		$return_value
 	}
 
+	/// Sets the recurrence schedule and payment rules for the offer.
+	///
+	/// Recurrence values are validated when [`OfferBuilder::build`] is called. Successive calls to
+	/// this method will override the previous setting.
+	pub fn recurrence($($self_mut)* $self: $self_type, recurrence: recurrence::Recurrence) -> $return_type {
+		$self.offer.recurrence = Some(recurrence);
+		$return_value
+	}
+
 	/// Builds an [`Offer`] from the builder's settings.
 	pub fn build($($self_mut)* $self: $self_type) -> Result<Offer, Bolt12SemanticError> {
 		match $self.offer.amount {
@@ -408,6 +420,10 @@ macro_rules! offer_builder_methods { (
 			},
 			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
 			None => {},
+		}
+
+		if let Some(recurrence) = $self.offer.recurrence {
+			recurrence.validate($self.offer.amount.is_some())?;
 		}
 
 		if $self.offer.amount.is_some() && $self.offer.description.is_none() {
@@ -632,6 +648,7 @@ pub(super) struct OfferContents {
 	paths: Option<Vec<BlindedMessagePath>>,
 	supported_quantity: Quantity,
 	issuer_signing_pubkey: Option<PublicKey>,
+	recurrence: Option<recurrence::Recurrence>,
 	#[cfg(test)]
 	experimental_foo: Option<u64>,
 }
@@ -707,6 +724,11 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	/// [`Bolt12Invoice::signing_pubkey`]: crate::offers::invoice::Bolt12Invoice::signing_pubkey
 	pub fn issuer_signing_pubkey(&$self) -> Option<bitcoin::secp256k1::PublicKey> {
 		$contents.issuer_signing_pubkey()
+	}
+
+	/// Returns the recurrence fields for the offer.
+	pub fn recurrence(&$self) -> Option<$crate::offers::recurrence::Recurrence> {
+		$contents.recurrence()
 	}
 } }
 
@@ -791,7 +813,8 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 	/// - includes the [`PaymentId`] encrypted in [`InvoiceRequest::payer_metadata`] so that it can
 	///   be used when sending the payment for the requested invoice.
 	///
-	/// Errors if the offer contains unknown required features.
+	/// Errors if the offer contains unknown required features or requires recurrence.
+	/// This method creates a non-recurring request; optional recurrence permits a single payment.
 	///
 	/// [`InvoiceRequest::payer_signing_pubkey`]: crate::offers::invoice_request::InvoiceRequest::payer_signing_pubkey
 	/// [`InvoiceRequest::payer_metadata`]: crate::offers::invoice_request::InvoiceRequest::payer_metadata
@@ -811,6 +834,12 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 	) -> Result<$builder, Bolt12SemanticError> {
 		if $offer.offer_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
+		}
+
+		if matches!($offer.recurrence(), Some(recurrence::Recurrence {
+			requirement: recurrence::Requirement::Compulsory, ..
+		})) {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
 		}
 
 		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id);
@@ -1008,6 +1037,10 @@ impl OfferContents {
 		self.issuer_signing_pubkey
 	}
 
+	pub fn recurrence(&self) -> Option<recurrence::Recurrence> {
+		self.recurrence
+	}
+
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(
 		&self, bytes: &[u8], key: &ExpandedKey, secp_ctx: &Secp256k1<T>,
 	) -> Result<(OfferId, Option<Keypair>), ()> {
@@ -1075,6 +1108,36 @@ impl OfferContents {
 			}
 		};
 
+		let (
+			recurrence_compulsory,
+			recurrence_optional,
+			recurrence_base,
+			recurrence_paywindow,
+			recurrence_limit,
+		) = match &self.recurrence {
+			None => (None, None, None, None, None),
+
+			Some(recurrence) => {
+				let (compulsory, optional) = match recurrence.requirement {
+					recurrence::Requirement::Compulsory => (Some(&recurrence.period), None),
+					recurrence::Requirement::Optional => (None, Some(&recurrence.period)),
+				};
+				let base = match &recurrence.anchor {
+					recurrence::Anchor::FirstInvoice => None,
+					anchor @ recurrence::Anchor::Fixed { .. } => Some(anchor),
+				};
+				let paywindow = match &recurrence.paywindow {
+					recurrence::Paywindow::Default => None,
+					window @ recurrence::Paywindow::Custom { .. } => Some(window),
+				};
+				let limit = match &recurrence.limit {
+					recurrence::Limit::Unbounded => None,
+					limit @ recurrence::Limit::Bounded(_) => Some(limit),
+				};
+				(compulsory, optional, base, paywindow, limit)
+			},
+		};
+
 		let offer = OfferTlvStreamRef {
 			chains: self.chains.as_ref(),
 			metadata: self.metadata(),
@@ -1087,6 +1150,11 @@ impl OfferContents {
 			issuer: self.issuer.as_ref(),
 			quantity_max: self.supported_quantity.to_tlv_record(),
 			issuer_id: self.issuer_signing_pubkey.as_ref(),
+			recurrence_compulsory,
+			recurrence_optional,
+			recurrence_base,
+			recurrence_paywindow,
+			recurrence_limit,
 		};
 
 		let experimental_offer = ExperimentalOfferTlvStreamRef {
@@ -1247,6 +1315,16 @@ tlv_stream!(OfferTlvStream, OfferTlvStreamRef<'a>, OFFER_TYPES, {
 	(OFFER_ISSUER_TYPE, issuer: (String, WithoutLength)),
 	(20, quantity_max: (u64, HighZeroBytesDroppedBigSize)),
 	(OFFER_ISSUER_ID_TYPE, issuer_id: PublicKey),
+
+	// Compulsory and optional recurrence use distinct TLVs, each encoding the period.
+	(24, recurrence_compulsory: recurrence::Period),
+	(25, recurrence_optional: recurrence::Period),
+	// Only fixed anchors are encoded; absence anchors period zero to the first invoice.
+	(26, recurrence_base: recurrence::Anchor),
+	// Only custom windows are encoded; absence selects the default payment window.
+	(27, recurrence_paywindow: recurrence::Paywindow),
+	// Maximum zero-based period index, encoded compactly. Zero is invalid.
+	(29, recurrence_limit: recurrence::Limit),
 });
 
 /// Valid type range for experimental offer TLV records.
@@ -1316,6 +1394,11 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 				issuer,
 				quantity_max,
 				issuer_id,
+				recurrence_compulsory,
+				recurrence_optional,
+				recurrence_base,
+				recurrence_paywindow,
+				recurrence_limit,
 			},
 			ExperimentalOfferTlvStream {
 				#[cfg(test)]
@@ -1363,6 +1446,36 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			(issuer_id, paths) => (issuer_id, paths),
 		};
 
+		let requirement_and_period = match (recurrence_compulsory, recurrence_optional) {
+			(None, None) => None,
+			(Some(period), None) => Some((recurrence::Requirement::Compulsory, period)),
+			(None, Some(period)) => Some((recurrence::Requirement::Optional, period)),
+			(Some(_), Some(_)) => return Err(Bolt12SemanticError::InvalidRecurrence),
+		};
+
+		let recurrence = match requirement_and_period {
+			None => {
+				if recurrence_base.is_some()
+					|| recurrence_paywindow.is_some()
+					|| recurrence_limit.is_some()
+				{
+					return Err(Bolt12SemanticError::InvalidRecurrence);
+				}
+				None
+			},
+			Some((requirement, period)) => {
+				let recurrence = recurrence::Recurrence {
+					requirement,
+					period,
+					anchor: recurrence_base.unwrap_or(recurrence::Anchor::FirstInvoice),
+					paywindow: recurrence_paywindow.unwrap_or(recurrence::Paywindow::Default),
+					limit: recurrence_limit.unwrap_or(recurrence::Limit::Unbounded),
+				};
+				recurrence.validate(amount.is_some())?;
+				Some(recurrence)
+			},
+		};
+
 		Ok(OfferContents {
 			chains,
 			metadata,
@@ -1374,6 +1487,7 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			paths,
 			supported_quantity,
 			issuer_signing_pubkey,
+			recurrence,
 			#[cfg(test)]
 			experimental_foo,
 		})
@@ -1451,6 +1565,7 @@ mod tests {
 		assert_eq!(offer.supported_quantity(), Quantity::One);
 		assert!(!offer.expects_quantity());
 		assert_eq!(offer.issuer_signing_pubkey(), Some(pubkey(42)));
+		assert_eq!(offer.recurrence(), None);
 
 		assert_eq!(
 			offer.as_tlv_stream(),
@@ -1467,6 +1582,11 @@ mod tests {
 					issuer: None,
 					quantity_max: None,
 					issuer_id: Some(&pubkey(42)),
+					recurrence_compulsory: None,
+					recurrence_optional: None,
+					recurrence_base: None,
+					recurrence_paywindow: None,
+					recurrence_limit: None,
 				},
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
 			),
