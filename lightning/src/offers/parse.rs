@@ -233,6 +233,10 @@ pub enum Bolt12SemanticError {
 	///
 	/// [`Refund`]: super::refund::Refund
 	UnexpectedHumanReadableName,
+	/// Recurrence fields were present in a message that does not support them.
+	UnexpectedRecurrence,
+	/// Recurrence values or field combinations were invalid.
+	InvalidRecurrence,
 }
 
 impl From<CheckedHrpstringError> for Bolt12ParseError {
