@@ -424,6 +424,7 @@ macro_rules! invoice_builder_methods {
 				signing_pubkey,
 				#[cfg(test)]
 				experimental_baz: None,
+				recurrence_basetime: None,
 			}
 		}
 
@@ -773,6 +774,8 @@ struct InvoiceFields {
 	fallbacks: Option<Vec<FallbackAddress>>,
 	features: Bolt12InvoiceFeatures,
 	signing_pubkey: PublicKey,
+	recurrence_basetime: Option<u64>,
+
 	#[cfg(test)]
 	experimental_baz: Option<u64>,
 }
@@ -1402,6 +1405,7 @@ impl InvoiceFields {
 				features,
 				node_id: Some(&self.signing_pubkey),
 				message_paths: None,
+				recurrence_basetime: None,
 			},
 			ExperimentalInvoiceTlvStreamRef {
 				#[cfg(test)]
@@ -1483,6 +1487,7 @@ tlv_stream!(InvoiceTlvStream, InvoiceTlvStreamRef<'a>, INVOICE_TYPES, {
 	(172, fallbacks: (Vec<FallbackAddress>, WithoutLength)),
 	(174, features: (Bolt12InvoiceFeatures, WithoutLength)),
 	(176, node_id: PublicKey),
+	(177, recurrence_basetime: (u64, HighZeroBytesDroppedBigSize)),
 	// Only present in `StaticInvoice`s.
 	(236, message_paths: (Vec<BlindedMessagePath>, WithoutLength)),
 });
@@ -1674,6 +1679,7 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				features,
 				node_id,
 				message_paths,
+				recurrence_basetime,
 			},
 			experimental_offer_tlv_stream,
 			experimental_invoice_request_tlv_stream,
@@ -1713,6 +1719,7 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 			fallbacks,
 			features,
 			signing_pubkey,
+			recurrence_basetime,
 			#[cfg(test)]
 			experimental_baz,
 		};
@@ -2019,6 +2026,7 @@ mod tests {
 					features: None,
 					node_id: Some(&recipient_pubkey()),
 					message_paths: None,
+					recurrence_basetime: None,
 				},
 				SignatureTlvStreamRef { signature: Some(&invoice.signature()) },
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
@@ -2130,6 +2138,7 @@ mod tests {
 					features: None,
 					node_id: Some(&recipient_pubkey()),
 					message_paths: None,
+					recurrence_basetime: None,
 				},
 				SignatureTlvStreamRef { signature: Some(&invoice.signature()) },
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
