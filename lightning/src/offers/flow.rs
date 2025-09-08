@@ -891,6 +891,13 @@ where
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
+		#[cfg(not(feature = "std"))]
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+		#[cfg(feature = "std")]
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
 		let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
 		let payment_paths = self
 			.create_blinded_payment_paths(
@@ -904,18 +911,7 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(feature = "std")]
 		let builder = refund.respond_using_derived_keys(
-			payment_paths,
-			payment_hash,
-			expanded_key,
-			entropy,
-		)?;
-
-		#[cfg(not(feature = "std"))]
-		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
-		#[cfg(not(feature = "std"))]
-		let builder = refund.respond_using_derived_keys_no_std(
 			payment_paths,
 			payment_hash,
 			created_at,
@@ -960,6 +956,13 @@ where
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
+		#[cfg(not(feature = "std"))]
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+		#[cfg(feature = "std")]
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
 			invoice_request: invoice_request.fields(),
@@ -977,15 +980,8 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-		#[cfg(not(feature = "std"))]
-		let builder = invoice_request.respond_using_derived_keys_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash, created_at)
+			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
@@ -1025,6 +1021,13 @@ where
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
+		#[cfg(not(feature = "std"))]
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+		#[cfg(feature = "std")]
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
 			invoice_request: invoice_request.fields(),
@@ -1042,16 +1045,8 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
-		#[cfg(not(feature = "std"))]
-		let builder = invoice_request.respond_with_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
-
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		let builder = invoice_request.respond_with(payment_paths, payment_hash, created_at)
+			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
