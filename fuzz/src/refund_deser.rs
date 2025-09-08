@@ -8,8 +8,10 @@
 // licenses.
 
 use crate::utils::test_logger;
+use bitcoin::blockdata::constants::genesis_block;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1, SecretKey};
 use core::convert::TryFrom;
+use core::time::Duration;
 use lightning::blinded_path::payment::{
 	BlindedPaymentPath, Bolt12RefundContext, ForwardTlvs, PaymentConstraints, PaymentContext,
 	PaymentForwardNode, PaymentRelay, ReceiveTlvs,
@@ -109,7 +111,9 @@ fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
 	.unwrap();
 
 	let payment_hash = PaymentHash([42; 32]);
-	refund.respond_with(vec![payment_path], payment_hash, signing_pubkey)?.build()
+	let genesis_block = genesis_block(network);
+	let now = Duration::from_secs(genesis_block.header.time as u64);
+	refund.respond_with(vec![payment_path], payment_hash, signing_pubkey, now)?.build()
 }
 
 pub fn refund_deser_test<Out: test_logger::Output>(data: &[u8], out: Out) {
