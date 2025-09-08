@@ -44,7 +44,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder, OfferId};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder, OfferId, RecurrenceFields};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
@@ -526,7 +526,7 @@ where
 	}
 
 	fn create_offer_builder_intern<ES: Deref, PF, I>(
-		&self, entropy_source: ES, make_paths: PF,
+		&self, entropy_source: ES, recurrence: Option<RecurrenceFields>, make_paths: PF,
 	) -> Result<(OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Nonce), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
@@ -548,6 +548,10 @@ where
 		let mut builder =
 			OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
 				.chain_hash(self.chain_hash);
+
+		if let Some(recurrence) = recurrence {
+			builder = builder.recurrence(recurrence);
+		}
 
 		for path in make_paths(node_id, context, secp_ctx)? {
 			builder = builder.path(path)
@@ -581,12 +585,12 @@ where
 	///
 	/// [`DefaultMessageRouter`]: crate::onion_message::messenger::DefaultMessageRouter
 	pub fn create_offer_builder<ES: Deref>(
-		&self, entropy_source: ES, peers: Vec<MessageForwardNode>,
+		&self, entropy_source: ES, recurrence: Option<RecurrenceFields>, peers: Vec<MessageForwardNode>,
 	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 	{
-		self.create_offer_builder_intern(&*entropy_source, |_, context, _| {
+		self.create_offer_builder_intern(&*entropy_source, recurrence, |_, context, _| {
 			self.create_blinded_paths(peers, context)
 				.map(|paths| paths.into_iter().take(1))
 				.map_err(|_| Bolt12SemanticError::MissingPaths)
@@ -602,14 +606,14 @@ where
 	///
 	/// See [`Self::create_offer_builder`] for more details on usage.
 	pub fn create_offer_builder_using_router<ME: Deref, ES: Deref>(
-		&self, router: ME, entropy_source: ES, peers: Vec<MessageForwardNode>,
+		&self, router: ME, entropy_source: ES, recurrence: Option<RecurrenceFields>, peers: Vec<MessageForwardNode>,
 	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
 	where
 		ME::Target: MessageRouter,
 		ES::Target: EntropySource,
 	{
 		let receive_key = self.get_receive_auth_key();
-		self.create_offer_builder_intern(&*entropy_source, |node_id, context, secp_ctx| {
+		self.create_offer_builder_intern(&*entropy_source, recurrence, |node_id, context, secp_ctx| {
 			router
 				.create_blinded_paths(node_id, receive_key, context, peers, secp_ctx)
 				.map(|paths| paths.into_iter().take(1))
@@ -632,7 +636,7 @@ where
 	where
 		ES::Target: EntropySource,
 	{
-		self.create_offer_builder_intern(&*entropy_source, |_, _, _| {
+		self.create_offer_builder_intern(&*entropy_source, None, |_, _, _| {
 			Ok(message_paths_to_always_online_node)
 		})
 	}

@@ -390,6 +390,16 @@ macro_rules! offer_builder_methods { (
 		$return_value
 	}
 
+	/// Set the [Offer::recurrence_fields] for the offer.
+	///
+	/// Successive calls to this method will override the previous setting.
+	pub fn recurrence(
+		$($self_mut)* $self: $self_type, recurrence: RecurrenceFields,
+	) -> $return_type {
+		$self.offer.recurrence_fields = Some(recurrence);
+		$return_value
+	}
+
 	/// Sets the quantity of items for [`Offer::supported_quantity`]. If not called, defaults to
 	/// [`Quantity::One`].
 	///
@@ -640,7 +650,7 @@ pub(super) struct OfferContents {
 ///
 /// Any other value must be rejected by the parser.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TimeUnit {
+pub enum TimeUnit {
     Seconds,
     Days,
     Months,
@@ -649,7 +659,7 @@ pub(super) enum TimeUnit {
 /// A positive recurrence length expressed as a `(unit, count)` pair.
 /// Maps to `recurrence.period` (tu32) with the unit given by `recurrence.time_unit`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct Recurrence {
+pub struct Recurrence {
     /// Unit of time for the recurrence cadence.
     pub time_unit: TimeUnit,
     /// Number of `unit`s per period. Must be > 0.
@@ -691,7 +701,7 @@ impl Readable for Recurrence {
 /// Fixed base schedule for periods and pricing behavior.
 /// Maps to TLV 26 `recurrence_base`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RecurrenceBase {
+pub struct RecurrenceBase {
     /// Proportional pricing flag.
     pub proportional: bool,
     /// Unix timestamp of the first period start in seconds since 1970-01-01 00:00:00 UTC.
@@ -732,7 +742,7 @@ impl Readable for RecurrenceBase {
 /// Wire quirk:
 /// `seconds_after` is encoded as tu32 since it is the last field of the TLV.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RecurrencePaywindow {
+pub struct RecurrencePaywindow {
     /// Maximum seconds before a period start to accept payment for that period. `u32` on wire.
     pub seconds_before: u32,
     /// Maximum seconds after a period start to accept payment for that period. `tu32` on wire.
@@ -758,7 +768,7 @@ impl Readable for RecurrencePaywindow {
 /// Maps to TLV 29 `recurrence_limit.max_period_index`.
 /// Spec forbids zero.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) struct RecurrenceLimit(pub u32);
+pub struct RecurrenceLimit(pub u32);
 
 impl Writeable for RecurrenceLimit {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
@@ -782,7 +792,7 @@ impl Readable for RecurrenceLimit {
 ///
 /// `base` (TLV 26) is only valid with `Compulsory`. It must not appear with `Optional`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum RecurrenceFields {
+pub enum RecurrenceFields {
     /// Reader without recurrence support may still attempt a single payment.
     Optional {
         recurrence: Recurrence,
