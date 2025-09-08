@@ -74,8 +74,15 @@ use {
 /// The data we need to remember for a recurrence offer to be able to respond to successive invoice request
 pub struct RecurrenceDataToRemember {
 	next_payable_index: u32,
-	first_period_time: u64,
-	period_index_offset: u32
+	recurrence_starting_time: RecurrenceStartingTime,
+}
+
+pub enum RecurrenceStartingTime {
+	InvoiceCreatedAt(u64),
+	BasetimeDefined {
+		basetime: u64,
+		period_index_offset: u32,
+	}
 }
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
@@ -112,7 +119,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
-	recurrence_index: HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>
+	recurrence_index: Mutex<HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -148,7 +155,7 @@ where
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
 
-			recurrence_index: HashMap::new(),
+			recurrence_index: Mutex::new(HashMap::new()),
 		}
 	}
 
@@ -964,6 +971,89 @@ where
 		let created_at = std::time::SystemTime::now()
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
+		// Recurrence.
+		// Note: We right now assume here that the recurrence fields are properly present.
+		// That is no combination of values of offer, or invoice request is present that would be deemed invalid at parsing.
+		// eg. invoice request recurrence fields without offer recurrence fields.
+		let recurrence_basetime = match (invoice_request.inner.recurrence_counter(), invoice_request.inner.recurrence_start(), invoice_request.inner.recurrence_cancel()) {
+			(None, None, None) => None, // No recurrence, nothing to do.
+			// First invoice request in a recurrence series.
+			(Some(counter), start_index, None) if counter == 0 => {
+				let mut recurrence_index_vec = self.recurrence_index.lock().unwrap();
+
+				// If the counter is zero, the entry MUST NOT already be present.
+				if recurrence_index_vec.contains_key(&(invoice_request.offer_id, invoice_request.inner.payer_signing_pubkey())) {
+					panic!("Duplicate recurrence"); // TODO: Update with proper error case.
+				}
+
+				let basetime = match invoice_request.inner.recurrence_fields() {
+					Some(RecurrenceFields::Compulsory { base: Some(basetime), .. }) => Some(basetime.basetime),
+					_ => None,
+				};
+
+				// Must be ensured at parsing, and must be guranteed with compile time gurantees.
+				let recurrence_starting_time = match (basetime, start_index) {
+					(Some(time), Some(period_index_offset)) => {
+						RecurrenceStartingTime::BasetimeDefined { basetime: time, period_index_offset }
+					}
+					(None, None) => RecurrenceStartingTime::InvoiceCreatedAt(created_at.as_secs()),
+					_ => panic!("Invalid recurrence starting time"),
+				};
+
+				let to_remember = RecurrenceDataToRemember {
+					next_payable_index: 0,
+					recurrence_starting_time
+				};
+
+				recurrence_index_vec.insert((invoice_request.offer_id, invoice_request.inner.payer_signing_pubkey()), to_remember);
+
+				Some(created_at.as_secs())
+			},
+			// Successive invoice requests in a recurrence series without cancellation.
+			(Some(counter), start_index, None) => {
+				let recurrence_index = self.recurrence_index.lock().unwrap();
+				let entry: &RecurrenceDataToRemember = recurrence_index
+					.get(&(invoice_request.offer_id, invoice_request.inner.payer_signing_pubkey()))
+					.expect("recurrence entry must be present");
+
+				// Ensure that all datas are valid.
+				assert!(entry.next_payable_index == counter);
+				match entry.recurrence_starting_time {
+					RecurrenceStartingTime::BasetimeDefined { basetime, period_index_offset } => {
+						assert!(start_index == Some(period_index_offset));
+						Some(basetime)
+					},
+					RecurrenceStartingTime::InvoiceCreatedAt(original_created_at) => {
+						assert!(start_index.is_none());
+						Some(original_created_at)
+					},
+				}
+			},
+
+			(counter, _, Some(())) => {
+				if let Some(counter) = counter {
+					if counter == 0 {
+						panic!("Cancel must not be present in the first invoice request"); // TODO: Ensure at parsing time with compile time gurantees.
+					}
+				}
+				let mut recurrence_index = self.recurrence_index.lock().unwrap();
+				let _entry = recurrence_index
+					.remove(&(invoice_request.offer_id, invoice_request.inner.payer_signing_pubkey()))
+					.expect("recurrence entry must be present");
+
+				panic!("recurrence cancelled"); // Return from function generating no response
+			}
+
+			_ => panic!("recurrence not supported yet"), // TODO: Update with proper error case.
+		};
+
+		// Now we have got the recurrence basetime. If any recurrence basetime is present, we have to set it in the invoice builder.
+		// For that we have to introduce a method in the InvoiceBuilder that allows to set the recurrence basetime.
+		// After that if any basetime is present, we set it. That completes the invoice request handling.
+		// Then remains that updating of next_payable_index when the corresponding payment is finally claimed.
+		// After doing that we will do basic cleanup to make the PR readable.
+		// Refinements, and compile time gurantees will be addressed later.
 
 		let response = if invoice_request.keys.is_some() {
 			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash, created_at);

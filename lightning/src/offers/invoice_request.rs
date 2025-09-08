@@ -701,6 +701,21 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 	pub fn offer_from_hrn(&$self) -> &Option<HumanReadableName> {
 		$contents.offer_from_hrn()
 	}
+
+	/// If the recurrence is enabled, this keeps track of the current period index.
+	pub fn recurrence_counter(&$self) -> Option<u32> {
+		$contents.recurrence_counter()
+	}
+
+	/// If recurrence is enabled, this keeps track of the initial period index offset.
+	pub fn recurrence_start(&$self) -> Option<u32> {
+		$contents.recurrence_start()
+	}
+
+	/// If set, indicates that the payer wishes to cancel any future recurrence of this offer.
+	pub fn recurrence_cancel(&$self) -> Option<()> {
+		$contents.recurrence_cancel()
+	}
 } }
 
 impl UnsignedInvoiceRequest {
@@ -1048,6 +1063,18 @@ impl InvoiceRequestContents {
 
 	pub(super) fn offer_from_hrn(&self) -> &Option<HumanReadableName> {
 		&self.inner.offer_from_hrn
+	}
+
+	pub(super) fn recurrence_counter(&self) -> Option<u32> {
+		self.inner.recurrence_counter
+	}
+
+	pub(super) fn recurrence_start(&self) -> Option<u32> {
+		self.inner.recurrence_start
+	}
+
+	pub(super) fn recurrence_cancel(&self) -> Option<()> {
+		self.inner.recurrence_cancel
 	}
 
 	pub(super) fn as_tlv_stream(&self) -> PartialInvoiceRequestTlvStreamRef<'_> {
