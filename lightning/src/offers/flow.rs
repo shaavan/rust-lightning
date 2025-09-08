@@ -883,6 +883,13 @@ where
 		let amount_msats = refund.amount_msats();
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
+		#[cfg(not(feature = "std"))]
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+		#[cfg(feature = "std")]
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
 		let payment_context = PaymentContext::Bolt12Refund(Bolt12RefundContext {});
 		let payment_paths = self
 			.create_blinded_payment_paths(
@@ -896,18 +903,7 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(feature = "std")]
 		let builder = refund.respond_using_derived_keys(
-			payment_paths,
-			payment_hash,
-			expanded_key,
-			entropy,
-		)?;
-
-		#[cfg(not(feature = "std"))]
-		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
-		#[cfg(not(feature = "std"))]
-		let builder = refund.respond_using_derived_keys_no_std(
 			payment_paths,
 			payment_hash,
 			created_at,
@@ -965,24 +961,18 @@ where
 		#[cfg(not(feature = "std"))]
 		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
 
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
+
 		let response = if invoice_request.keys.is_some() {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_using_derived_keys_no_std(
-				payment_paths,
-				payment_hash,
-				created_at,
-			);
+			let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash, created_at);
 			builder
 				.map(InvoiceBuilder::<DerivedSigningPubkey>::from)
 				.and_then(|builder| builder.allow_mpp().build_and_sign(secp_ctx))
 				.map_err(InvoiceError::from)
 		} else {
-			#[cfg(feature = "std")]
-			let builder = invoice_request.respond_with(payment_paths, payment_hash);
-			#[cfg(not(feature = "std"))]
-			let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
+			let builder = invoice_request.respond_with(payment_paths, payment_hash, created_at);
 			builder
 				.map(InvoiceBuilder::<ExplicitSigningPubkey>::from)
 				.and_then(|builder| builder.allow_mpp().build())
