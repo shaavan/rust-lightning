@@ -701,6 +701,21 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 	pub fn offer_from_hrn(&$self) -> &Option<HumanReadableName> {
 		$contents.offer_from_hrn()
 	}
+
+	/// If the recurrence is enabled, this keeps track of the current period index.
+	pub fn recurrence_counter(&$self) -> Option<u32> {
+		$contents.recurrence_counter()
+	}
+
+	/// If recurrence is enabled, this keeps track of the initial period index offset.
+	pub fn recurrence_start(&$self) -> Option<u32> {
+		$contents.recurrence_start()
+	}
+
+	/// If set, indicates that the payer wishes to cancel any future recurrence of this offer.
+	pub fn recurrence_cancel(&$self) -> Option<()> {
+		$contents.recurrence_cancel()
+	}
 } }
 
 impl UnsignedInvoiceRequest {
@@ -738,7 +753,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// [`OfferBuilder::deriving_signing_pubkey`]: crate::offers::offer::OfferBuilder::deriving_signing_pubkey
 	pub fn respond_with(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
-		created_at: core::time::Duration
+		created_at: core::time::Duration, recurrence_basetime: Option<u64>
 	) -> Result<$builder, Bolt12SemanticError> {
 		if $contents.invoice_request_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
@@ -749,14 +764,15 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 			None => return Err(Bolt12SemanticError::MissingIssuerSigningPubkey),
 		};
 
-		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey)
+		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey, recurrence_basetime)
 	}
 
 	#[cfg(test)]
 	#[allow(dead_code)]
 	pub(super) fn respond_with_using_signing_pubkey(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
-		created_at: core::time::Duration, signing_pubkey: PublicKey
+		created_at: core::time::Duration, signing_pubkey: PublicKey,
+		recurrence_basetime: Option<u64>
 	) -> Result<$builder, Bolt12SemanticError> {
 		debug_assert!($contents.contents.inner.offer.issuer_signing_pubkey().is_none());
 
@@ -764,7 +780,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey)
+		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey, recurrence_basetime)
 	}
 } }
 
@@ -907,7 +923,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn respond_using_derived_keys(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
-		created_at: core::time::Duration
+		created_at: core::time::Duration, recurrence_basetime: Option<u64>
 	) -> Result<$builder, Bolt12SemanticError> {
 		if $self.inner.invoice_request_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
@@ -924,7 +940,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		<$builder>::for_offer_using_keys(
-			&$self.inner, payment_paths, created_at, payment_hash, keys
+			&$self.inner, payment_paths, created_at, payment_hash, keys, recurrence_basetime
 		)
 	}
 } }
@@ -1048,6 +1064,18 @@ impl InvoiceRequestContents {
 
 	pub(super) fn offer_from_hrn(&self) -> &Option<HumanReadableName> {
 		&self.inner.offer_from_hrn
+	}
+
+	pub(super) fn recurrence_counter(&self) -> Option<u32> {
+		self.inner.recurrence_counter
+	}
+
+	pub(super) fn recurrence_start(&self) -> Option<u32> {
+		self.inner.recurrence_start
+	}
+
+	pub(super) fn recurrence_cancel(&self) -> Option<()> {
+		self.inner.recurrence_cancel
 	}
 
 	pub(super) fn as_tlv_stream(&self) -> PartialInvoiceRequestTlvStreamRef<'_> {
@@ -1623,7 +1651,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now(), None)
 			.unwrap()
 			.experimental_baz(42)
 			.build()
@@ -2207,7 +2235,7 @@ mod tests {
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
 			.unwrap()
-			.respond_with(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now(), None)
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),
