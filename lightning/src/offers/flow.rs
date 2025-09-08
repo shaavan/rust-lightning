@@ -13,6 +13,7 @@
 use core::ops::Deref;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
+use std::collections::HashMap;
 
 use bitcoin::block::Header;
 use bitcoin::constants::ChainHash;
@@ -44,7 +45,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder, OfferId};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::onion_message::async_payments::{
@@ -69,6 +70,13 @@ use {
 	crate::blinded_path::message::DNSResolverContext,
 	crate::onion_message::dns_resolution::{DNSResolverMessage, DNSSECQuery, OMNameResolver},
 };
+
+/// The data we need to remember for a recurrence offer to be able to respond to successive invoice request
+pub struct RecurrenceDataToRemember {
+	next_payable_index: u32,
+	first_period_time: u64,
+	period_index_offset: u32
+}
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
@@ -103,6 +111,8 @@ where
 	pub(crate) hrn_resolver: OMNameResolver,
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
+
+	recurrence_index: HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -137,6 +147,8 @@ where
 			pending_dns_onion_messages: Mutex::new(Vec::new()),
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
+
+			recurrence_index: HashMap::new(),
 		}
 	}
 
