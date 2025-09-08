@@ -3206,7 +3206,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with(payment_paths(), payment_hash(), created_at).unwrap()
+			.respond_with(payment_paths(), payment_hash(), created_at, None).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3253,7 +3253,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with(payment_paths(), payment_hash(), now(), None).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3316,7 +3316,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with(payment_paths(), payment_hash(), now(), None).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 

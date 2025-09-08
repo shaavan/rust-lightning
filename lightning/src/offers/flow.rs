@@ -1011,6 +1011,9 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
+		// We need way to pass recurrence_basetime here.
+		// recurrence_basetime is equal to first invoice's created_at, or the offer_basetime, if it's present.
+		// If recurrent the information about recurrence_basetime will be stored with the caller.
 		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash, created_at)
 			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
@@ -1075,6 +1078,9 @@ where
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
+		// We need way to pass recurrence_basetime here.
+		// recurrence_basetime is equal to first invoice's created_at, or the offer_basetime, if it's present.
+		// If recurrent the information about recurrence_basetime will be stored with the caller.
 		let builder = invoice_request.respond_with(payment_paths, payment_hash, created_at)
 			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
