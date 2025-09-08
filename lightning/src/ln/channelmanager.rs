@@ -99,7 +99,7 @@ use crate::offers::invoice::{
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::Offer;
+use crate::offers::offer::{Offer, RecurrenceFields};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::signer;
@@ -2172,8 +2172,9 @@ where
 /// #
 /// # fn example<T: AChannelManager>(channel_manager: T) -> Result<(), Bolt12SemanticError> {
 /// # let channel_manager = channel_manager.get_cm();
+/// # let recurrence_fields = None;
 /// let offer = channel_manager
-///     .create_offer_builder()?
+///     .create_offer_builder(recurrence_fields)?
 /// # ;
 /// # // Needed for compiling for c_bindings
 /// # let builder: lightning::offers::offer::OfferBuilder<_, _> = offer.into();
@@ -11953,9 +11954,9 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
-	pub fn create_offer_builder(&$self) -> Result<$builder, Bolt12SemanticError> {
+	pub fn create_offer_builder(&$self, recurrence: Option<RecurrenceFields>) -> Result<$builder, Bolt12SemanticError> {
 		let builder = $self.flow.create_offer_builder(
-			&*$self.entropy_source, $self.get_peers_for_blinded_path()
+			&*$self.entropy_source, recurrence, $self.get_peers_for_blinded_path()
 		)?;
 
 		Ok(builder.into())
@@ -11975,12 +11976,13 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	pub fn create_offer_builder_using_router<ME: Deref>(
 		&$self,
 		router: ME,
+		recurrence: Option<RecurrenceFields>,
 	) -> Result<$builder, Bolt12SemanticError>
 	where
 		ME::Target: MessageRouter,
 	{
 		let builder = $self.flow.create_offer_builder_using_router(
-			router, &*$self.entropy_source, $self.get_peers_for_blinded_path()
+			router, &*$self.entropy_source, recurrence, $self.get_peers_for_blinded_path()
 		)?;
 
 		Ok(builder.into())
