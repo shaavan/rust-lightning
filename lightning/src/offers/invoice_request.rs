@@ -1474,6 +1474,10 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			return Err(Bolt12SemanticError::UnexpectedPaths);
 		}
 
+		// TODO: Introduce following checks:
+		// - If offer.recurrence is None, recurrence_counter/start/cancel should not be set.
+		// - If recurrence_counter is 0, recurrence cancel should not be set.
+
 		Ok(InvoiceRequestContents {
 			inner: InvoiceRequestContentsWithoutPayerSigningPubkey {
 				payer,
