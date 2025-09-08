@@ -47,18 +47,7 @@
 //! // Invoice for the "offer to be paid" flow.
 //! # <InvoiceBuilder<ExplicitSigningPubkey>>::from(
 //! InvoiceRequest::try_from(bytes)?
-#![cfg_attr(
-	feature = "std",
-	doc = "
-    .respond_with(payment_paths, payment_hash)?
-"
-)]
-#![cfg_attr(
-	not(feature = "std"),
-	doc = "
-    .respond_with_no_std(payment_paths, payment_hash, core::time::Duration::from_secs(0))?
-"
-)]
+//! 	.respond_with(payment_paths, payment_hash, core::time::Duration::from_secs(0))?
 //! # )
 //!     .relative_expiry(3600)
 //!     .allow_mpp()
@@ -86,18 +75,7 @@
 //! # <InvoiceBuilder<ExplicitSigningPubkey>>::from(
 //! "lnr1qcp4256ypq"
 //!     .parse::<Refund>()?
-#![cfg_attr(
-	feature = "std",
-	doc = "
-    .respond_with(payment_paths, payment_hash, pubkey)?
-"
-)]
-#![cfg_attr(
-	not(feature = "std"),
-	doc = "
-    .respond_with_no_std(payment_paths, payment_hash, pubkey, core::time::Duration::from_secs(0))?
-"
-)]
+//! 	.respond_with(payment_paths, payment_hash, pubkey, core::time::Duration::from_secs(0))?
 //! # )
 //!     .relative_expiry(3600)
 //!     .allow_mpp()
@@ -2001,7 +1979,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths.clone(), payment_hash, now)
+			.respond_with(payment_paths.clone(), payment_hash, now)
 			.unwrap()
 			.build()
 			.unwrap();
@@ -2166,7 +2144,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.respond_with_no_std(payment_paths.clone(), payment_hash, recipient_pubkey(), now)
+			.respond_with(payment_paths.clone(), payment_hash, recipient_pubkey(), now)
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2269,7 +2247,6 @@ mod tests {
 		}
 	}
 
-	#[cfg(feature = "std")]
 	#[test]
 	fn builds_invoice_from_offer_with_expiration() {
 		let expanded_key = ExpandedKey::new([42; 32]);
@@ -2290,7 +2267,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with(payment_paths(), payment_hash())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 		{
@@ -2305,7 +2282,7 @@ mod tests {
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
 			.unwrap()
 			.build_unchecked_and_sign()
-			.respond_with(payment_paths(), payment_hash())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 		{
@@ -2314,7 +2291,6 @@ mod tests {
 		}
 	}
 
-	#[cfg(feature = "std")]
 	#[test]
 	fn builds_invoice_from_refund_with_expiration() {
 		let future_expiry = Duration::from_secs(u64::max_value());
@@ -2325,7 +2301,7 @@ mod tests {
 			.absolute_expiry(future_expiry)
 			.build()
 			.unwrap()
-			.respond_with(payment_paths(), payment_hash(), recipient_pubkey())
+			.respond_with(payment_paths(), payment_hash(), recipient_pubkey(), now())
 			.unwrap()
 			.build()
 		{
@@ -2337,7 +2313,7 @@ mod tests {
 			.absolute_expiry(past_expiry)
 			.build()
 			.unwrap()
-			.respond_with(payment_paths(), payment_hash(), recipient_pubkey())
+			.respond_with(payment_paths(), payment_hash(), recipient_pubkey(), now())
 			.unwrap()
 			.build()
 		{
@@ -2386,7 +2362,7 @@ mod tests {
 		match verified_request {
 			InvoiceRequestVerifiedFromOffer::DerivedKeys(req) => {
 				let invoice = req
-					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
+					.respond_using_derived_keys(payment_paths(), payment_hash(), now())
 					.unwrap()
 					.build_and_sign(&secp_ctx);
 
@@ -2418,7 +2394,7 @@ mod tests {
 			.unwrap();
 
 		if let Err(e) = refund
-			.respond_using_derived_keys_no_std(
+			.respond_using_derived_keys(
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -2455,7 +2431,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = refund
-			.respond_using_derived_keys_no_std(
+			.respond_using_derived_keys(
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -2488,7 +2464,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now)
+			.respond_with(payment_paths(), payment_hash(), now)
 			.unwrap()
 			.relative_expiry(one_hour.as_secs() as u32)
 			.build()
@@ -2509,7 +2485,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now - one_hour)
+			.respond_with(payment_paths(), payment_hash(), now - one_hour)
 			.unwrap()
 			.relative_expiry(one_hour.as_secs() as u32 - 1)
 			.build()
@@ -2541,7 +2517,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2571,7 +2547,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2591,7 +2567,7 @@ mod tests {
 			.quantity(u64::max_value())
 			.unwrap()
 			.build_unchecked_and_sign()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
@@ -2619,7 +2595,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.fallback_v0_p2wsh(&script.wscript_hash())
 			.fallback_v0_p2wpkh(&pubkey.wpubkey_hash().unwrap())
@@ -2675,7 +2651,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.allow_mpp()
 			.build()
@@ -2703,7 +2679,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2721,7 +2697,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2748,7 +2724,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2825,7 +2801,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2869,7 +2845,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.relative_expiry(3600)
 			.build()
@@ -2902,7 +2878,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2946,7 +2922,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2988,7 +2964,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.allow_mpp()
 			.build()
@@ -3032,10 +3008,10 @@ mod tests {
 			.unwrap();
 		#[cfg(not(c_bindings))]
 		let invoice_builder =
-			invoice_request.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap();
+			invoice_request.respond_with(payment_paths(), payment_hash(), now()).unwrap();
 		#[cfg(c_bindings)]
 		let mut invoice_builder =
-			invoice_request.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap();
+			invoice_request.respond_with(payment_paths(), payment_hash(), now()).unwrap();
 		let invoice_builder = invoice_builder
 			.fallback_v0_p2wsh(&script.wscript_hash())
 			.fallback_v0_p2wpkh(&pubkey.wpubkey_hash().unwrap())
@@ -3094,7 +3070,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3181,7 +3157,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std_using_signing_pubkey(
+			.respond_with_using_signing_pubkey(
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -3211,7 +3187,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std_using_signing_pubkey(
+			.respond_with_using_signing_pubkey(
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -3253,7 +3229,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.amount_msats_unchecked(2000)
 			.build()
@@ -3282,7 +3258,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.amount_msats_unchecked(2000)
 			.build()
@@ -3305,7 +3281,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.respond_using_derived_keys_no_std(
+			.respond_using_derived_keys(
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -3346,7 +3322,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3379,7 +3355,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3422,7 +3398,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3461,7 +3437,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3507,7 +3483,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.experimental_baz(42)
 			.build()
@@ -3533,7 +3509,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3574,7 +3550,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3612,7 +3588,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3653,7 +3629,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3688,7 +3664,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3736,7 +3712,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with(payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3752,7 +3728,7 @@ mod tests {
 			RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap().build().unwrap();
 
 		let invoice = refund
-			.respond_with_no_std(payment_paths(), payment_hash(), recipient_pubkey(), now())
+			.respond_with(payment_paths(), payment_hash(), recipient_pubkey(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3782,7 +3758,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with_no_std(payment_paths, payment_hash(), now)
+			.respond_with(payment_paths, payment_hash(), now)
 			.unwrap()
 			.build()
 			.unwrap()
