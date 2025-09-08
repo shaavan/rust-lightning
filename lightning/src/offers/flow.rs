@@ -117,7 +117,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
-	recurrence_index: HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>
+	recurrence_index: Mutex<HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>
@@ -153,7 +153,7 @@ where
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
 
-			recurrence_index: HashMap::new(),
+			recurrence_index: Mutex::new(HashMap::new()),
 		}
 	}
 
