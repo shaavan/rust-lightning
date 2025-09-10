@@ -73,8 +73,8 @@ use {
 
 /// The data we need to remember for a recurrence offer to be able to respond to successive invoice request
 pub struct RecurrenceDataToRemember {
-	next_payable_index: u32,
-	recurrence_starting_time: RecurrenceStartingTime,
+	pub next_payable_index: u32,
+	pub recurrence_starting_time: RecurrenceStartingTime,
 }
 
 pub enum RecurrenceStartingTime {
@@ -119,7 +119,7 @@ where
 	#[cfg(feature = "dnssec")]
 	pending_dns_onion_messages: Mutex<Vec<(DNSResolverMessage, MessageSendInstructions)>>,
 
-	recurrence_index: Mutex<HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>>,
+	pub recurrence_index: Mutex<HashMap<(OfferId, PublicKey), RecurrenceDataToRemember>>,
 }
 
 impl<MR: Deref> OffersMessageFlow<MR>

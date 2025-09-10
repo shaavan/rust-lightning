@@ -983,7 +983,7 @@ impl VerifiedInvoiceRequest {
 	pub fn fields(&self) -> InvoiceRequestFields {
 		let InvoiceRequestContents {
 			payer_signing_pubkey,
-			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, .. },
+			inner: InvoiceRequestContentsWithoutPayerSigningPubkey { quantity, payer_note, recurrence_counter, .. },
 		} = &self.inner.contents;
 
 		InvoiceRequestFields {
@@ -995,6 +995,7 @@ impl VerifiedInvoiceRequest {
 				// down to the nearest valid UTF-8 code point boundary.
 				.map(|s| UntrustedString(string_truncate_safe(s, PAYER_NOTE_LIMIT))),
 			human_readable_name: self.offer_from_hrn().clone(),
+			recurrence_counter: *recurrence_counter,
 		}
 	}
 }
@@ -1420,6 +1421,10 @@ pub struct InvoiceRequestFields {
 
 	/// The Human Readable Name which the sender indicated they were paying to.
 	pub human_readable_name: Option<HumanReadableName>,
+
+	/// If this invoice request is part of a recurrence, this keeps track of the current period index.
+	///	that was just paid.
+	pub recurrence_counter: Option<u32>,
 }
 
 /// The maximum number of characters included in [`InvoiceRequestFields::payer_note_truncated`].
@@ -1449,6 +1454,7 @@ impl Readable for InvoiceRequestFields {
 			(1, human_readable_name, option),
 			(2, quantity, (option, encoding: (u64, HighZeroBytesDroppedBigSize))),
 			(4, payer_note_truncated, (option, encoding: (String, WithoutLength))),
+			(5, recurrence_counter, (option, encoding: (u32, HighZeroBytesDroppedBigSize))),
 		});
 
 		Ok(InvoiceRequestFields {
@@ -1456,6 +1462,7 @@ impl Readable for InvoiceRequestFields {
 			quantity,
 			payer_note_truncated: payer_note_truncated.map(|s| UntrustedString(s)),
 			human_readable_name,
+			recurrence_counter
 		})
 	}
 }
@@ -3035,6 +3042,7 @@ mod tests {
 						quantity: Some(1),
 						payer_note_truncated: Some(UntrustedString(expected_payer_note)),
 						human_readable_name: None,
+						recurrence_counter: None,
 					}
 				);
 

@@ -51,8 +51,7 @@ use crate::chain::channelmonitor::{
 use crate::chain::transaction::{OutPoint, TransactionData};
 use crate::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Watch};
 use crate::events::{
-	self, ClosureReason, Event, EventHandler, EventsProvider, HTLCHandlingFailureType,
-	InboundChannelFunds, PaymentFailureReason, ReplayEvent,
+	self, ClosureReason, Event, EventHandler, EventsProvider, HTLCHandlingFailureType, InboundChannelFunds, PaymentFailureReason, PaymentPurpose, ReplayEvent
 };
 use crate::events::{FundingInfo, PaidBolt12Invoice};
 use crate::ln::chan_utils::selected_commitment_sat_per_1000_weight;
@@ -92,7 +91,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::flow::{InvreqResponseInstructions, OffersMessageFlow};
+use crate::offers::flow::{InvreqResponseInstructions, OffersMessageFlow, RecurrenceDataToRemember};
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder, DEFAULT_RELATIVE_EXPIRY,
 };
@@ -8835,6 +8834,23 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 						payment_id,
 						durable_preimage_channel,
 					}) = payment {
+
+						// At this point we know the payment is claimed, so if the payment was corresponding
+						// to a recurrent invoice request, we update our tracker to the next_payable_index
+						match &purpose {
+							PaymentPurpose::Bolt12OfferPayment { payment_context, .. } if payment_context.invoice_request.recurrence_counter.is_some() => {
+								let mut recurrence_index = self.flow.recurrence_index.lock().unwrap();
+								let value = recurrence_index.get_mut(
+									&(payment_context.offer_id, payment_context.invoice_request.payer_signing_pubkey)
+								).expect("We must have stored recurrence data for any recurrent invoice request we actually paid");
+
+								if value.next_payable_index == payment_context.invoice_request.recurrence_counter.expect("Just checked above, that if will be some") {
+									value.next_payable_index += 1;
+								}
+							},
+							_ => {},
+						}
+
 						let event = events::Event::PaymentClaimed {
 							payment_hash,
 							purpose,
@@ -8845,6 +8861,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 							onion_fields,
 							payment_id,
 						};
+
 						let action = if let Some((outpoint, counterparty_node_id, channel_id))
 							= durable_preimage_channel
 						{
