@@ -19305,6 +19305,7 @@ mod tests {
 		let node_cfg = create_node_cfgs(1, &chanmon_cfg);
 		let node_chanmgr = create_node_chanmgrs(1, &node_cfg, &[None]);
 		let node = create_network(1, &node_cfg, &node_chanmgr);
+		let logger = node[0].logger;
 
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		let result = create_recv_pending_htlc_info(onion_utils::Hop::Receive {
