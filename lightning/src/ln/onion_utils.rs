@@ -1680,6 +1680,16 @@ pub enum LocalHTLCFailureReason {
 	PeerOffline,
 	/// The HTLC was failed because the channel balance was overdrawn.
 	ChannelBalanceOverdrawn,
+	/// Indicates that the payload we received failed authentication by our node.
+	///
+	/// This can happen if a malicious party attempted to construct a [`BlindedPaymentPath`]
+	/// to reach us but failed to produce a valid one over which a payment can be authenticated.
+	///
+	/// Alternatively, it may indicate that we ourselves constructed an invalid [`BlindedPaymentPath`]
+	/// for the payer, resulting in a payment that cannot be authenticated.
+	///
+	/// [`BlindedPaymentPath`]: crate::blinded_path::payment::BlindedPaymentPath
+	UnauthenticatedPayload,
 }
 
 impl LocalHTLCFailureReason {
@@ -1720,7 +1730,7 @@ impl LocalHTLCFailureReason {
 			Self::CLTVExpiryTooFar => 21,
 			Self::InvalidOnionPayload | Self::InvalidTrampolinePayload => PERM | 22,
 			Self::MPPTimeout => 23,
-			Self::InvalidOnionBlinding => BADONION | PERM | 24,
+			Self::InvalidOnionBlinding | Self::UnauthenticatedPayload => BADONION | PERM | 24,
 			Self::UnknownFailureCode { code } => *code,
 		}
 	}
@@ -1880,7 +1890,8 @@ ser_failure_reasons!(
 	(39, HTLCMinimum),
 	(40, HTLCMaximum),
 	(41, PeerOffline),
-	(42, ChannelBalanceOverdrawn)
+	(42, ChannelBalanceOverdrawn),
+	(43, UnauthenticatedPayload)
 );
 
 impl From<&HTLCFailReason> for HTLCHandlingFailureReason {
@@ -2041,7 +2052,8 @@ impl HTLCFailReason {
 			LocalHTLCFailureReason::InvalidOnionPayload
 			| LocalHTLCFailureReason::InvalidTrampolinePayload => debug_assert!(data.len() <= 11),
 			LocalHTLCFailureReason::MPPTimeout => debug_assert!(data.is_empty()),
-			LocalHTLCFailureReason::InvalidOnionBlinding => debug_assert_eq!(data.len(), 32),
+			LocalHTLCFailureReason::InvalidOnionBlinding
+			| LocalHTLCFailureReason::UnauthenticatedPayload => debug_assert_eq!(data.len(), 32),
 			LocalHTLCFailureReason::UnknownFailureCode { code } => {
 				// We set some bogus BADONION failure codes in tests, so allow unknown BADONION.
 				if code & BADONION == 0 {
