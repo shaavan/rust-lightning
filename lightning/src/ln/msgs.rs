@@ -59,7 +59,7 @@ use core::str::FromStr;
 #[cfg(feature = "std")]
 use std::net::SocketAddr;
 
-use crate::crypto::streams::ChaChaPolyReadAdapter;
+use crate::crypto::streams::ChaChaDualPolyReadAdapter;
 use crate::util::base32;
 use crate::util::logger;
 use crate::util::ser::{
@@ -2339,6 +2339,7 @@ mod fuzzy_internal_msgs {
 		pub keysend_preimage: Option<PaymentPreimage>,
 		pub invoice_request: Option<InvoiceRequest>,
 		pub custom_tlvs: Vec<(u64, Vec<u8>)>,
+		pub payment_tlvs_authenticated: bool,
 	}
 
 	pub enum InboundOnionPayload {
@@ -3589,6 +3590,7 @@ where
 {
 	fn read<R: Read>(r: &mut R, args: (Option<PublicKey>, NS)) -> Result<Self, DecodeError> {
 		let (update_add_blinding_point, node_signer) = args;
+		let receive_auth_key = node_signer.get_receive_auth_key();
 
 		let mut amt = None;
 		let mut cltv_value = None;
@@ -3658,8 +3660,8 @@ where
 			let rho = onion_utils::gen_rho_from_shared_secret(&enc_tlvs_ss.secret_bytes());
 			let mut s = Cursor::new(&enc_tlvs);
 			let mut reader = FixedLengthReader::new(&mut s, enc_tlvs.len() as u64);
-			match ChaChaPolyReadAdapter::read(&mut reader, rho)? {
-				ChaChaPolyReadAdapter {
+			match ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))? {
+				ChaChaDualPolyReadAdapter {
 					readable:
 						BlindedPaymentTlvs::Forward(ForwardTlvs {
 							short_channel_id,
@@ -3668,11 +3670,13 @@ where
 							features,
 							next_blinding_override,
 						}),
+					used_aad,
 				} => {
 					if amt.is_some()
 						|| cltv_value.is_some() || total_msat.is_some()
 						|| keysend_preimage.is_some()
 						|| invoice_request.is_some()
+						|| used_aad
 					{
 						return Err(DecodeError::InvalidValue);
 					}
@@ -3685,7 +3689,10 @@ where
 						next_blinding_override,
 					}))
 				},
-				ChaChaPolyReadAdapter { readable: BlindedPaymentTlvs::Receive(receive_tlvs) } => {
+				ChaChaDualPolyReadAdapter {
+					readable: BlindedPaymentTlvs::Receive(receive_tlvs),
+					used_aad,
+				} => {
 					let ReceiveTlvs { tlvs, authentication: (hmac, nonce) } = receive_tlvs;
 					let expanded_key = node_signer.get_expanded_key();
 					if tlvs.verify_for_offer_payment(hmac, nonce, &expanded_key).is_err() {
@@ -3711,6 +3718,7 @@ where
 						keysend_preimage,
 						invoice_request,
 						custom_tlvs,
+						payment_tlvs_authenticated: used_aad,
 					}))
 				},
 			}
@@ -3755,6 +3763,7 @@ where
 {
 	fn read<R: Read>(r: &mut R, args: (Option<PublicKey>, NS)) -> Result<Self, DecodeError> {
 		let (update_add_blinding_point, node_signer) = args;
+		let receive_auth_key = node_signer.get_receive_auth_key();
 
 		let mut amt = None;
 		let mut cltv_value = None;
@@ -3808,8 +3817,8 @@ where
 			let rho = onion_utils::gen_rho_from_shared_secret(&enc_tlvs_ss.secret_bytes());
 			let mut s = Cursor::new(&enc_tlvs);
 			let mut reader = FixedLengthReader::new(&mut s, enc_tlvs.len() as u64);
-			match ChaChaPolyReadAdapter::read(&mut reader, rho)? {
-				ChaChaPolyReadAdapter {
+			match ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))? {
+				ChaChaDualPolyReadAdapter {
 					readable:
 						BlindedTrampolineTlvs::Forward(TrampolineForwardTlvs {
 							next_trampoline,
@@ -3818,11 +3827,13 @@ where
 							features,
 							next_blinding_override,
 						}),
+					used_aad,
 				} => {
 					if amt.is_some()
 						|| cltv_value.is_some() || total_msat.is_some()
 						|| keysend_preimage.is_some()
 						|| invoice_request.is_some()
+						|| used_aad
 					{
 						return Err(DecodeError::InvalidValue);
 					}
@@ -3835,8 +3846,9 @@ where
 						next_blinding_override,
 					}))
 				},
-				ChaChaPolyReadAdapter {
+				ChaChaDualPolyReadAdapter {
 					readable: BlindedTrampolineTlvs::Receive(receive_tlvs),
+					used_aad,
 				} => {
 					let ReceiveTlvs { tlvs, authentication: (hmac, nonce) } = receive_tlvs;
 					let expanded_key = node_signer.get_expanded_key();
@@ -3863,6 +3875,7 @@ where
 						keysend_preimage,
 						invoice_request,
 						custom_tlvs,
+						payment_tlvs_authenticated: used_aad,
 					}))
 				},
 			}
