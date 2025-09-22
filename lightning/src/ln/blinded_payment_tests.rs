@@ -2027,8 +2027,9 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 		let expanded_key = nodes[2].keys_manager.get_expanded_key();
 		let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 		let carol_unblinded_tlvs = payee_tlvs.encode();
+		let receive_auth_key = ReceiveAuthKey([41; 32]);
 
-		let path = [((carol_node_id, None), WithoutLength(&carol_unblinded_tlvs))];
+		let path = [((carol_node_id, Some(receive_auth_key)), WithoutLength(&carol_unblinded_tlvs))];
 		blinded_path::utils::construct_blinded_hops(
 			&secp_ctx, path.into_iter(), &carol_alice_trampoline_session_priv,
 		)

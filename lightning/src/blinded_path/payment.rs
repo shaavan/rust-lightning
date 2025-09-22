@@ -16,7 +16,7 @@ use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
 use crate::blinded_path::utils::{self, BlindedPathWithPadding};
 use crate::blinded_path::{BlindedHop, BlindedPath, IntroductionNode, NodeIdLookUp};
-use crate::crypto::streams::ChaChaPolyReadAdapter;
+use crate::crypto::streams::ChaChaDualPolyReadAdapter;
 use crate::io;
 use crate::io::Cursor;
 use crate::ln::channel_state::CounterpartyForwardingInfo;
@@ -28,7 +28,7 @@ use crate::offers::invoice_request::InvoiceRequestFields;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::OfferId;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
-use crate::sign::{EntropySource, NodeSigner, Recipient};
+use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::BlindedHopFeatures;
 use crate::types::payment::PaymentSecret;
 use crate::types::routing::RoutingFees;
@@ -150,6 +150,7 @@ impl BlindedPaymentPath {
 					payee_node_id,
 					payee_tlvs,
 					&blinding_secret,
+					ReceiveAuthKey([41; 32]),
 				),
 			},
 			payinfo: blinded_payinfo,
@@ -226,12 +227,13 @@ impl BlindedPaymentPath {
 		let control_tlvs_ss =
 			node_signer.ecdh(Recipient::Node, &self.inner_path.blinding_point, None)?;
 		let rho = onion_utils::gen_rho_from_shared_secret(&control_tlvs_ss.secret_bytes());
+		let receive_auth_key = ReceiveAuthKey([41; 32]);
 		let encrypted_control_tlvs =
 			&self.inner_path.blinded_hops.get(0).ok_or(())?.encrypted_payload;
 		let mut s = Cursor::new(encrypted_control_tlvs);
 		let mut reader = FixedLengthReader::new(&mut s, encrypted_control_tlvs.len() as u64);
-		match ChaChaPolyReadAdapter::read(&mut reader, rho) {
-			Ok(ChaChaPolyReadAdapter { readable, .. }) => Ok((readable, control_tlvs_ss)),
+		match ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0)) {
+			Ok(ChaChaDualPolyReadAdapter { readable, .. }) => Ok((readable, control_tlvs_ss)),
 			_ => Err(()),
 		}
 	}
@@ -660,12 +662,12 @@ pub(crate) const PAYMENT_PADDING_ROUND_OFF: usize = 30;
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
-	payee_tlvs: ReceiveTlvs, session_priv: &SecretKey,
+	payee_tlvs: ReceiveTlvs, session_priv: &SecretKey, local_node_receive_key: ReceiveAuthKey,
 ) -> Vec<BlindedHop> {
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| (node.node_id, None))
-		.chain(core::iter::once((payee_node_id, None)));
+		.chain(core::iter::once((payee_node_id, Some(local_node_receive_key))));
 	let tlvs = intermediate_nodes
 		.iter()
 		.map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))

@@ -18,7 +18,7 @@ use crate::ln::msgs;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::routing::gossip::NetworkUpdate;
 use crate::routing::router::{BlindedTail, Path, RouteHop, RouteParameters, TrampolineHop};
-use crate::sign::{NodeSigner, Recipient};
+use crate::sign::{NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::{ChannelFeatures, NodeFeatures};
 use crate::types::payment::{PaymentHash, PaymentPreimage};
 use crate::util::errors::APIError;
@@ -1678,6 +1678,8 @@ pub enum LocalHTLCFailureReason {
 	HTLCMaximum,
 	/// The HTLC was failed because our remote peer is offline.
 	PeerOffline,
+	/// Received payload with unauthenticated payload.
+	UnauthenticatedPayload,
 }
 
 impl LocalHTLCFailureReason {
@@ -1718,6 +1720,7 @@ impl LocalHTLCFailureReason {
 			Self::InvalidOnionPayload | Self::InvalidTrampolinePayload => PERM | 22,
 			Self::MPPTimeout => 23,
 			Self::InvalidOnionBlinding => BADONION | PERM | 24,
+			Self::UnauthenticatedPayload => BADONION | PERM | 25,
 			Self::UnknownFailureCode { code } => *code,
 		}
 	}
@@ -1852,6 +1855,7 @@ impl_writeable_tlv_based_enum!(LocalHTLCFailureReason,
 	(79, HTLCMinimum) => {},
 	(81, HTLCMaximum) => {},
 	(83, PeerOffline) => {},
+	(85, UnauthenticatedPayload) => {},
 );
 
 impl From<&HTLCFailReason> for HTLCHandlingFailureReason {
@@ -2012,6 +2016,9 @@ impl HTLCFailReason {
 			| LocalHTLCFailureReason::InvalidTrampolinePayload => debug_assert!(data.len() <= 11),
 			LocalHTLCFailureReason::MPPTimeout => debug_assert!(data.is_empty()),
 			LocalHTLCFailureReason::InvalidOnionBlinding => debug_assert_eq!(data.len(), 32),
+			LocalHTLCFailureReason::UnauthenticatedPayload => {
+				// TODO: Figure out the debug assert condition to write here.
+			},
 			LocalHTLCFailureReason::UnknownFailureCode { code } => {
 				// We set some bogus BADONION failure codes in tests, so allow unknown BADONION.
 				if code & BADONION == 0 {
@@ -2293,7 +2300,7 @@ where
 		hop_data,
 		hmac_bytes,
 		Some(payment_hash),
-		(blinding_point, &(*node_signer)),
+		(blinding_point, ReceiveAuthKey([41; 32]), &(*node_signer)),
 	);
 	match decoded_hop {
 		Ok((next_hop_data, Some((next_hop_hmac, FixedSizeOnionPacket(new_packet_bytes))))) => {
@@ -2361,7 +2368,7 @@ where
 					&hop_data.trampoline_packet.hop_data,
 					hop_data.trampoline_packet.hmac,
 					Some(payment_hash),
-					(blinding_point, node_signer),
+					(blinding_point, ReceiveAuthKey([41; 32]), node_signer),
 				);
 				match decoded_trampoline_hop {
 					Ok((
