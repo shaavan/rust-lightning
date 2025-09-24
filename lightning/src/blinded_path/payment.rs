@@ -93,7 +93,8 @@ pub struct BlindedPaymentPath {
 impl BlindedPaymentPath {
 	/// Create a one-hop blinded path for a payment.
 	pub fn one_hop<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
-		payee_node_id: PublicKey, payee_tlvs: ReceiveTlvs, min_final_cltv_expiry_delta: u16,
+		payee_node_id: PublicKey, receive_auth_key: ReceiveAuthKey,
+		payee_tlvs: ReceiveTlvs, min_final_cltv_expiry_delta: u16,
 		entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()>
 	where
@@ -105,6 +106,7 @@ impl BlindedPaymentPath {
 		Self::new(
 			&[],
 			payee_node_id,
+			receive_auth_key,
 			payee_tlvs,
 			htlc_maximum_msat,
 			min_final_cltv_expiry_delta,
@@ -121,7 +123,8 @@ impl BlindedPaymentPath {
 	//  TODO: make all payloads the same size with padding + add dummy hops
 	pub fn new<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
-		payee_tlvs: ReceiveTlvs, htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16,
+		receive_auth_key: ReceiveAuthKey, payee_tlvs: ReceiveTlvs,
+		htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16,
 		entropy_source: ES, secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()>
 	where
@@ -150,7 +153,7 @@ impl BlindedPaymentPath {
 					payee_node_id,
 					payee_tlvs,
 					&blinding_secret,
-					ReceiveAuthKey([41; 32]),
+					receive_auth_key,
 				),
 			},
 			payinfo: blinded_payinfo,
@@ -227,7 +230,7 @@ impl BlindedPaymentPath {
 		let control_tlvs_ss =
 			node_signer.ecdh(Recipient::Node, &self.inner_path.blinding_point, None)?;
 		let rho = onion_utils::gen_rho_from_shared_secret(&control_tlvs_ss.secret_bytes());
-		let receive_auth_key = ReceiveAuthKey([41; 32]);
+		let receive_auth_key = node_signer.get_receive_auth_key();
 		let encrypted_control_tlvs =
 			&self.inner_path.blinded_hops.get(0).ok_or(())?.encrypted_payload;
 		let mut s = Cursor::new(encrypted_control_tlvs);

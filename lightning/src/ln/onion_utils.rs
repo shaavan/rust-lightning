@@ -2300,7 +2300,7 @@ where
 		hop_data,
 		hmac_bytes,
 		Some(payment_hash),
-		(blinding_point, ReceiveAuthKey([41; 32]), &(*node_signer)),
+		(blinding_point, &(*node_signer)),
 	);
 	match decoded_hop {
 		Ok((next_hop_data, Some((next_hop_hmac, FixedSizeOnionPacket(new_packet_bytes))))) => {
@@ -2368,7 +2368,7 @@ where
 					&hop_data.trampoline_packet.hop_data,
 					hop_data.trampoline_packet.hmac,
 					Some(payment_hash),
-					(blinding_point, ReceiveAuthKey([41; 32]), node_signer),
+					(blinding_point, node_signer),
 				);
 				match decoded_trampoline_hop {
 					Ok((

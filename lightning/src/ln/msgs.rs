@@ -41,7 +41,7 @@ use crate::ln::onion_utils;
 use crate::ln::types::ChannelId;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::onion_message;
-use crate::sign::{NodeSigner, ReceiveAuthKey, Recipient};
+use crate::sign::{NodeSigner, Recipient};
 use crate::types::features::{ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures};
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 
@@ -3584,14 +3584,15 @@ impl<'a> Writeable for OutboundTrampolinePayload<'a> {
 	}
 }
 
-impl<NS: Deref> ReadableArgs<(Option<PublicKey>, ReceiveAuthKey, NS)> for InboundOnionPayload
+impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundOnionPayload
 where
 	NS::Target: NodeSigner,
 {
 	fn read<R: Read>(
-		r: &mut R, args: (Option<PublicKey>, ReceiveAuthKey, NS),
+		r: &mut R, args: (Option<PublicKey>, NS),
 	) -> Result<Self, DecodeError> {
-		let (update_add_blinding_point, receive_auth_key, node_signer) = args;
+		let (update_add_blinding_point, node_signer) = args;
+		let receive_auth_key = node_signer.get_receive_auth_key();
 
 		let mut amt = None;
 		let mut cltv_value = None;
@@ -3758,14 +3759,15 @@ where
 	}
 }
 
-impl<NS: Deref> ReadableArgs<(Option<PublicKey>, ReceiveAuthKey, NS)> for InboundTrampolinePayload
+impl<NS: Deref> ReadableArgs<(Option<PublicKey>, NS)> for InboundTrampolinePayload
 where
 	NS::Target: NodeSigner,
 {
 	fn read<R: Read>(
-		r: &mut R, args: (Option<PublicKey>, ReceiveAuthKey, NS),
+		r: &mut R, args: (Option<PublicKey>, NS),
 	) -> Result<Self, DecodeError> {
-		let (update_add_blinding_point, receive_auth_key, node_signer) = args;
+		let (update_add_blinding_point, node_signer) = args;
+		let receive_auth_key = node_signer.get_receive_auth_key();
 
 		let mut amt = None;
 		let mut cltv_value = None;
@@ -4374,7 +4376,6 @@ mod tests {
 	use crate::ln::onion_utils::{AttributionData, HMAC_COUNT, HMAC_LEN, HOLD_TIME_LEN, MAX_HOPS};
 	use crate::ln::types::ChannelId;
 	use crate::routing::gossip::{NodeAlias, NodeId};
-	use crate::sign::ReceiveAuthKey;
 	use crate::types::features::{
 		ChannelFeatures, ChannelTypeFeatures, InitFeatures, NodeFeatures,
 	};
@@ -6144,7 +6145,7 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		let inbound_msg = ReadableArgs::read(
 			&mut Cursor::new(&target_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer),
+			(None, &node_signer),
 		)
 		.unwrap();
 		if let msgs::InboundOnionPayload::Forward(InboundOnionForwardPayload {
@@ -6178,7 +6179,7 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		let inbound_msg = ReadableArgs::read(
 			&mut Cursor::new(&target_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer),
+			(None, &node_signer),
 		)
 		.unwrap();
 		if let msgs::InboundOnionPayload::Receive(InboundOnionReceivePayload {
@@ -6216,7 +6217,7 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		let inbound_msg = ReadableArgs::read(
 			&mut Cursor::new(&target_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer),
+			(None, &node_signer),
 		)
 		.unwrap();
 		if let msgs::InboundOnionPayload::Receive(InboundOnionReceivePayload {
@@ -6254,7 +6255,7 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		assert!(msgs::InboundOnionPayload::read(
 			&mut Cursor::new(&encoded_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer)
+			(None, &node_signer)
 		)
 		.is_err());
 		let good_type_range_tlvs = vec![((1 << 16) - 3, vec![42]), ((1 << 16) - 1, vec![42; 32])];
@@ -6264,7 +6265,7 @@ mod tests {
 		let encoded_value = msg.encode();
 		let inbound_msg = ReadableArgs::read(
 			&mut Cursor::new(&encoded_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer),
+			(None, &node_signer),
 		)
 		.unwrap();
 		match inbound_msg {
@@ -6293,7 +6294,7 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		let inbound_msg: msgs::InboundOnionPayload = ReadableArgs::read(
 			&mut Cursor::new(&target_value[..]),
-			(None, ReceiveAuthKey([41; 32]), &node_signer),
+			(None, &node_signer),
 		)
 		.unwrap();
 		if let msgs::InboundOnionPayload::Receive(InboundOnionReceivePayload {
@@ -6633,9 +6634,8 @@ mod tests {
 		let node_signer = test_utils::TestKeysInterface::new(&[42; 32], Network::Testnet);
 		<msgs::InboundOnionPayload as ReadableArgs<(
 			Option<PublicKey>,
-			ReceiveAuthKey,
 			&test_utils::TestKeysInterface,
-		)>>::read(&mut rd, (None, ReceiveAuthKey([41; 32]), &&node_signer))
+		)>>::read(&mut rd, (None, &&node_signer))
 		.unwrap();
 	}
 	// see above test, needs to be a separate method for use of the serialization macros.

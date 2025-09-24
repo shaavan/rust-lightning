@@ -276,7 +276,6 @@ where
 		}, .. } =>
 			(payment_data, keysend_preimage, custom_tlvs, sender_intended_htlc_amt_msat,
 			 cltv_expiry_height, payment_metadata, None, false, keysend_preimage.is_none(), None),
-
 		onion_utils::Hop::BlindedReceive { hop_data: msgs::InboundOnionBlindedReceivePayload {
 			sender_intended_htlc_amt_msat, total_msat, cltv_expiry_height, payment_secret,
 			intro_node_blinding_point, payment_constraints, payment_context, keysend_preimage,
