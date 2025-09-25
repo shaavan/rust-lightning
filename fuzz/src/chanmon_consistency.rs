@@ -334,9 +334,7 @@ impl NodeSigner for KeyProvider {
 	}
 
 	fn get_expanded_key(&self) -> ExpandedKey {
-		#[rustfmt::skip]
-		let random_bytes = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, self.node_secret[31]];
-		ExpandedKey::new(random_bytes)
+		unreachable!()
 	}
 
 	fn sign_invoice(
