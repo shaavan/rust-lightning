@@ -2347,6 +2347,11 @@ mod fuzzy_internal_msgs {
 		TrampolineEntrypoint(InboundTrampolineEntrypointPayload),
 		Receive(InboundOnionReceivePayload),
 		BlindedForward(InboundOnionBlindedForwardPayload),
+		BlindedDummy {
+			/// The payload was authenticated with the additional key that was
+			/// provided to [`ReadableArgs::read`].
+			payment_tlvs_authenticated: bool,
+		},
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 	}
 
@@ -2370,6 +2375,8 @@ mod fuzzy_internal_msgs {
 		Forward(InboundTrampolineForwardPayload),
 		BlindedForward(InboundTrampolineBlindedForwardPayload),
 		Receive(InboundOnionReceivePayload),
+		//: TODO: Add BlindedDummy hop here too, for inbound trampoline payload
+		// BlindedDummy { payment_tlvs_authenticated: bool }
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 	}
 
@@ -3689,6 +3696,19 @@ where
 						next_blinding_override,
 					}))
 				},
+				ChaChaDualPolyReadAdapter {
+					readable: BlindedPaymentTlvs::Dummy,
+					used_aad,
+				} => {
+					if amt.is_some()
+						|| cltv_value.is_some() || total_msat.is_some()
+						|| keysend_preimage.is_some()
+						|| invoice_request.is_some()
+					{
+						return Err(DecodeError::InvalidValue);
+					}
+					Ok(Self::BlindedDummy { payment_tlvs_authenticated: used_aad })
+				}
 				ChaChaDualPolyReadAdapter {
 					readable: BlindedPaymentTlvs::Receive(receive_tlvs),
 					used_aad,
