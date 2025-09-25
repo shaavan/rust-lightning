@@ -17,7 +17,7 @@ use bitcoin::secp256k1::{PublicKey, Scalar, Secp256k1, SecretKey, schnorr};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::ecdsa::{RecoverableSignature, Signature};
 use crate::blinded_path;
-use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12RefundContext, ForwardTlvs, PaymentConstraints, PaymentContext, PaymentForwardNode, PaymentRelay, UnauthenticatedReceiveTlvs, PAYMENT_PADDING_ROUND_OFF};
+use crate::blinded_path::payment::{BlindedPaymentPath, Bolt12RefundContext, ForwardTlvs, PaymentConstraints, PaymentContext, PaymentForwardNode, PaymentRelay, ReceiveTlvs, PAYMENT_PADDING_ROUND_OFF};
 use crate::blinded_path::utils::is_padded;
 use crate::events::{Event, HTLCHandlingFailureType, PaymentFailureReason};
 use crate::ln::types::ChannelId;
@@ -33,7 +33,6 @@ use crate::ln::onion_payment;
 use crate::ln::onion_utils::{self, LocalHTLCFailureReason};
 use crate::ln::outbound_payment::{Retry, IDEMPOTENCY_TIMEOUT_TICKS};
 use crate::offers::invoice::UnsignedBolt12Invoice;
-use crate::offers::nonce::Nonce;
 use crate::prelude::*;
 use crate::routing::router::{BlindedTail, Path, Payee, PaymentParameters, RouteHop, RouteParameters, TrampolineHop};
 use crate::sign::{NodeSigner, PeerStorageKey, ReceiveAuthKey, Recipient};
@@ -76,7 +75,7 @@ pub fn blinded_payment_path(
 		});
 	}
 
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -86,10 +85,7 @@ pub fn blinded_payment_path(
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
 
-	let nonce = Nonce([42u8; 16]);
-	let expanded_key = keys_manager.get_expanded_key();
 	let receive_auth_key = keys_manager.get_receive_auth_key();
-	let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 
 	let mut secp_ctx = Secp256k1::new();
 	BlindedPaymentPath::new(
@@ -164,7 +160,7 @@ fn do_one_hop_blinded_path(success: bool) {
 
 	let amt_msat = 5000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -172,10 +168,7 @@ fn do_one_hop_blinded_path(success: bool) {
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
-	let nonce = Nonce([42u8; 16]);
-	let expanded_key = chanmon_cfgs[1].keys_manager.get_expanded_key();
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
-	let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
@@ -220,7 +213,7 @@ fn mpp_to_one_hop_blinded_path() {
 
 	let amt_msat = 15_000_000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[3], Some(amt_msat), None);
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -228,10 +221,7 @@ fn mpp_to_one_hop_blinded_path() {
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
-	let nonce = Nonce([42u8; 16]);
-	let expanded_key = chanmon_cfgs[3].keys_manager.get_expanded_key();
 	let receive_auth_key = chanmon_cfgs[3].keys_manager.get_receive_auth_key();
-	let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 	let blinded_path = BlindedPaymentPath::new(
 		&[], nodes[3].node.get_our_node_id(), receive_auth_key,
 		payee_tlvs, u64::MAX, TEST_FINAL_CLTV as u16,
@@ -1332,7 +1322,7 @@ fn custom_tlvs_to_blinded_path() {
 
 	let amt_msat = 5000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -1340,10 +1330,8 @@ fn custom_tlvs_to_blinded_path() {
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
-	let nonce = Nonce([42u8; 16]);
-	let expanded_key = chanmon_cfgs[1].keys_manager.get_expanded_key();
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
-	let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
+
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
 		&[], nodes[1].node.get_our_node_id(), receive_auth_key,
@@ -1378,7 +1366,11 @@ fn custom_tlvs_to_blinded_path() {
 	);
 }
 
+/// With the removal of (HMAC, Nonce) based verification, this test is redundant
+/// in it's current state. After review we can decide whether to remove it, or
+/// to modify it to be suitable for ReceiveAuthKey based verification
 #[test]
+#[ignore]
 fn fails_receive_tlvs_authentication() {
 	let chanmon_cfgs = create_chanmon_cfgs(2);
 	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
@@ -1388,7 +1380,7 @@ fn fails_receive_tlvs_authentication() {
 
 	let amt_msat = 5000;
 	let (payment_preimage, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -1396,10 +1388,7 @@ fn fails_receive_tlvs_authentication() {
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
-	let nonce = Nonce([42u8; 16]);
-	let expanded_key = chanmon_cfgs[1].keys_manager.get_expanded_key();
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
-	let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
@@ -1421,7 +1410,7 @@ fn fails_receive_tlvs_authentication() {
 
 	// Swap in a different nonce to force authentication to fail.
 	let (_, payment_hash, payment_secret) = get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
-	let payee_tlvs = UnauthenticatedReceiveTlvs {
+	let payee_tlvs = ReceiveTlvs {
 		payment_secret,
 		payment_constraints: PaymentConstraints {
 			max_cltv_expiry: u32::max_value(),
@@ -1429,9 +1418,7 @@ fn fails_receive_tlvs_authentication() {
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
-	let nonce = Nonce([43u8; 16]);
-	let mut payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
-	payee_tlvs.authentication.1 = Nonce([0u8; 16]);
+	// payee_tlvs.authentication.1 = Nonce([0u8; 16]);
 
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new(
@@ -2024,7 +2011,7 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 	let carol_alice_trampoline_session_priv = secret_from_hex("a0f4b8d7b6c2d0ffdfaf718f76e9decaef4d9fb38a8c4addb95c4007cc3eee03");
 	let carol_blinding_point = PublicKey::from_secret_key(&secp_ctx, &carol_alice_trampoline_session_priv);
 	let carol_blinded_hops = if success {
-		let payee_tlvs = UnauthenticatedReceiveTlvs {
+		let payee_tlvs = ReceiveTlvs {
 			payment_secret,
 			payment_constraints: PaymentConstraints {
 				max_cltv_expiry: u32::max_value(),
@@ -2033,9 +2020,6 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 		};
 
-		let nonce = Nonce([42u8; 16]);
-		let expanded_key = nodes[2].keys_manager.get_expanded_key();
-		let payee_tlvs = payee_tlvs.authenticate(nonce, &expanded_key);
 		let carol_unblinded_tlvs = payee_tlvs.encode();
 		let receive_auth_key = nodes[2].keys_manager.get_receive_auth_key();
 
