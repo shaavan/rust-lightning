@@ -2232,6 +2232,10 @@ pub(crate) enum Hop {
 		/// Shared secret that was used to decrypt hop_data.
 		shared_secret: SharedSecret,
 	},
+
+	// Note: Even before the creation of hop, we have to ensure we recursively decode to find the 'real' hop
+	// this will keep the impelementation simpler, and avoid confusion on pendingHTLC info data.
+	// BlindedDummy {},
 	/// This onion payload was for us, not for forwarding to a next-hop. Contains information for
 	/// verifying the incoming payment.
 	BlindedReceive {
