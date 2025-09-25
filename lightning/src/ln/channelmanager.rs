@@ -35,9 +35,7 @@ use bitcoin::{secp256k1, Sequence, SignedAmount};
 use crate::blinded_path::message::{
 	AsyncPaymentsContext, BlindedMessagePath, MessageForwardNode, OffersContext,
 };
-use crate::blinded_path::payment::{
-	AsyncBolt12OfferContext, Bolt12OfferContext, PaymentContext, UnauthenticatedReceiveTlvs,
-};
+use crate::blinded_path::payment::{AsyncBolt12OfferContext, Bolt12OfferContext, PaymentContext};
 use crate::blinded_path::NodeIdLookUp;
 use crate::chain;
 use crate::chain::chaininterface::{
@@ -101,7 +99,6 @@ use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
-use crate::offers::signer;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::async_payments::{
 	AsyncPaymentsMessage, AsyncPaymentsMessageHandler, HeldHtlcAvailable, OfferPaths,
@@ -560,34 +557,6 @@ impl Ord for ClaimableHTLC {
 			debug_assert!(self == other, "ClaimableHTLCs from the same source should be identical");
 		}
 		res
-	}
-}
-
-/// A trait defining behavior for creating and verifing the HMAC for authenticating a given data.
-pub trait Verification {
-	/// Constructs an HMAC to include in [`OffersContext`] for the data along with the given
-	/// [`Nonce`].
-	fn hmac_for_offer_payment(
-		&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
-	) -> Hmac<Sha256>;
-
-	/// Authenticates the data using an HMAC and a [`Nonce`] taken from an [`OffersContext`].
-	fn verify_for_offer_payment(
-		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
-	) -> Result<(), ()>;
-}
-
-impl Verification for UnauthenticatedReceiveTlvs {
-	fn hmac_for_offer_payment(
-		&self, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
-	) -> Hmac<Sha256> {
-		signer::hmac_for_payment_tlvs(self, nonce, expanded_key)
-	}
-
-	fn verify_for_offer_payment(
-		&self, hmac: Hmac<Sha256>, nonce: Nonce, expanded_key: &inbound_payment::ExpandedKey,
-	) -> Result<(), ()> {
-		signer::verify_payment_tlvs(self, hmac, nonce, expanded_key)
 	}
 }
 
@@ -5440,12 +5409,10 @@ where
 	fn check_refresh_async_receive_offer_cache(&self, timer_tick_occurred: bool) {
 		let peers = self.get_peers_for_blinded_path();
 		let channels = self.list_usable_channels();
-		let entropy = &*self.entropy_source;
 		let router = &*self.router;
 		let refresh_res = self.flow.check_refresh_async_receive_offer_cache(
 			peers,
 			channels,
-			entropy,
 			router,
 			timer_tick_occurred,
 		);
@@ -12964,11 +12931,8 @@ where
 		&self, amount_msats: Option<u64>, payment_secret: PaymentSecret,
 		payment_context: PaymentContext, relative_expiry_seconds: u32,
 	) -> Result<Vec<BlindedPaymentPath>, ()> {
-		let entropy = &*self.entropy_source;
-
 		self.flow.test_create_blinded_payment_paths(
 			&self.router,
-			entropy,
 			self.list_usable_channels(),
 			amount_msats,
 			payment_secret,
@@ -14847,9 +14811,8 @@ where
 					},
 				};
 
-				let entropy = &*self.entropy_source;
 				let (response, context) = self.flow.create_response_for_invoice_request(
-					&self.node_signer, &self.router, entropy, invoice_request, amount_msats,
+					&self.node_signer, &self.router, invoice_request, amount_msats,
 					payment_hash, payment_secret, self.list_usable_channels()
 				);
 
