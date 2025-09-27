@@ -2234,10 +2234,17 @@ pub(crate) enum Hop {
 	},
 	/// This onion payload is dummy and is meant to be peeled and the next layer sent to us for decoding.
 	BlindedDummy {
+		// An alias short channel id, designed in way our node (the real receiver) can understand
+		// it to be dummy hop
+		short_channel_id: u64,
 		/// Whether the payment tlvs were authenticated.
 		payment_tlvs_authenticated: bool,
 		/// Shared secret that was used to decrypt hop_data.
 		shared_secret: SharedSecret,
+		/// HMAC of the next hop's onion packet.
+		next_hop_hmac: [u8; 32],
+		/// Bytes of the onion packet we're forwarding.
+		new_packet_bytes: [u8; ONION_DATA_LEN],
 	},
 	/// This onion payload was for us, not for forwarding to a next-hop. Contains information for
 	/// verifying the incoming payment.
@@ -2260,10 +2267,18 @@ pub(crate) enum Hop {
 	/// This onion payload is dummy and is meant to be peeled and the next layer sent to us for decoding
 	/// and is sent via Trampoline.
 	TrampolineBlindedDummy {
+		/// An alias next_trampoline field, which is our public key in disguise.
+		next_trampoline: PublicKey,
+		/// An alias short channel id, designed in way our node (the real receiver) can understand
+		/// it to be dummy hop
+		short_channel_id: u64,
 		/// Whether the payment tlvs were authenticated.
 		payment_tlvs_authenticated: bool,
 		/// Shared secret that was used to decrypt hop_data.
 		outer_shared_secret: SharedSecret,
+		next_trampoline_hop_hmac: [u8; 32],
+		new_trampoline_packet_bytes: Vec<u8>,
+		trampoline_shared_secret: SharedSecret,
 	},
 	/// This onion payload was for us, not for forwarding to a next-hop, and it was sent to us via
 	/// Trampoline. Contains information for verifying the incoming payment.

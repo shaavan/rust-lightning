@@ -123,7 +123,7 @@ pub(super) fn create_fwd_pending_htlc_info(
 			(RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }, amt_to_forward, outgoing_cltv_value, intro_node_blinding_point,
 				next_blinding_override)
 		},
-		onion_utils::Hop::BlindedDummy { .. } => {
+		onion_utils::Hop::BlindedDummy { .. } | onion_utils::Hop::TrampolineBlindedDummy { .. } => {
 			return Err(InboundHTLCErr {
 				msg: "Dummy Node OnionHopData provided for us as an intermediary node",
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
@@ -251,54 +251,62 @@ pub(super) fn create_fwd_pending_htlc_info(
 	})
 }
 
-pub(super) fn create_dmy_pending_htlc_info(
+pub(super) fn create_dmy_pending_htlc_info<L: Deref>(
 	msg: &msgs::UpdateAddHTLC, hop_data: onion_utils::Hop, shared_secret: [u8; 32],
-	next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>,
-) -> Result<PendingHTLCInfo, InboundHTLCErr> {
+	next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>, logger: L,
+) -> Result<PendingHTLCInfo, InboundHTLCErr>
+where
+	L::Target: Logger,
+{
 	debug_assert!(next_packet_pubkey_opt.is_some());
 
-	let (
-		routing_info,
-		amt_to_forward,
-		outgoing_cltv_value,
-		intro_node_blinding_point,
-		next_blinding_override,
-	) = match hop_data {
-		onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
+	let check_authentication = |payment_tlvs_authenticated: bool| -> Result<(), InboundHTLCErr> {
+		if !payment_tlvs_authenticated {
+			log_trace!(logger, "Received an unauthenticated receive payment message");
 			return Err(InboundHTLCErr {
-				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				reason: LocalHTLCFailureReason::UnauthenticatedPayload,
 				err_data: Vec::new(),
-				msg: "Got non final data with an HMAC of 0",
-			})
+				msg: "Received unauthenticated receive payment htlc",
+			});
+		}
+		Ok(())
+	};
+
+	let routing_info = match hop_data {
+		onion_utils::Hop::BlindedDummy {
+			short_channel_id,
+			payment_tlvs_authenticated,
+			next_hop_hmac,
+			new_packet_bytes,
+			..
+		} => {
+			check_authentication(payment_tlvs_authenticated)?;
+
+			RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }
 		},
-		onion_utils::Hop::BlindedDummy { .. } => {
-			return Err(InboundHTLCErr {
-				msg: "Dummy Node OnionHopData provided for us as an intermediary node",
-				reason: LocalHTLCFailureReason::InvalidOnionPayload,
-				err_data: Vec::new(),
-			})
+		onion_utils::Hop::TrampolineBlindedDummy {
+			next_trampoline,
+			payment_tlvs_authenticated,
+			next_trampoline_hop_hmac,
+			new_trampoline_packet_bytes,
+			trampoline_shared_secret,
+			..
+		} => {
+			check_authentication(payment_tlvs_authenticated)?;
+
+			RoutingInfo::Trampoline {
+				next_trampoline,
+				new_packet_bytes: new_trampoline_packet_bytes,
+				next_hop_hmac: next_trampoline_hop_hmac,
+				shared_secret: trampoline_shared_secret,
+				current_path_key: None,
+			}
 		},
-		onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } => {
-			return Err(InboundHTLCErr {
-				msg: "Final Node OnionHopData provided for us as an intermediary node",
-				reason: LocalHTLCFailureReason::InvalidOnionPayload,
-				err_data: Vec::new(),
-			})
-		},
-		onion_utils::Hop::TrampolineReceive { .. }
-		| onion_utils::Hop::TrampolineBlindedReceive { .. } => {
-			return Err(InboundHTLCErr {
-				msg: "Final Node OnionHopData provided for us as an intermediary node",
-				reason: LocalHTLCFailureReason::InvalidOnionPayload,
-				err_data: Vec::new(),
-			})
-		},
-		onion_utils::Hop::TrampolineForward { .. }
-		| onion_utils::Hop::TrampolineBlindedForward { .. } => {
+		_ => {
 			return Err(InboundHTLCErr {
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
 				err_data: Vec::new(),
-				msg: "Got Trampoline non final data with an HMAC of 0",
+				msg: "Got unexpected data",
 			})
 		},
 	};
@@ -317,14 +325,10 @@ pub(super) fn create_dmy_pending_htlc_info(
 				short_channel_id,
 				incoming_cltv_expiry: Some(msg.cltv_expiry),
 				hold_htlc: msg.hold_htlc,
-				blinded: intro_node_blinding_point.or(msg.blinding_point).map(|bp| {
-					BlindedForward {
-						inbound_blinding_point: bp,
-						next_blinding_override,
-						failure: intro_node_blinding_point
-							.map(|_| BlindedFailure::FromIntroductionNode)
-							.unwrap_or(BlindedFailure::FromBlindedNode),
-					}
+				blinded: (msg.blinding_point).map(|bp| BlindedForward {
+					inbound_blinding_point: bp,
+					next_blinding_override: None,
+					failure: BlindedFailure::FromBlindedNode,
 				}),
 			}
 		},
@@ -354,12 +358,10 @@ pub(super) fn create_dmy_pending_htlc_info(
 				onion_packet: outgoing_packet,
 				node_id: next_trampoline,
 				incoming_cltv_expiry: msg.cltv_expiry,
-				blinded: intro_node_blinding_point.or(current_path_key).map(|bp| BlindedForward {
+				blinded: (current_path_key).map(|bp| BlindedForward {
 					inbound_blinding_point: bp,
-					next_blinding_override,
-					failure: intro_node_blinding_point
-						.map(|_| BlindedFailure::FromIntroductionNode)
-						.unwrap_or(BlindedFailure::FromBlindedNode),
+					next_blinding_override: None,
+					failure: BlindedFailure::FromBlindedNode,
 				}),
 			}
 		},
@@ -370,8 +372,8 @@ pub(super) fn create_dmy_pending_htlc_info(
 		payment_hash: msg.payment_hash,
 		incoming_shared_secret: shared_secret,
 		incoming_amt_msat: Some(msg.amount_msat),
-		outgoing_amt_msat: amt_to_forward,
-		outgoing_cltv_value,
+		outgoing_amt_msat: msg.amount_msat,
+		outgoing_cltv_value: msg.cltv_expiry,
 		skimmed_fee_msat: None,
 	})
 }
@@ -483,7 +485,7 @@ where
 				msg: "Got Trampoline non final data with an HMAC of 0",
 			})
 		},
-		onion_utils::Hop::BlindedDummy { .. } => {
+		onion_utils::Hop::BlindedDummy { .. } | onion_utils::Hop::TrampolineBlindedDummy { .. } => {
 			return Err(InboundHTLCErr {
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
 				err_data: Vec::new(),
