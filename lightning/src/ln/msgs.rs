@@ -2328,6 +2328,25 @@ mod fuzzy_internal_msgs {
 		pub intro_node_blinding_point: Option<PublicKey>,
 		pub next_blinding_override: Option<PublicKey>,
 	}
+	pub struct InboundOnionBlindedDummyPayload {
+		// An alias short channel id, designed in way our node (the real receiver) can understand
+		// it to be dummy hop
+		pub short_channel_id: u64,
+		/// The payload was authenticated with the additional key that was
+		/// provided to [`ReadableArgs::read`].
+		pub payment_tlvs_authenticated: bool,
+	}
+	pub struct InboundOnionTrampolineBlindedDummyPayload {
+		/// An alias next_trampoline field, which is our public key in disguise.
+		pub next_trampoline: PublicKey,
+		/// An alias short channel id, designed in way our node (the real receiver) can understand
+		/// it to be dummy hop
+		pub short_channel_id: u64,
+		/// The payload was authenticated with the additional key that was
+		/// provided to [`ReadableArgs::read`].
+		pub payment_tlvs_authenticated: bool,
+		
+	}
 	pub struct InboundOnionBlindedReceivePayload {
 		pub sender_intended_htlc_amt_msat: u64,
 		pub total_msat: u64,
@@ -2347,11 +2366,7 @@ mod fuzzy_internal_msgs {
 		TrampolineEntrypoint(InboundTrampolineEntrypointPayload),
 		Receive(InboundOnionReceivePayload),
 		BlindedForward(InboundOnionBlindedForwardPayload),
-		BlindedDummy {
-			/// The payload was authenticated with the additional key that was
-			/// provided to [`ReadableArgs::read`].
-			payment_tlvs_authenticated: bool,
-		},
+		BlindedDummy(InboundOnionBlindedDummyPayload),
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 	}
 
@@ -2375,8 +2390,7 @@ mod fuzzy_internal_msgs {
 		Forward(InboundTrampolineForwardPayload),
 		BlindedForward(InboundTrampolineBlindedForwardPayload),
 		Receive(InboundOnionReceivePayload),
-		//: TODO: Add BlindedDummy hop here too, for inbound trampoline payload
-		BlindedDummy { payment_tlvs_authenticated: bool },
+		BlindedDummy(InboundOnionTrampolineBlindedDummyPayload),
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 	}
 
@@ -3704,7 +3718,10 @@ where
 					{
 						return Err(DecodeError::InvalidValue);
 					}
-					Ok(Self::BlindedDummy { payment_tlvs_authenticated: used_aad })
+					Ok(Self::BlindedDummy(InboundOnionBlindedDummyPayload {
+						short_channel_id: 123456, // TODO: This is placeholder SCID alias. Create a proper alias, which we can understand that, we created it. 
+						payment_tlvs_authenticated: used_aad,
+					}))
 				},
 				ChaChaDualPolyReadAdapter {
 					readable: BlindedPaymentTlvs::Receive(receive_tlvs),

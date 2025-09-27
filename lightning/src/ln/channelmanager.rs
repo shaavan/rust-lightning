@@ -71,9 +71,7 @@ use crate::ln::msgs::{
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
-	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_recv_pending_htlc_info,
-	decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr,
-	NextPacketDetails,
+	check_incoming_htlc_cltv, create_dmy_pending_htlc_info, create_fwd_pending_htlc_info, create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr, NextPacketDetails
 };
 use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
@@ -4939,7 +4937,7 @@ where
 			},
 			onion_utils::Hop::BlindedDummy { .. } | onion_utils::Hop::TrampolineBlindedDummy { .. } => {
 				// we call the dummy variatn of the create_..._pending_htlc_info here.
-				todo!();
+				create_dmy_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt, &*self.logger)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
