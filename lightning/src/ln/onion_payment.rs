@@ -251,6 +251,131 @@ pub(super) fn create_fwd_pending_htlc_info(
 	})
 }
 
+pub(super) fn create_dmy_pending_htlc_info(
+	msg: &msgs::UpdateAddHTLC, hop_data: onion_utils::Hop, shared_secret: [u8; 32],
+	next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>,
+) -> Result<PendingHTLCInfo, InboundHTLCErr> {
+	debug_assert!(next_packet_pubkey_opt.is_some());
+
+	let (
+		routing_info,
+		amt_to_forward,
+		outgoing_cltv_value,
+		intro_node_blinding_point,
+		next_blinding_override,
+	) = match hop_data {
+		onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
+			return Err(InboundHTLCErr {
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+				msg: "Got non final data with an HMAC of 0",
+			})
+		},
+		onion_utils::Hop::BlindedDummy { .. } => {
+			return Err(InboundHTLCErr {
+				msg: "Dummy Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+			})
+		},
+		onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } => {
+			return Err(InboundHTLCErr {
+				msg: "Final Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+			})
+		},
+		onion_utils::Hop::TrampolineReceive { .. }
+		| onion_utils::Hop::TrampolineBlindedReceive { .. } => {
+			return Err(InboundHTLCErr {
+				msg: "Final Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+			})
+		},
+		onion_utils::Hop::TrampolineForward { .. }
+		| onion_utils::Hop::TrampolineBlindedForward { .. } => {
+			return Err(InboundHTLCErr {
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+				msg: "Got Trampoline non final data with an HMAC of 0",
+			})
+		},
+	};
+
+	let routing = match routing_info {
+		RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac } => {
+			let outgoing_packet = msgs::OnionPacket {
+				version: 0,
+				public_key: next_packet_pubkey_opt
+					.unwrap_or(Err(secp256k1::Error::InvalidPublicKey)),
+				hop_data: new_packet_bytes,
+				hmac: next_hop_hmac,
+			};
+			PendingHTLCRouting::Forward {
+				onion_packet: outgoing_packet,
+				short_channel_id,
+				incoming_cltv_expiry: Some(msg.cltv_expiry),
+				hold_htlc: msg.hold_htlc,
+				blinded: intro_node_blinding_point.or(msg.blinding_point).map(|bp| {
+					BlindedForward {
+						inbound_blinding_point: bp,
+						next_blinding_override,
+						failure: intro_node_blinding_point
+							.map(|_| BlindedFailure::FromIntroductionNode)
+							.unwrap_or(BlindedFailure::FromBlindedNode),
+					}
+				}),
+			}
+		},
+		RoutingInfo::Trampoline {
+			next_trampoline,
+			new_packet_bytes,
+			next_hop_hmac,
+			shared_secret,
+			current_path_key,
+		} => {
+			let next_trampoline_packet_pubkey = match next_packet_pubkey_opt {
+				Some(Ok(pubkey)) => pubkey,
+				_ => return Err(InboundHTLCErr {
+					msg: "Missing next Trampoline hop pubkey from intermediate Trampoline forwarding data",
+					reason: LocalHTLCFailureReason::InvalidTrampolinePayload,
+					err_data: Vec::new(),
+				}),
+			};
+			let outgoing_packet = msgs::TrampolineOnionPacket {
+				version: 0,
+				public_key: next_trampoline_packet_pubkey,
+				hop_data: new_packet_bytes,
+				hmac: next_hop_hmac,
+			};
+			PendingHTLCRouting::TrampolineForward {
+				incoming_shared_secret: shared_secret.secret_bytes(),
+				onion_packet: outgoing_packet,
+				node_id: next_trampoline,
+				incoming_cltv_expiry: msg.cltv_expiry,
+				blinded: intro_node_blinding_point.or(current_path_key).map(|bp| BlindedForward {
+					inbound_blinding_point: bp,
+					next_blinding_override,
+					failure: intro_node_blinding_point
+						.map(|_| BlindedFailure::FromIntroductionNode)
+						.unwrap_or(BlindedFailure::FromBlindedNode),
+				}),
+			}
+		},
+	};
+
+	Ok(PendingHTLCInfo {
+		routing,
+		payment_hash: msg.payment_hash,
+		incoming_shared_secret: shared_secret,
+		incoming_amt_msat: Some(msg.amount_msat),
+		outgoing_amt_msat: amt_to_forward,
+		outgoing_cltv_value,
+		skimmed_fee_msat: None,
+	})
+}
+
 #[rustfmt::skip]
 pub(super) fn create_recv_pending_htlc_info<L: Deref>(
 	hop_data: onion_utils::Hop, shared_secret: [u8; 32], payment_hash: PaymentHash,
