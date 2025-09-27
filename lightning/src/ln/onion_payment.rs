@@ -15,7 +15,7 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs;
+use crate::ln::msgs::{self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -274,8 +274,10 @@ where
 
 	let routing_info = match hop_data {
 		onion_utils::Hop::BlindedDummy {
-			short_channel_id,
-			payment_tlvs_authenticated,
+			next_hop_data: InboundOnionBlindedDummyPayload {
+				short_channel_id,
+				payment_tlvs_authenticated
+			},
 			next_hop_hmac,
 			new_packet_bytes,
 			..
@@ -285,8 +287,11 @@ where
 			RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }
 		},
 		onion_utils::Hop::TrampolineBlindedDummy {
-			next_trampoline,
-			payment_tlvs_authenticated,
+			next_trampoline_hop_data: InboundOnionTrampolineBlindedDummyPayload {
+				next_trampoline,
+				payment_tlvs_authenticated,
+				..
+			},
 			next_trampoline_hop_hmac,
 			new_trampoline_packet_bytes,
 			trampoline_shared_secret,
