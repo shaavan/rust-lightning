@@ -123,6 +123,13 @@ pub(super) fn create_fwd_pending_htlc_info(
 			(RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }, amt_to_forward, outgoing_cltv_value, intro_node_blinding_point,
 				next_blinding_override)
 		},
+		onion_utils::Hop::BlindedDummy { .. } => {
+			return Err(InboundHTLCErr {
+				msg: "Dummy Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+			})
+		}
 		onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } =>
 			return Err(InboundHTLCErr {
 				msg: "Final Node OnionHopData provided for us as an intermediary node",
@@ -351,6 +358,13 @@ where
 				msg: "Got Trampoline non final data with an HMAC of 0",
 			})
 		},
+		onion_utils::Hop::BlindedDummy { .. } => {
+			return Err(InboundHTLCErr {
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				err_data: Vec::new(),
+				msg: "Got blinded dummy non final data with an HMAC of 0",
+			})
+		}
 	};
 	// final_incorrect_cltv_expiry
 	if onion_cltv_expiry > cltv_expiry {

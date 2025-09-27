@@ -2232,10 +2232,13 @@ pub(crate) enum Hop {
 		/// Shared secret that was used to decrypt hop_data.
 		shared_secret: SharedSecret,
 	},
-
-	// Note: Even before the creation of hop, we have to ensure we recursively decode to find the 'real' hop
-	// this will keep the impelementation simpler, and avoid confusion on pendingHTLC info data.
-	// BlindedDummy {},
+	/// This onion payload is dummy and is meant to be peeled and the next layer sent to us for decoding.
+	BlindedDummy {
+		/// Whether the payment tlvs were authenticated.
+		payment_tlvs_authenticated: bool,
+		/// Shared secret that was used to decrypt hop_data.
+		shared_secret: SharedSecret,
+	},
 	/// This onion payload was for us, not for forwarding to a next-hop. Contains information for
 	/// verifying the incoming payment.
 	BlindedReceive {
@@ -2253,6 +2256,14 @@ pub(crate) enum Hop {
 		trampoline_hop_data: msgs::InboundOnionReceivePayload,
 		#[allow(unused)]
 		trampoline_shared_secret: SharedSecret,
+	},
+	/// This onion payload is dummy and is meant to be peeled and the next layer sent to us for decoding
+	/// and is sent via Trampoline.
+	TrampolineBlindedDummy {
+		/// Whether the payment tlvs were authenticated.
+		payment_tlvs_authenticated: bool,
+		/// Shared secret that was used to decrypt hop_data.
+		outer_shared_secret: SharedSecret,
 	},
 	/// This onion payload was for us, not for forwarding to a next-hop, and it was sent to us via
 	/// Trampoline. Contains information for verifying the incoming payment.
@@ -2287,8 +2298,10 @@ impl Hop {
 			Hop::TrampolineForward { outer_shared_secret, .. } => outer_shared_secret,
 			Hop::TrampolineBlindedForward { outer_shared_secret, .. } => outer_shared_secret,
 			Hop::Receive { shared_secret, .. } => shared_secret,
+			Hop::BlindedDummy { shared_secret, .. } => shared_secret,
 			Hop::BlindedReceive { shared_secret, .. } => shared_secret,
 			Hop::TrampolineReceive { outer_shared_secret, .. } => outer_shared_secret,
+			Hop::TrampolineBlindedDummy { outer_shared_secret, .. } => outer_shared_secret,
 			Hop::TrampolineBlindedReceive { outer_shared_secret, .. } => outer_shared_secret,
 		}
 	}
@@ -2372,6 +2385,9 @@ where
 			msgs::InboundOnionPayload::Receive(hop_data) => {
 				Ok(Hop::Receive { shared_secret, hop_data })
 			},
+			msgs::InboundOnionPayload::BlindedDummy { payment_tlvs_authenticated } => {
+				Ok(Hop::BlindedDummy { shared_secret, payment_tlvs_authenticated })
+			},
 			msgs::InboundOnionPayload::BlindedReceive(hop_data) => {
 				Ok(Hop::BlindedReceive { shared_secret, hop_data })
 			},
@@ -2442,6 +2458,13 @@ where
 						})
 					},
 					Ok((
+						msgs::InboundTrampolinePayload::BlindedDummy { payment_tlvs_authenticated },
+						None,
+					)) => Ok(Hop::TrampolineBlindedDummy {
+						payment_tlvs_authenticated,
+						outer_shared_secret: shared_secret,
+					}),
+					Ok((
 						msgs::InboundTrampolinePayload::BlindedReceive(trampoline_hop_data),
 						None,
 					)) => Ok(Hop::TrampolineBlindedReceive {
@@ -2465,6 +2488,13 @@ where
 						}
 						Err(OnionDecodeErr::Malformed {
 							err_msg: "Non-final Trampoline onion data provided to us as last hop",
+							reason: LocalHTLCFailureReason::InvalidOnionBlinding,
+						})
+					},
+					Ok((msgs::InboundTrampolinePayload::BlindedDummy { .. }, Some(_))) => {
+						Err(OnionDecodeErr::Malformed {
+							err_msg:
+								"Dummy Trampoline onion data provided to us as intermediate hop",
 							reason: LocalHTLCFailureReason::InvalidOnionBlinding,
 						})
 					},

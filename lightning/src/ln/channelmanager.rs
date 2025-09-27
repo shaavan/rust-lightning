@@ -4883,6 +4883,10 @@ where
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
 					current_height, &*self.logger)
 			},
+			onion_utils::Hop::BlindedDummy { .. } | onion_utils::Hop::TrampolineBlindedDummy { .. } => {
+				// we call the dummy variatn of the create_..._pending_htlc_info here.
+				todo!();
+			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
 			},

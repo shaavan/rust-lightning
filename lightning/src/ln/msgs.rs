@@ -2376,7 +2376,7 @@ mod fuzzy_internal_msgs {
 		BlindedForward(InboundTrampolineBlindedForwardPayload),
 		Receive(InboundOnionReceivePayload),
 		//: TODO: Add BlindedDummy hop here too, for inbound trampoline payload
-		// BlindedDummy { payment_tlvs_authenticated: bool }
+		BlindedDummy { payment_tlvs_authenticated: bool },
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 	}
 
