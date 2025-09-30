@@ -293,7 +293,7 @@ pub enum PendingHTLCRouting {
 		/// The node ID of the Trampoline node which we need to route this HTLC to.
 		node_id: PublicKey,
 		/// Set if this HTLC is being forwarded within a blinded path.
-		blinded: Option<BlindedForward>,
+		blinded: BlindedForward,
 		/// The absolute CLTV of the inbound HTLC
 		incoming_cltv_expiry: u32,
 	},
@@ -10909,6 +10909,8 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 					let scid = match forward_info.routing {
 						PendingHTLCRouting::Forward { short_channel_id, .. } => short_channel_id,
 						PendingHTLCRouting::TrampolineForward { .. } => 0,
+						PendingHTLCRouting::Dummy { .. } => todo!(), // TODO: What should be value here?
+						PendingHTLCRouting::TrampolineDummy { .. } => todo!(), // TODO: What should be value here?
 						PendingHTLCRouting::Receive { .. } => 0,
 						PendingHTLCRouting::ReceiveKeysend { .. } => 0,
 					};
@@ -15365,6 +15367,19 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(0, incoming_shared_secret, required),
 		(2, onion_packet, required),
 		(4, blinded, option),
+		(6, node_id, required),
+		(8, incoming_cltv_expiry, required),
+	},
+	(4, Dummy) => {
+		(0, onion_packet, required),
+		(1, blinded, required),
+		(2, short_channel_id, required),
+		(3, incoming_cltv_expiry, option),
+	},
+	(5, TrampolineDummy) => {
+		(0, incoming_shared_secret, required),
+		(2, onion_packet, required),
+		(4, blinded, required),
 		(6, node_id, required),
 		(8, incoming_cltv_expiry, required),
 	}
