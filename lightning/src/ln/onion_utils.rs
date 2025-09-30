@@ -2272,7 +2272,6 @@ pub(crate) enum Hop {
 		trampoline_shared_secret: SharedSecret,
 		next_trampoline_hop_hmac: [u8; 32],
 		new_trampoline_packet_bytes: Vec<u8>,
-		
 	},
 	/// This onion payload was for us, not for forwarding to a next-hop, and it was sent to us via
 	/// Trampoline. Contains information for verifying the incoming payment.
@@ -2373,9 +2372,12 @@ where
 						new_packet_bytes,
 					})
 				},
-				msgs::InboundOnionPayload::BlindedDummy (next_hop_data) => {
-					Ok(Hop::BlindedDummy { next_hop_data, shared_secret, next_hop_hmac, new_packet_bytes })
-				},
+				msgs::InboundOnionPayload::BlindedDummy(next_hop_data) => Ok(Hop::BlindedDummy {
+					next_hop_data,
+					shared_secret,
+					next_hop_hmac,
+					new_packet_bytes,
+				}),
 				_ => {
 					if blinding_point.is_some() {
 						return Err(OnionDecodeErr::Malformed {
@@ -2467,7 +2469,7 @@ where
 						})
 					},
 					Ok((
-						msgs::InboundTrampolinePayload::BlindedDummy (next_trampoline_hop_data),
+						msgs::InboundTrampolinePayload::BlindedDummy(next_trampoline_hop_data),
 						Some((next_trampoline_hop_hmac, new_trampoline_packet_bytes)),
 					)) => Ok(Hop::TrampolineBlindedDummy {
 						next_trampoline_hop_data,
@@ -2477,7 +2479,7 @@ where
 							trampoline_shared_secret,
 						),
 						next_trampoline_hop_hmac,
-						new_trampoline_packet_bytes
+						new_trampoline_packet_bytes,
 					}),
 					Ok((
 						msgs::InboundTrampolinePayload::BlindedReceive(trampoline_hop_data),

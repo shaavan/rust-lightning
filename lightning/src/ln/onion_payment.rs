@@ -15,7 +15,9 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs::{self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload};
+use crate::ln::msgs::{
+	self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload,
+};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -258,6 +260,8 @@ pub(super) fn create_dmy_pending_htlc_info<L: Deref>(
 where
 	L::Target: Logger,
 {
+	// This assert is still there, because technically dummy hop is still a forward hop (to ourself).
+	// So the next pubkey must be present, which in reality is just our pubkey.
 	debug_assert!(next_packet_pubkey_opt.is_some());
 
 	let check_authentication = |payment_tlvs_authenticated: bool| -> Result<(), InboundHTLCErr> {
@@ -274,10 +278,8 @@ where
 
 	let routing_info = match hop_data {
 		onion_utils::Hop::BlindedDummy {
-			next_hop_data: InboundOnionBlindedDummyPayload {
-				short_channel_id,
-				payment_tlvs_authenticated
-			},
+			next_hop_data:
+				InboundOnionBlindedDummyPayload { short_channel_id, payment_tlvs_authenticated },
 			next_hop_hmac,
 			new_packet_bytes,
 			..
@@ -287,11 +289,12 @@ where
 			RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }
 		},
 		onion_utils::Hop::TrampolineBlindedDummy {
-			next_trampoline_hop_data: InboundOnionTrampolineBlindedDummyPayload {
-				next_trampoline,
-				payment_tlvs_authenticated,
-				..
-			},
+			next_trampoline_hop_data:
+				InboundOnionTrampolineBlindedDummyPayload {
+					next_trampoline,
+					payment_tlvs_authenticated,
+					..
+				},
 			next_trampoline_hop_hmac,
 			new_trampoline_packet_bytes,
 			trampoline_shared_secret,

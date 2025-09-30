@@ -71,7 +71,9 @@ use crate::ln::msgs::{
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
-	check_incoming_htlc_cltv, create_dmy_pending_htlc_info, create_fwd_pending_htlc_info, create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr, NextPacketDetails
+	check_incoming_htlc_cltv, create_dmy_pending_htlc_info, create_fwd_pending_htlc_info,
+	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data,
+	HopConnector, InboundHTLCErr, NextPacketDetails,
 };
 use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
@@ -4938,7 +4940,6 @@ where
 					current_height, &*self.logger)
 			},
 			onion_utils::Hop::BlindedDummy { .. } | onion_utils::Hop::TrampolineBlindedDummy { .. } => {
-				// we call the dummy variatn of the create_..._pending_htlc_info here.
 				create_dmy_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt, &*self.logger)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
@@ -10909,8 +10910,8 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 					let scid = match forward_info.routing {
 						PendingHTLCRouting::Forward { short_channel_id, .. } => short_channel_id,
 						PendingHTLCRouting::TrampolineForward { .. } => 0,
-						PendingHTLCRouting::Dummy { .. } => todo!(), // TODO: What should be value here?
-						PendingHTLCRouting::TrampolineDummy { .. } => todo!(), // TODO: What should be value here?
+						PendingHTLCRouting::Dummy { .. } => 0, // TODO: What should be value here?. Since there's no real scid for dummy hops
+						PendingHTLCRouting::TrampolineDummy { .. } => 0, // TODO: What should be value here?. Same reason as above
 						PendingHTLCRouting::Receive { .. } => 0,
 						PendingHTLCRouting::ReceiveKeysend { .. } => 0,
 					};
@@ -11018,6 +11019,9 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 							},
 						}
 					} else {
+						// Definitely not the case relevant for the dummy hops.
+						// This sends (or appends) to the list of real channel with real scids, the htlcs to be pushed.
+						// We instead need to simply send it to ourself.
 						match self.forward_htlcs.lock().unwrap().entry(scid) {
 							hash_map::Entry::Occupied(mut entry) => {
 								entry.get_mut().push(HTLCForwardInfo::AddHTLC(pending_add));

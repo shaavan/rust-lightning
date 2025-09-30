@@ -2345,7 +2345,6 @@ mod fuzzy_internal_msgs {
 		/// The payload was authenticated with the additional key that was
 		/// provided to [`ReadableArgs::read`].
 		pub payment_tlvs_authenticated: bool,
-		
 	}
 	pub struct InboundOnionBlindedReceivePayload {
 		pub sender_intended_htlc_amt_msat: u64,
@@ -3719,7 +3718,7 @@ where
 						return Err(DecodeError::InvalidValue);
 					}
 					Ok(Self::BlindedDummy(InboundOnionBlindedDummyPayload {
-						short_channel_id: 123456, // TODO: This is placeholder SCID alias. Create a proper alias, which we can understand that, we created it. 
+						short_channel_id: 123456, // TODO: This is placeholder SCID alias. Create a proper alias, which we can understand that, we created it.
 						payment_tlvs_authenticated: used_aad,
 					}))
 				},

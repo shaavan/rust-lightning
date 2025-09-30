@@ -349,7 +349,7 @@ pub(crate) enum BlindedPaymentTlvs {
 	/// This blinded payment data is for a forwarding node.
 	Forward(ForwardTlvs),
 	/// This blinded payment data is dummy and is to be peeled by receiving node.
-	Dummy,
+	Dummy(PaymentDummyTlv),
 	/// This blinded payment data is for the receiving node.
 	Receive(ReceiveTlvs),
 }
@@ -360,9 +360,8 @@ pub(crate) enum BlindedPaymentTlvs {
 pub(crate) enum BlindedTrampolineTlvs {
 	/// This blinded payment data is for a forwarding node.
 	Forward(TrampolineForwardTlvs),
-	//: TODO: Add BlindedDummy hop here too, for inbound trampoline payload
 	/// This blinded payment data is dummy and is to be peeled by receiving node.
-	// Dummy,
+	Dummy(PaymentDummyTlv),
 	/// This blinded payment data is for the receiving node.
 	Receive(ReceiveTlvs),
 }
@@ -370,7 +369,7 @@ pub(crate) enum BlindedTrampolineTlvs {
 // Used to include forward and receive TLVs in the same iterator for encoding.
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
-	Dummy,
+	Dummy(PaymentDummyTlv),
 	Receive(&'a ReceiveTlvs),
 }
 
@@ -549,7 +548,7 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
-			Self::Dummy => PaymentDummyTlv.write(w)?,
+			Self::Dummy(tlv) => tlv.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
 		}
 		Ok(())
@@ -573,8 +572,8 @@ impl Readable for BlindedPaymentTlvs {
 			(65539, is_dummy, option),
 		});
 
-		match (is_dummy, scid, payment_secret, payment_relay, &features, payment_context) {
-			(None, Some(short_channel_id), None, Some(relay), _, _) => {
+		match (is_dummy, scid, payment_secret, payment_relay, features, payment_context) {
+			(None, Some(short_channel_id), None, Some(relay), features, _) => {
 				Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
 					short_channel_id,
 					payment_relay: relay,
@@ -590,7 +589,9 @@ impl Readable for BlindedPaymentTlvs {
 					payment_context: context,
 				}))
 			},
-			(Some(()), None, None, None, None, None) => Ok(BlindedPaymentTlvs::Dummy),
+			(Some(()), None, None, None, None, None) => {
+				Ok(BlindedPaymentTlvs::Dummy(PaymentDummyTlv))
+			},
 			_ => return Err(DecodeError::InvalidValue),
 		}
 	}
@@ -606,28 +607,31 @@ impl Readable for BlindedTrampolineTlvs {
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
+			(65539, is_dummy, option)
 		});
 
-		if let Some(next_trampoline) = next_trampoline {
-			if payment_secret.is_some() {
-				return Err(DecodeError::InvalidValue);
-			}
-			Ok(BlindedTrampolineTlvs::Forward(TrampolineForwardTlvs {
-				next_trampoline,
-				payment_relay: payment_relay.ok_or(DecodeError::InvalidValue)?,
-				payment_constraints: payment_constraints.0.unwrap(),
-				next_blinding_override,
-				features: features.unwrap_or_else(BlindedHopFeatures::empty),
-			}))
-		} else {
-			if payment_relay.is_some() || features.is_some() {
-				return Err(DecodeError::InvalidValue);
-			}
-			Ok(BlindedTrampolineTlvs::Receive(ReceiveTlvs {
-				payment_secret: payment_secret.ok_or(DecodeError::InvalidValue)?,
-				payment_constraints: payment_constraints.0.unwrap(),
-				payment_context: payment_context.ok_or(DecodeError::InvalidValue)?,
-			}))
+		match (is_dummy, next_trampoline, payment_secret, payment_relay, features, payment_context)
+		{
+			(None, Some(next_trampoline), None, Some(relay), features, _) => {
+				Ok(BlindedTrampolineTlvs::Forward(TrampolineForwardTlvs {
+					next_trampoline,
+					payment_relay: relay,
+					payment_constraints: payment_constraints.0.unwrap(),
+					next_blinding_override,
+					features: features.unwrap_or_else(BlindedHopFeatures::empty),
+				}))
+			},
+			(None, None, Some(secret), None, None, Some(context)) => {
+				Ok(BlindedTrampolineTlvs::Receive(ReceiveTlvs {
+					payment_secret: secret,
+					payment_constraints: payment_constraints.0.unwrap(),
+					payment_context: context,
+				}))
+			},
+			(Some(()), None, None, None, None, None) => {
+				Ok(BlindedTrampolineTlvs::Dummy(PaymentDummyTlv))
+			},
+			_ => Err(DecodeError::InvalidValue),
 		}
 	}
 }
