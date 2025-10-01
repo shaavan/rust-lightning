@@ -2339,9 +2339,6 @@ mod fuzzy_internal_msgs {
 	pub struct InboundOnionTrampolineBlindedDummyPayload {
 		/// An alias next_trampoline field, which is our public key in disguise.
 		pub next_trampoline: PublicKey,
-		/// An alias short channel id, designed in way our node (the real receiver) can understand
-		/// it to be dummy hop
-		pub short_channel_id: u64,
 		/// The payload was authenticated with the additional key that was
 		/// provided to [`ReadableArgs::read`].
 		pub payment_tlvs_authenticated: bool,
@@ -3871,6 +3868,24 @@ where
 						next_blinding_override,
 					}))
 				},
+				ChaChaDualPolyReadAdapter {
+					readable:
+						BlindedTrampolineTlvs::Dummy(_dummy_tlv),
+					used_aad,
+				} => {
+					if amt.is_some()
+						|| cltv_value.is_some() || total_msat.is_some()
+						|| keysend_preimage.is_some()
+						|| invoice_request.is_some()
+					{
+						return Err(DecodeError::InvalidValue)
+					}
+					Ok(Self::BlindedDummy(InboundOnionTrampolineBlindedDummyPayload {
+						// TODO: BlindedDummy trampoline must be pointing towards our own node, but is it the correct usage here?
+						next_trampoline: node_signer.get_node_id(Recipient::Node).map_err(|_| DecodeError::InvalidValue)?,
+						payment_tlvs_authenticated: used_aad
+					}))
+				}
 				ChaChaDualPolyReadAdapter {
 					readable: BlindedTrampolineTlvs::Receive(receive_tlvs),
 					used_aad,
