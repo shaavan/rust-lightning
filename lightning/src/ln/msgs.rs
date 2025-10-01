@@ -3709,7 +3709,7 @@ where
 						next_blinding_override,
 					}))
 				},
-				ChaChaDualPolyReadAdapter { readable: BlindedPaymentTlvs::Dummy, used_aad } => {
+				ChaChaDualPolyReadAdapter { readable: BlindedPaymentTlvs::Dummy(_dummy_tlv), used_aad } => {
 					if amt.is_some()
 						|| cltv_value.is_some() || total_msat.is_some()
 						|| keysend_preimage.is_some()
