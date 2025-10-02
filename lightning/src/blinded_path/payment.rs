@@ -356,6 +356,7 @@ pub struct TrampolineForwardTlvs {
 ///
 /// Their purpose is to arbitrarily extend the path length, obscuring the receiver's position in the
 /// route and thereby enhancing privacy.
+#[derive(Debug)]
 pub(crate) struct PaymentDummyTlv;
 
 /// Data to construct a [`BlindedHop`] for receiving a payment. This payload is custom to LDK and
@@ -370,6 +371,7 @@ pub struct ReceiveTlvs {
 	pub payment_context: PaymentContext,
 }
 
+#[derive(Debug)]
 /// Data to construct a [`BlindedHop`] for sending a payment over.
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
@@ -585,6 +587,7 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 
 impl Readable for BlindedPaymentTlvs {
 	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
+		println!("BlindedPaymentTlvs reading. \n\n");
 		_init_and_read_tlv_stream!(r, {
 			// Reasoning: Padding refers to filler data added to a packet to increase
 			// its size and obscure its actual length. Since padding contains no meaningful
@@ -597,8 +600,9 @@ impl Readable for BlindedPaymentTlvs {
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
-			(65539, is_dummy, option),
+			(65539, is_dummy, option)
 		});
+		println!("BlindedPaymentTlvs variables read.\n\n");
 
 		match (is_dummy, scid, payment_secret, payment_relay, features, payment_context) {
 			(None, Some(short_channel_id), None, Some(relay), features, _) => {

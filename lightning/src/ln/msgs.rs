@@ -3670,6 +3670,7 @@ where
 			if short_id.is_some() || payment_data.is_some() || payment_metadata.is_some() {
 				return Err(DecodeError::InvalidValue);
 			}
+
 			let enc_tlvs = encrypted_tlvs_opt.ok_or(DecodeError::InvalidValue)?.0;
 			let enc_tlvs_ss = node_signer
 				.ecdh(Recipient::Node, &blinding_point, None)
@@ -3677,7 +3678,16 @@ where
 			let rho = onion_utils::gen_rho_from_shared_secret(&enc_tlvs_ss.secret_bytes());
 			let mut s = Cursor::new(&enc_tlvs);
 			let mut reader = FixedLengthReader::new(&mut s, enc_tlvs.len() as u64);
-			match ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))? {
+			println!("A6\n\n");
+
+			// Point of Failure, this line --->
+			let read_res = ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))?;
+
+			println!("The readable value is {:?}\n\n", read_res.readable);
+
+
+			// Run successfully till here. Didn't return successfully from the function.
+			match read_res {
 				ChaChaDualPolyReadAdapter {
 					readable:
 						BlindedPaymentTlvs::Forward(ForwardTlvs {

@@ -2348,6 +2348,7 @@ where
 	let shared_secret =
 		node_signer.ecdh(recipient, hop_pubkey, blinded_node_id_tweak.as_ref()).unwrap();
 
+	// Point of error!
 	let decoded_hop: Result<(msgs::InboundOnionPayload, Option<_>), _> = decode_next_hop(
 		shared_secret.secret_bytes(),
 		hop_data,
@@ -2706,6 +2707,7 @@ fn decode_next_hop<T, R: ReadableArgs<T>, N: NextPacketBytes>(
 				// Should never happen
 				_ => LocalHTLCFailureReason::TemporaryNodeFailure,
 			};
+			// Point of error!
 			return Err(OnionDecodeErr::Relay {
 				err_msg: "Unable to decode our hop data",
 				reason,

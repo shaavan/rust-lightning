@@ -109,6 +109,7 @@ impl<T: Readable> LengthReadableArgs<([u8; 32], [u8; 32])> for ChaChaDualPolyRea
 		r: &mut R, params: ([u8; 32], [u8; 32]),
 	) -> Result<Self, DecodeError> {
 		if r.remaining_bytes() < 16 {
+			dbg!("invalid: less remaining bytes\n\n");
 			return Err(DecodeError::InvalidValue);
 		}
 		let (key, aad) = params;
@@ -127,11 +128,14 @@ impl<T: Readable> LengthReadableArgs<([u8; 32], [u8; 32])> for ChaChaDualPolyRea
 		let mut chacha_stream =
 			ChaChaDualPolyReader { chacha: &mut chacha, poly: &mut mac, read_len: 0, read: s };
 
+		println!("Runs the readable's read\n\n");
 		let readable: T = Readable::read(&mut chacha_stream)?;
+		println!("successfully reads\n\n");
 		while chacha_stream.read.bytes_remain() {
 			let mut buf = [0; 256];
 			chacha_stream.read(&mut buf)?;
 		}
+
 
 		let read_len = chacha_stream.read_len;
 
@@ -159,6 +163,7 @@ impl<T: Readable> LengthReadableArgs<([u8; 32], [u8; 32])> for ChaChaDualPolyRea
 		} else if fixed_time_eq(&mac_aad.result(), &tag) {
 			Ok(Self { readable, used_aad: true })
 		} else {
+			dbg!("invalid: another mac based error\n\n");
 			return Err(DecodeError::InvalidValue);
 		}
 	}

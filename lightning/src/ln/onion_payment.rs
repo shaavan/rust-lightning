@@ -732,6 +732,7 @@ where
 			return encode_malformed_error(err_msg, reason);
 		},
 		Err(onion_utils::OnionDecodeErr::Relay { err_msg, reason, shared_secret, trampoline_shared_secret }) => {
+			// Point of error!
 			return encode_relay_error(err_msg, reason, shared_secret.secret_bytes(), trampoline_shared_secret.map(|tss| tss.secret_bytes()), &[0; 0]);
 		},
 	};

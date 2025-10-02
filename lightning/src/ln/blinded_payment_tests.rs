@@ -192,12 +192,6 @@ fn do_one_hop_blinded_path(success: bool) {
 	}
 }
 
-// #[test]
-// fn one_hop_blinded_path_with_dummy_hops() {
-// 	do_one_hop_blinded_path_with_dummy_hops(true);
-// 	do_one_hop_blinded_path_with_dummy_hops(false);
-// }
-
 #[test]
 fn one_hop_blinded_path_with_dummy_hops() {
 	let chanmon_cfgs = create_chanmon_cfgs(2);
@@ -219,8 +213,8 @@ fn one_hop_blinded_path_with_dummy_hops() {
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
 
 	let mut secp_ctx = Secp256k1::new();
-	let blinded_path = BlindedPaymentPath::new(
-		&[], nodes[1].node.get_our_node_id(), receive_auth_key,
+	let blinded_path = BlindedPaymentPath::new_with_dummy_hops(
+		&[], nodes[1].node.get_our_node_id(), 0, receive_auth_key,
 		payee_tlvs, u64::MAX, TEST_FINAL_CLTV as u16,
 		&chanmon_cfgs[1].keys_manager, &secp_ctx
 	).unwrap();
