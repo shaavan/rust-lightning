@@ -587,7 +587,6 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 
 impl Readable for BlindedPaymentTlvs {
 	fn read<R: io::Read>(r: &mut R) -> Result<Self, DecodeError> {
-		println!("BlindedPaymentTlvs reading. \n\n");
 		_init_and_read_tlv_stream!(r, {
 			// Reasoning: Padding refers to filler data added to a packet to increase
 			// its size and obscure its actual length. Since padding contains no meaningful
@@ -596,32 +595,47 @@ impl Readable for BlindedPaymentTlvs {
 			(2, scid, option),
 			(8, next_blinding_override, option),
 			(10, payment_relay, option),
-			(12, payment_constraints, required),
+			(12, payment_constraints, option),
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
-			(65539, is_dummy, option)
+			(65539, is_dummy, option),
 		});
-		println!("BlindedPaymentTlvs variables read.\n\n");
 
-		match (is_dummy, scid, payment_secret, payment_relay, features, payment_context) {
-			(None, Some(short_channel_id), None, Some(relay), features, _) => {
-				Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
-					short_channel_id,
-					payment_relay: relay,
-					payment_constraints: payment_constraints.0.unwrap(),
-					next_blinding_override,
-					features: features.unwrap_or_else(BlindedHopFeatures::empty),
-				}))
-			},
-			(None, None, Some(secret), None, None, Some(context)) => {
+		match (
+			scid,
+			next_blinding_override,
+			payment_relay,
+			payment_constraints,
+			features,
+			payment_secret,
+			payment_context,
+			is_dummy,
+		) {
+			(
+				Some(short_channel_id),
+				next_override,
+				Some(relay),
+				Some(constraints),
+				features,
+				None,
+				None,
+				None,
+			) => Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
+				short_channel_id,
+				payment_relay: relay,
+				payment_constraints: constraints,
+				next_blinding_override: next_override,
+				features: features.unwrap_or_else(BlindedHopFeatures::empty),
+			})),
+			(None, None, None, Some(constraints), None, Some(secret), Some(context), None) => {
 				Ok(BlindedPaymentTlvs::Receive(ReceiveTlvs {
 					payment_secret: secret,
-					payment_constraints: payment_constraints.0.unwrap(),
+					payment_constraints: constraints,
 					payment_context: context,
 				}))
 			},
-			(Some(()), None, None, None, None, None) => {
+			(None, None, None, None, None, None, None, Some(())) => {
 				Ok(BlindedPaymentTlvs::Dummy(PaymentDummyTlv))
 			},
 			_ => return Err(DecodeError::InvalidValue),

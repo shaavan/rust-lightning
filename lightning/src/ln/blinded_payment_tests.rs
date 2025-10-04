@@ -214,7 +214,7 @@ fn one_hop_blinded_path_with_dummy_hops() {
 
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new_with_dummy_hops(
-		&[], nodes[1].node.get_our_node_id(), 0, receive_auth_key,
+		&[], nodes[1].node.get_our_node_id(), 1, receive_auth_key,
 		payee_tlvs, u64::MAX, TEST_FINAL_CLTV as u16,
 		&chanmon_cfgs[1].keys_manager, &secp_ctx
 	).unwrap();

@@ -3683,9 +3683,6 @@ where
 			// Point of Failure, this line --->
 			let read_res = ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))?;
 
-			println!("The readable value is {:?}\n\n", read_res.readable);
-
-
 			// Run successfully till here. Didn't return successfully from the function.
 			match read_res {
 				ChaChaDualPolyReadAdapter {

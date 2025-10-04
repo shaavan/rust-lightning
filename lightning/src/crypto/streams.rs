@@ -128,9 +128,7 @@ impl<T: Readable> LengthReadableArgs<([u8; 32], [u8; 32])> for ChaChaDualPolyRea
 		let mut chacha_stream =
 			ChaChaDualPolyReader { chacha: &mut chacha, poly: &mut mac, read_len: 0, read: s };
 
-		println!("Runs the readable's read\n\n");
 		let readable: T = Readable::read(&mut chacha_stream)?;
-		println!("successfully reads\n\n");
 		while chacha_stream.read.bytes_remain() {
 			let mut buf = [0; 256];
 			chacha_stream.read(&mut buf)?;
