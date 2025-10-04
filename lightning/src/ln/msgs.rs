@@ -32,7 +32,7 @@ use bitcoin::secp256k1::PublicKey;
 use bitcoin::{secp256k1, Transaction, Witness};
 
 use crate::blinded_path::message::BlindedMessagePath;
-use crate::blinded_path::payment::{BlindedPaymentTlvs, ForwardTlvs, ReceiveTlvs};
+use crate::blinded_path::payment::{BlindedPaymentTlvs, ForwardTlvs, PaymentDummyTlv, ReceiveTlvs};
 use crate::blinded_path::payment::{BlindedTrampolineTlvs, TrampolineForwardTlvs};
 use crate::ln::onion_utils;
 use crate::ln::types::ChannelId;
@@ -3688,6 +3688,12 @@ where
 						intro_node_blinding_point,
 						next_blinding_override,
 					}))
+				},
+				ChaChaDualPolyReadAdapter {
+					readable: BlindedPaymentTlvs::Dummy(PaymentDummyTlv),
+					used_aad: _,
+				} => {
+					todo!();
 				},
 				ChaChaDualPolyReadAdapter {
 					readable: BlindedPaymentTlvs::Receive(receive_tlvs),
