@@ -769,7 +769,7 @@ where
 
 			Some(NextPacketDetails {
 				next_packet_pubkey,
-				outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
+				outgoing_connector: HopConnector::Dummy,
 				outgoing_amt_msat: msg.amount_msat,
 				outgoing_cltv_value: msg.cltv_expiry,
 			})

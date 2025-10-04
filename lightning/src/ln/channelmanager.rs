@@ -4822,7 +4822,6 @@ where
 			Some(Ok(())) => {},
 			Some(Err(e)) => return Err(e),
 			None => {
-				println!("\noutgoing_scid: {:?}\n", outgoing_scid);
 				// If we couldn't find the channel info for the scid, it may be a phantom or
 				// intercept forward.
 				// TODO: Implement the correct is_valid_dummy logic.
@@ -6673,6 +6672,7 @@ where
 				let outgoing_scid_opt =
 					next_packet_details_opt.as_ref().and_then(|d| match d.outgoing_connector {
 						HopConnector::ShortChannelId(scid) => Some(scid),
+						HopConnector::Dummy => None,
 						HopConnector::Trampoline(_) => None,
 					});
 				let shared_secret = next_hop.shared_secret().secret_bytes();
@@ -7077,6 +7077,10 @@ where
 								},
 							}
 						} else {
+							// This failure case is triggering for the blinded dummy hops.
+							// This failure shouldn't be triggered, because, this shows that the routing
+							// instruction were PendingHTLCRouting::Forward {}, instead of PendingHTLCRouting::Dummy {},
+							// which means somewhere, we are setting wrong routing instruction for dummy hops.
 							let msg = format!(
 								"Unknown short channel id {} for forward HTLC",
 								short_chan_id
