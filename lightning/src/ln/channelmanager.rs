@@ -4825,7 +4825,8 @@ where
 				// intercept forward.
 				if (self.config.read().unwrap().accept_intercept_htlcs &&
 					fake_scid::is_valid_intercept(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)) ||
-					fake_scid::is_valid_phantom(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)
+					fake_scid::is_valid_phantom(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash) ||
+					fake_scid::is_valid_dummy(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)
 				{} else {
 					return Err(LocalHTLCFailureReason::UnknownNextPeer);
 				}

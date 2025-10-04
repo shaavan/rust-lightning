@@ -103,6 +103,8 @@ pub(crate) mod fake_scid {
 		OutboundAlias,
 		/// Payment interception namespace
 		Intercept,
+		/// SCID aliases for Dummy Hops
+		Dummy,
 	}
 
 	impl Namespace {
@@ -195,6 +197,17 @@ pub(crate) mod fake_scid {
 		let block_height = scid_utils::block_from_scid(scid);
 		let tx_index = scid_utils::tx_index_from_scid(scid);
 		let namespace = Namespace::Intercept;
+		let valid_vout = namespace.get_encrypted_vout(block_height, tx_index, fake_scid_rand_bytes);
+		block_height >= segwit_activation_height(chain_hash)
+			&& valid_vout == scid_utils::vout_from_scid(scid) as u8
+	}
+
+	pub fn is_valid_dummy(
+		fake_scid_rand_bytes: &[u8; 32], scid: u64, chain_hash: &ChainHash,
+	) -> bool {
+		let block_height = scid_utils::block_from_scid(scid);
+		let tx_index = scid_utils::tx_index_from_scid(scid);
+		let namespace = Namespace::Dummy;
 		let valid_vout = namespace.get_encrypted_vout(block_height, tx_index, fake_scid_rand_bytes);
 		block_height >= segwit_activation_height(chain_hash)
 			&& valid_vout == scid_utils::vout_from_scid(scid) as u8

@@ -762,6 +762,16 @@ where
 				next_packet_pubkey, outgoing_connector: HopConnector::ShortChannelId(short_channel_id), outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value
 			})
+		},
+		onion_utils::Hop::BlindedDummy { next_hop_data: InboundOnionBlindedDummyPayload { short_channel_id, .. }, shared_secret, next_hop_hmac, new_packet_bytes } => {
+			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx, msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
+
+			Some(NextPacketDetails {
+				next_packet_pubkey,
+				outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
+				outgoing_amt_msat: msg.amount_msat,
+				outgoing_cltv_value: msg.cltv_expiry,
+			})
 		}
 		onion_utils::Hop::TrampolineForward { next_trampoline_hop_data: msgs::InboundTrampolineForwardPayload { amt_to_forward, outgoing_cltv_value, next_trampoline }, trampoline_shared_secret, incoming_trampoline_public_key, .. } => {
 			let next_trampoline_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
