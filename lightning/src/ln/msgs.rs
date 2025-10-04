@@ -3713,7 +3713,10 @@ where
 						next_blinding_override,
 					}))
 				},
-				ChaChaDualPolyReadAdapter { readable: BlindedPaymentTlvs::Dummy(_dummy_tlv), used_aad } => {
+				ChaChaDualPolyReadAdapter {
+					readable: BlindedPaymentTlvs::Dummy(_dummy_tlv),
+					used_aad,
+				} => {
 					if amt.is_some()
 						|| cltv_value.is_some() || total_msat.is_some()
 						|| keysend_preimage.is_some()
@@ -3876,8 +3879,7 @@ where
 					}))
 				},
 				ChaChaDualPolyReadAdapter {
-					readable:
-						BlindedTrampolineTlvs::Dummy(_dummy_tlv),
+					readable: BlindedTrampolineTlvs::Dummy(_dummy_tlv),
 					used_aad,
 				} => {
 					if amt.is_some()
@@ -3885,14 +3887,16 @@ where
 						|| keysend_preimage.is_some()
 						|| invoice_request.is_some()
 					{
-						return Err(DecodeError::InvalidValue)
+						return Err(DecodeError::InvalidValue);
 					}
 					Ok(Self::BlindedDummy(InboundOnionTrampolineBlindedDummyPayload {
 						// TODO: BlindedDummy trampoline must be pointing towards our own node, but is it the correct usage here?
-						next_trampoline: node_signer.get_node_id(Recipient::Node).map_err(|_| DecodeError::InvalidValue)?,
-						payment_tlvs_authenticated: used_aad
+						next_trampoline: node_signer
+							.get_node_id(Recipient::Node)
+							.map_err(|_| DecodeError::InvalidValue)?,
+						payment_tlvs_authenticated: used_aad,
 					}))
-				}
+				},
 				ChaChaDualPolyReadAdapter {
 					readable: BlindedTrampolineTlvs::Receive(receive_tlvs),
 					used_aad,

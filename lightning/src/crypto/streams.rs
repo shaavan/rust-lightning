@@ -134,7 +134,6 @@ impl<T: Readable> LengthReadableArgs<([u8; 32], [u8; 32])> for ChaChaDualPolyRea
 			chacha_stream.read(&mut buf)?;
 		}
 
-
 		let read_len = chacha_stream.read_len;
 
 		if read_len % 16 != 0 {

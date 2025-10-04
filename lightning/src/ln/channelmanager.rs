@@ -4821,8 +4821,10 @@ where
 			Some(Ok(())) => {},
 			Some(Err(e)) => return Err(e),
 			None => {
+				println!("\noutgoing_scid: {:?}\n", outgoing_scid);
 				// If we couldn't find the channel info for the scid, it may be a phantom or
 				// intercept forward.
+				// TODO: Implement the correct is_valid_dummy logic.
 				if (self.config.read().unwrap().accept_intercept_htlcs &&
 					fake_scid::is_valid_intercept(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)) ||
 					fake_scid::is_valid_phantom(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash) ||

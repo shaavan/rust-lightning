@@ -649,32 +649,47 @@ impl Readable for BlindedTrampolineTlvs {
 			(4, next_trampoline, option),
 			(8, next_blinding_override, option),
 			(10, payment_relay, option),
-			(12, payment_constraints, required),
+			(12, payment_constraints, option),
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
 			(65539, is_dummy, option)
 		});
 
-		match (is_dummy, next_trampoline, payment_secret, payment_relay, features, payment_context)
-		{
-			(None, Some(next_trampoline), None, Some(relay), features, _) => {
-				Ok(BlindedTrampolineTlvs::Forward(TrampolineForwardTlvs {
-					next_trampoline,
-					payment_relay: relay,
-					payment_constraints: payment_constraints.0.unwrap(),
-					next_blinding_override,
-					features: features.unwrap_or_else(BlindedHopFeatures::empty),
-				}))
-			},
-			(None, None, Some(secret), None, None, Some(context)) => {
+		match (
+			next_trampoline,
+			next_blinding_override,
+			payment_relay,
+			payment_constraints,
+			features,
+			payment_secret,
+			payment_context,
+			is_dummy,
+		) {
+			(
+				Some(trampoline),
+				next_override,
+				Some(relay),
+				Some(contraints),
+				features,
+				None,
+				None,
+				None,
+			) => Ok(BlindedTrampolineTlvs::Forward(TrampolineForwardTlvs {
+				next_trampoline: trampoline,
+				payment_relay: relay,
+				payment_constraints: contraints,
+				next_blinding_override: next_override,
+				features: features.unwrap_or_else(BlindedHopFeatures::empty),
+			})),
+			(None, None, None, Some(constraints), None, Some(secret), Some(context), None) => {
 				Ok(BlindedTrampolineTlvs::Receive(ReceiveTlvs {
 					payment_secret: secret,
-					payment_constraints: payment_constraints.0.unwrap(),
+					payment_constraints: constraints,
 					payment_context: context,
 				}))
 			},
-			(Some(()), None, None, None, None, None) => {
+			(None, None, None, None, None, None, None, Some(())) => {
 				Ok(BlindedTrampolineTlvs::Dummy(PaymentDummyTlv))
 			},
 			_ => Err(DecodeError::InvalidValue),
