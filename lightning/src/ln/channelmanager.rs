@@ -4811,6 +4811,7 @@ where
 	) -> Result<(), LocalHTLCFailureReason> {
 		let outgoing_scid = match next_packet_details.outgoing_connector {
 			HopConnector::ShortChannelId(scid) => scid,
+			HopConnector::Dummy => return Ok(()),
 			HopConnector::Trampoline(_) => {
 				return Err(LocalHTLCFailureReason::InvalidTrampolineForward);
 			}
@@ -4827,8 +4828,7 @@ where
 				// TODO: Implement the correct is_valid_dummy logic.
 				if (self.config.read().unwrap().accept_intercept_htlcs &&
 					fake_scid::is_valid_intercept(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)) ||
-					fake_scid::is_valid_phantom(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash) ||
-					fake_scid::is_valid_dummy(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)
+					fake_scid::is_valid_phantom(&self.fake_scid_rand_bytes, outgoing_scid, &self.chain_hash)
 				{} else {
 					return Err(LocalHTLCFailureReason::UnknownNextPeer);
 				}
@@ -13052,6 +13052,29 @@ where
 		let short_to_chan_info = self.short_to_chan_info.read().unwrap();
 		loop {
 			let scid_candidate = fake_scid::Namespace::Intercept.get_fake_scid(
+				best_block_height,
+				&self.chain_hash,
+				&self.fake_scid_rand_bytes,
+				&self.entropy_source,
+			);
+			// Ensure the generated scid doesn't conflict with a real channel.
+			if short_to_chan_info.contains_key(&scid_candidate) {
+				continue;
+			}
+			return scid_candidate;
+		}
+	}
+
+	/// Gets a fake short channel id for use in receiving dummy hops. These fake scids are
+	/// used when constructing the route hints for dummy hops.
+	///
+	/// Note that this method is not guaranteed to return unique values, you may need to call it a few
+	/// times to get a unique scid.
+	pub fn get_dummy_scid(&self) -> u64 {
+		let best_block_height = self.best_block.read().unwrap().height;
+		let short_to_chan_info = self.short_to_chan_info.read().unwrap();
+		loop {
+			let scid_candidate = fake_scid::Namespace::Dummy.get_fake_scid(
 				best_block_height,
 				&self.chain_hash,
 				&self.fake_scid_rand_bytes,

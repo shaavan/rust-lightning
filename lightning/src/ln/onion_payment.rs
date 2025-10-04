@@ -658,6 +658,7 @@ where
 pub(super) enum HopConnector {
 	// scid-based routing
 	ShortChannelId(u64),
+	Dummy,
 	// Trampoline-based routing
 	#[allow(unused)]
 	Trampoline(PublicKey),
