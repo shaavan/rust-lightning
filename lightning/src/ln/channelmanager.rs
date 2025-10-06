@@ -6868,6 +6868,8 @@ where
 		let mut failed_forwards = Vec::new();
 		let mut phantom_receives: Vec<PerSourcePendingForward> = Vec::new();
 		let mut forward_htlcs = new_hash_map();
+		// The set of htlcs which were dummy, and their result will be processed in the next processing round.
+		let mut dummy_htlcs = new_hash_map();
 		mem::swap(&mut forward_htlcs, &mut self.forward_htlcs.lock().unwrap());
 
 		for (short_chan_id, mut pending_forwards) in forward_htlcs {
@@ -6937,6 +6939,7 @@ where
 		&self, forward_infos: impl Iterator<Item = HTLCForwardInfo>, short_chan_id: u64,
 		forwarding_counterparty: Option<PublicKey>, failed_forwards: &mut Vec<FailedHTLCForward>,
 		phantom_receives: &mut Vec<PerSourcePendingForward>,
+		dummy_htlcs: &mut HashMap<u64, Vec<HTLCForwardInfo>>
 	) {
 		for forward_info in forward_infos {
 			match forward_info {
@@ -7076,11 +7079,16 @@ where
 									continue;
 								},
 							}
-						} else {
+						}
+						else if let PendingHTLCRouting::Dummy { onion_packet } = routing {
+							dummy_htlcs.entry
+						}
+						else {
 							// This failure case is triggering for the blinded dummy hops.
 							// This failure shouldn't be triggered, because, this shows that the routing
 							// instruction were PendingHTLCRouting::Forward {}, instead of PendingHTLCRouting::Dummy {},
 							// which means somewhere, we are setting wrong routing instruction for dummy hops.
+							panic!();
 							let msg = format!(
 								"Unknown short channel id {} for forward HTLC",
 								short_chan_id
@@ -7121,6 +7129,7 @@ where
 		&self, short_chan_id: u64, pending_forwards: &mut Vec<HTLCForwardInfo>,
 		failed_forwards: &mut Vec<FailedHTLCForward>,
 		phantom_receives: &mut Vec<PerSourcePendingForward>,
+		dummy_htlcs: &mut HashMap<u64, Vec<HTLCForwardInfo>>
 	) {
 		let mut forwarding_counterparty = None;
 
@@ -7134,6 +7143,7 @@ where
 					forwarding_counterparty,
 					failed_forwards,
 					phantom_receives,
+					dummy_htlcs
 				);
 				return;
 			},
