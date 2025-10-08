@@ -6939,7 +6939,6 @@ where
 		&self, forward_infos: impl Iterator<Item = HTLCForwardInfo>, short_chan_id: u64,
 		forwarding_counterparty: Option<PublicKey>, failed_forwards: &mut Vec<FailedHTLCForward>,
 		phantom_receives: &mut Vec<PerSourcePendingForward>,
-		dummy_htlcs: &mut HashMap<u64, Vec<HTLCForwardInfo>>
 	) {
 		for forward_info in forward_infos {
 			match forward_info {
@@ -7080,9 +7079,6 @@ where
 								},
 							}
 						}
-						else if let PendingHTLCRouting::Dummy { onion_packet } = routing {
-							dummy_htlcs.entry
-						}
 						else {
 							// This failure case is triggering for the blinded dummy hops.
 							// This failure shouldn't be triggered, because, this shows that the routing
@@ -7129,7 +7125,6 @@ where
 		&self, short_chan_id: u64, pending_forwards: &mut Vec<HTLCForwardInfo>,
 		failed_forwards: &mut Vec<FailedHTLCForward>,
 		phantom_receives: &mut Vec<PerSourcePendingForward>,
-		dummy_htlcs: &mut HashMap<u64, Vec<HTLCForwardInfo>>
 	) {
 		let mut forwarding_counterparty = None;
 
@@ -7143,7 +7138,6 @@ where
 					forwarding_counterparty,
 					failed_forwards,
 					phantom_receives,
-					dummy_htlcs
 				);
 				return;
 			},
