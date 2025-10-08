@@ -16,7 +16,7 @@ use crate::ln::channelmanager::{
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
 use crate::ln::msgs::{
-	self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload,
+	self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload, OnionPacket, UpdateAddHTLC
 };
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
@@ -788,6 +788,121 @@ where
 	};
 
 	Ok((next_hop, next_packet_details))
+}
+
+/// This is a special function and used when the incoming UpdateAddHTLC is a dummy
+/// This peels that layers of dummy, and getting the next UpdateAddHTLC.
+pub(super) fn decode_next_update_add_htlc_onion<NS: Deref, L: Deref, T: secp256k1::Verification>(
+	msg: &msgs::UpdateAddHTLC, node_signer: NS, logger: L, secp_ctx: &Secp256k1<T>,
+) -> Result<UpdateAddHTLC, (HTLCFailureMsg, LocalHTLCFailureReason)>
+where
+	NS::Target: NodeSigner,
+	L::Target: Logger,
+{
+		let encode_malformed_error = |message: &str, failure_reason: LocalHTLCFailureReason| {
+		log_info!(logger, "Failed to accept/forward incoming HTLC: {}", message);
+		let (sha256_of_onion, failure_reason) = if msg.blinding_point.is_some() || failure_reason == LocalHTLCFailureReason::InvalidOnionBlinding {
+			([0; 32], LocalHTLCFailureReason::InvalidOnionBlinding)
+		} else {
+			(Sha256::hash(&msg.onion_routing_packet.hop_data).to_byte_array(), failure_reason)
+		};
+		return Err((HTLCFailureMsg::Malformed(msgs::UpdateFailMalformedHTLC {
+			channel_id: msg.channel_id,
+			htlc_id: msg.htlc_id,
+			sha256_of_onion,
+			failure_code: failure_reason.failure_code(),
+		}), failure_reason));
+	};
+
+	if let Err(_) = msg.onion_routing_packet.public_key {
+		return encode_malformed_error("invalid ephemeral pubkey", LocalHTLCFailureReason::InvalidOnionKey);
+	}
+
+	if msg.onion_routing_packet.version != 0 {
+		//TODO: Spec doesn't indicate if we should only hash hop_data here (and in other
+		//sha256_of_onion error data packets), or the entire onion_routing_packet. Either way,
+		//the hash doesn't really serve any purpose - in the case of hashing all data, the
+		//receiving node would have to brute force to figure out which version was put in the
+		//packet by the node that send us the message, in the case of hashing the hop_data, the
+		//node knows the HMAC matched, so they already know what is there...
+		return encode_malformed_error("Unknown onion packet version", LocalHTLCFailureReason::InvalidOnionVersion)
+	}
+
+	let encode_relay_error = |message: &str, reason: LocalHTLCFailureReason, shared_secret: [u8; 32], trampoline_shared_secret: Option<[u8; 32]>, data: &[u8]| {
+		if msg.blinding_point.is_some() {
+			return encode_malformed_error(message, LocalHTLCFailureReason::InvalidOnionBlinding)
+		}
+
+		log_info!(logger, "Failed to accept/forward incoming HTLC: {}", message);
+		let failure = HTLCFailReason::reason(reason, data.to_vec())
+			.get_encrypted_failure_packet(&shared_secret, &trampoline_shared_secret);
+		return Err((HTLCFailureMsg::Relay(msgs::UpdateFailHTLC {
+			channel_id: msg.channel_id,
+			htlc_id: msg.htlc_id,
+			reason: failure.data,
+			attribution_data: failure.attribution_data,
+		}), reason));
+	};
+
+	let next_hop = match onion_utils::decode_next_payment_hop(
+		Recipient::Node, &msg.onion_routing_packet.public_key.unwrap(), &msg.onion_routing_packet.hop_data[..], msg.onion_routing_packet.hmac,
+		msg.payment_hash, msg.blinding_point, &*node_signer
+	) {
+		Ok(res) => res,
+		Err(onion_utils::OnionDecodeErr::Malformed { err_msg, reason }) => {
+			return encode_malformed_error(err_msg, reason);
+		},
+		Err(onion_utils::OnionDecodeErr::Relay { err_msg, reason, shared_secret, trampoline_shared_secret }) => {
+			// Point of error!
+			return encode_relay_error(err_msg, reason, shared_secret.secret_bytes(), trampoline_shared_secret.map(|tss| tss.secret_bytes()), &[0; 0]);
+		},
+	};
+
+	match next_hop {
+		onion_utils::Hop::BlindedDummy { next_hop_data: InboundOnionBlindedDummyPayload { short_channel_id, .. }, shared_secret, next_hop_hmac, new_packet_bytes } => {
+			let msg_blinding_point = msg.blinding_point.expect("The Dummy hops are corresponding to Blinded Paths, so blinded point must be Some()");
+
+			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx, msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
+
+			let onion_packet = OnionPacket {
+				version: 0,
+				public_key: next_packet_pubkey,
+				hop_data: new_packet_bytes,
+				hmac: next_hop_hmac
+			};
+
+			let payment_tlvs_ss = match node_signer.ecdh(Recipient::Node, &msg_blinding_point, None) {
+				Ok(ss) => ss,
+				Err(e) => {
+					log_error!(logger, "Failed to retrieve node secret: {:?}", e);
+					return encode_malformed_error("invalid ephemeral pubkey", LocalHTLCFailureReason::InvalidOnionKey);
+				},
+			};
+
+			let blinding_point = match onion_utils::next_hop_pubkey(
+				secp_ctx,
+				msg_blinding_point,
+				&payment_tlvs_ss.secret_bytes(),
+			) {
+				Ok(bp) => bp,
+				Err(e) => return encode_malformed_error("invalid ephemeral pubkey", LocalHTLCFailureReason::InvalidOnionKey),
+			};
+
+			Ok(UpdateAddHTLC {
+				channel_id: msg.channel_id,
+				htlc_id: msg.htlc_id,
+				amount_msat: msg.amount_msat,
+				payment_hash: msg.payment_hash,
+				cltv_expiry: msg.cltv_expiry,
+				skimmed_fee_msat: msg.skimmed_fee_msat,
+				onion_routing_packet: onion_packet,
+				blinding_point: Some(blinding_point),
+				hold_htlc: msg.hold_htlc,
+			})
+		}
+		_ => return encode_malformed_error("invalid ephemeral pubkey", LocalHTLCFailureReason::InvalidOnionKey),
+	}
+
 }
 
 pub(super) fn check_incoming_htlc_cltv(
