@@ -16,7 +16,7 @@ use crate::ln::channelmanager::{
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
 use crate::ln::msgs::{
-	self, InboundOnionBlindedDummyPayload, InboundOnionTrampolineBlindedDummyPayload, OnionPacket, UpdateAddHTLC
+	self, InboundOnionBlindedDummyPayload, OnionPacket, UpdateAddHTLC
 };
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
@@ -249,139 +249,6 @@ pub(super) fn create_fwd_pending_htlc_info(
 		incoming_amt_msat: Some(msg.amount_msat),
 		outgoing_amt_msat: amt_to_forward,
 		outgoing_cltv_value,
-		skimmed_fee_msat: None,
-	})
-}
-
-pub(super) fn create_dmy_pending_htlc_info<L: Deref>(
-	msg: &msgs::UpdateAddHTLC, hop_data: onion_utils::Hop, shared_secret: [u8; 32],
-	next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>, logger: L,
-) -> Result<PendingHTLCInfo, InboundHTLCErr>
-where
-	L::Target: Logger,
-{
-	// This assert is still there, because technically dummy hop is still a forward hop (to ourself).
-	// So the next pubkey must be present, which in reality is just our pubkey.
-	debug_assert!(next_packet_pubkey_opt.is_some());
-
-	let check_authentication = |payment_tlvs_authenticated: bool| -> Result<(), InboundHTLCErr> {
-		if !payment_tlvs_authenticated {
-			log_trace!(logger, "Received an unauthenticated receive payment message");
-			return Err(InboundHTLCErr {
-				reason: LocalHTLCFailureReason::UnauthenticatedPayload,
-				err_data: Vec::new(),
-				msg: "Received unauthenticated receive payment htlc",
-			});
-		}
-		Ok(())
-	};
-
-	let routing_info = match hop_data {
-		onion_utils::Hop::BlindedDummy {
-			next_hop_data:
-				InboundOnionBlindedDummyPayload { short_channel_id, payment_tlvs_authenticated },
-			next_hop_hmac,
-			new_packet_bytes,
-			..
-		} => {
-			check_authentication(payment_tlvs_authenticated)?;
-
-			RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }
-		},
-		onion_utils::Hop::TrampolineBlindedDummy {
-			next_trampoline_hop_data:
-				InboundOnionTrampolineBlindedDummyPayload {
-					next_trampoline,
-					payment_tlvs_authenticated,
-					..
-				},
-			next_trampoline_hop_hmac,
-			new_trampoline_packet_bytes,
-			trampoline_shared_secret,
-			..
-		} => {
-			check_authentication(payment_tlvs_authenticated)?;
-
-			RoutingInfo::Trampoline {
-				next_trampoline,
-				new_packet_bytes: new_trampoline_packet_bytes,
-				next_hop_hmac: next_trampoline_hop_hmac,
-				shared_secret: trampoline_shared_secret,
-				current_path_key: None,
-			}
-		},
-		_ => {
-			return Err(InboundHTLCErr {
-				reason: LocalHTLCFailureReason::InvalidOnionPayload,
-				err_data: Vec::new(),
-				msg: "Got unexpected data",
-			})
-		},
-	};
-
-	let routing = match routing_info {
-		RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac } => {
-			let outgoing_packet = msgs::OnionPacket {
-				version: 0,
-				public_key: next_packet_pubkey_opt
-					.unwrap_or(Err(secp256k1::Error::InvalidPublicKey)),
-				hop_data: new_packet_bytes,
-				hmac: next_hop_hmac,
-			};
-			PendingHTLCRouting::Forward {
-				onion_packet: outgoing_packet,
-				short_channel_id,
-				incoming_cltv_expiry: Some(msg.cltv_expiry),
-				hold_htlc: msg.hold_htlc,
-				blinded: (msg.blinding_point).map(|bp| BlindedForward {
-					inbound_blinding_point: bp,
-					next_blinding_override: None,
-					failure: BlindedFailure::FromBlindedNode,
-				}),
-			}
-		},
-		RoutingInfo::Trampoline {
-			next_trampoline,
-			new_packet_bytes,
-			next_hop_hmac,
-			shared_secret,
-			current_path_key,
-		} => {
-			let next_trampoline_packet_pubkey = match next_packet_pubkey_opt {
-				Some(Ok(pubkey)) => pubkey,
-				_ => return Err(InboundHTLCErr {
-					msg: "Missing next Trampoline hop pubkey from intermediate Trampoline forwarding data",
-					reason: LocalHTLCFailureReason::InvalidTrampolinePayload,
-					err_data: Vec::new(),
-				}),
-			};
-			let outgoing_packet = msgs::TrampolineOnionPacket {
-				version: 0,
-				public_key: next_trampoline_packet_pubkey,
-				hop_data: new_packet_bytes,
-				hmac: next_hop_hmac,
-			};
-			PendingHTLCRouting::TrampolineForward {
-				incoming_shared_secret: shared_secret.secret_bytes(),
-				onion_packet: outgoing_packet,
-				node_id: next_trampoline,
-				incoming_cltv_expiry: msg.cltv_expiry,
-				blinded: (current_path_key).map(|bp| BlindedForward {
-					inbound_blinding_point: bp,
-					next_blinding_override: None,
-					failure: BlindedFailure::FromBlindedNode,
-				}),
-			}
-		},
-	};
-
-	Ok(PendingHTLCInfo {
-		routing,
-		payment_hash: msg.payment_hash,
-		incoming_shared_secret: shared_secret,
-		incoming_amt_msat: Some(msg.amount_msat),
-		outgoing_amt_msat: msg.amount_msat,
-		outgoing_cltv_value: msg.cltv_expiry,
 		skimmed_fee_msat: None,
 	})
 }
@@ -764,16 +631,9 @@ where
 				outgoing_cltv_value
 			})
 		},
-		onion_utils::Hop::BlindedDummy { next_hop_data: InboundOnionBlindedDummyPayload { short_channel_id, .. }, shared_secret, next_hop_hmac, new_packet_bytes } => {
-			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx, msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
-
-			Some(NextPacketDetails {
-				next_packet_pubkey,
-				outgoing_connector: HopConnector::Dummy,
-				outgoing_amt_msat: msg.amount_msat,
-				outgoing_cltv_value: msg.cltv_expiry,
-			})
-		}
+		onion_utils::Hop::BlindedDummy { .. } => {
+			panic!("Blinded Dummy case for decode incoming update add htlc onion shouldn't be triggered.");
+		},
 		onion_utils::Hop::TrampolineForward { next_trampoline_hop_data: msgs::InboundTrampolineForwardPayload { amt_to_forward, outgoing_cltv_value, next_trampoline }, trampoline_shared_secret, incoming_trampoline_public_key, .. } => {
 			let next_trampoline_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				incoming_trampoline_public_key, &trampoline_shared_secret.secret_bytes());
@@ -799,7 +659,7 @@ where
 	NS::Target: NodeSigner,
 	L::Target: Logger,
 {
-		let encode_malformed_error = |message: &str, failure_reason: LocalHTLCFailureReason| {
+	let encode_malformed_error = |message: &str, failure_reason: LocalHTLCFailureReason| {
 		log_info!(logger, "Failed to accept/forward incoming HTLC: {}", message);
 		let (sha256_of_onion, failure_reason) = if msg.blinding_point.is_some() || failure_reason == LocalHTLCFailureReason::InvalidOnionBlinding {
 			([0; 32], LocalHTLCFailureReason::InvalidOnionBlinding)
@@ -844,6 +704,12 @@ where
 		}), reason));
 	};
 
+	let check_authentication = |payment_tlvs_authenticated: bool| {
+		if !payment_tlvs_authenticated {
+			encode_malformed_error("Unauthenticated Onion", LocalHTLCFailureReason::UnauthenticatedPayload);
+		}
+	};
+
 	let next_hop = match onion_utils::decode_next_payment_hop(
 		Recipient::Node, &msg.onion_routing_packet.public_key.unwrap(), &msg.onion_routing_packet.hop_data[..], msg.onion_routing_packet.hmac,
 		msg.payment_hash, msg.blinding_point, &*node_signer
@@ -859,7 +725,9 @@ where
 	};
 
 	match next_hop {
-		onion_utils::Hop::BlindedDummy { next_hop_data: InboundOnionBlindedDummyPayload { short_channel_id, .. }, shared_secret, next_hop_hmac, new_packet_bytes } => {
+		onion_utils::Hop::BlindedDummy { next_hop_data: InboundOnionBlindedDummyPayload { payment_tlvs_authenticated }, shared_secret, next_hop_hmac, new_packet_bytes } => {
+			check_authentication(payment_tlvs_authenticated);
+
 			let msg_blinding_point = msg.blinding_point.expect("The Dummy hops are corresponding to Blinded Paths, so blinded point must be Some()");
 
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx, msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
@@ -900,6 +768,7 @@ where
 				hold_htlc: msg.hold_htlc,
 			})
 		}
+		onion_utils::Hop::TrampolineBlindedDummy { .. } => todo!(), // Add the trampoline dummy mechanism too.
 		_ => return encode_malformed_error("invalid ephemeral pubkey", LocalHTLCFailureReason::InvalidOnionKey),
 	}
 

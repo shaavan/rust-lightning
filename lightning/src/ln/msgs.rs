@@ -2329,9 +2329,6 @@ mod fuzzy_internal_msgs {
 		pub next_blinding_override: Option<PublicKey>,
 	}
 	pub struct InboundOnionBlindedDummyPayload {
-		// An alias short channel id, designed in way our node (the real receiver) can understand
-		// it to be dummy hop
-		pub short_channel_id: u64,
 		/// The payload was authenticated with the additional key that was
 		/// provided to [`ReadableArgs::read`].
 		pub payment_tlvs_authenticated: bool,
@@ -3678,7 +3675,6 @@ where
 			let rho = onion_utils::gen_rho_from_shared_secret(&enc_tlvs_ss.secret_bytes());
 			let mut s = Cursor::new(&enc_tlvs);
 			let mut reader = FixedLengthReader::new(&mut s, enc_tlvs.len() as u64);
-			println!("A6\n\n");
 
 			// Point of Failure, this line --->
 			let read_res = ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0))?;
@@ -3725,7 +3721,6 @@ where
 						return Err(DecodeError::InvalidValue);
 					}
 					Ok(Self::BlindedDummy(InboundOnionBlindedDummyPayload {
-						short_channel_id: 123456, // TODO: This is placeholder SCID alias. Create a proper alias, which we can understand that, we created it.
 						payment_tlvs_authenticated: used_aad,
 					}))
 				},
