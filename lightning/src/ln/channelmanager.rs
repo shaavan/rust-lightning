@@ -65,15 +65,15 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::ln::funding::SpliceContribution;
 use crate::ln::inbound_payment;
 use crate::ln::interactivetxs::InteractiveTxMessageSend;
-use crate::ln::msgs;
+use crate::ln::msgs::{self, UpdateAddHTLC};
 use crate::ln::msgs::{
 	BaseMessageHandler, ChannelMessageHandler, CommitmentUpdate, DecodeError, LightningError,
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
 	check_incoming_htlc_cltv, create_dmy_pending_htlc_info, create_fwd_pending_htlc_info,
-	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data,
-	HopConnector, InboundHTLCErr, NextPacketDetails,
+	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, decode_next_update_add_htlc_onion,
+	invalid_payment_err_data, HopConnector, InboundHTLCErr, NextPacketDetails,
 };
 use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
@@ -6598,6 +6598,8 @@ where
 		let mut decode_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
+		let mut htlc_fails = Vec::new();
+
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
 			if let Some(outgoing_scid) = outgoing_scid_opt {
 				match self.short_to_chan_info.read().unwrap().get(&outgoing_scid) {
@@ -6646,11 +6648,41 @@ where
 				incoming_channel_details
 			} else {
 				// The incoming channel no longer exists, HTLCs should be resolved onchain instead.
+				if incoming_scid_alias != 0 {
+					continue;
+				}
+				// If the incoming_scid_alias is 0, that means it's a dummy tlv, and we can decode the layer
+				// and enqueue the resultant `UpdateAddHTLC` in self.decode_update_add_htlcs at the end of the
+				// function. That way, these will be processed at the next call to this function in the next cycle.
+				let mut dummy_update_add_htlcs = Vec::new();
+
+				for update_add_htlc in &update_add_htlcs {
+					match decode_next_update_add_htlc_onion(
+						&update_add_htlc,
+						&*self.node_signer,
+						&*self.logger,
+						&self.secp_ctx
+					) {
+						Ok(new_update_add_htlc) => dummy_update_add_htlcs.push(new_update_add_htlc),
+
+						Err((htlc_fail, reason)) => {
+							let failure_type = HTLCHandlingFailureType::InvalidOnion;
+							htlc_fails.push((htlc_fail, failure_type, reason.into()));
+							continue;
+						}
+					}
+				}
+
+				// Finally we retake self.decode_update_add_htlcs, and push the new set of update_add_htlcs
+				// in it corresponding to SCID 0,
+
+				let mut source_decode_update_htlcs = self.decode_update_add_htlcs.lock().unwrap();
+				source_decode_update_htlcs.insert(0, dummy_update_add_htlcs);
+
 				continue;
 			};
 
 			let mut htlc_forwards = Vec::new();
-			let mut htlc_fails = Vec::new();
 			for update_add_htlc in &update_add_htlcs {
 				let (next_hop, next_packet_details_opt) =
 					match decode_incoming_update_add_htlc_onion(
@@ -6868,8 +6900,6 @@ where
 		let mut failed_forwards = Vec::new();
 		let mut phantom_receives: Vec<PerSourcePendingForward> = Vec::new();
 		let mut forward_htlcs = new_hash_map();
-		// The set of htlcs which were dummy, and their result will be processed in the next processing round.
-		let mut dummy_htlcs = new_hash_map();
 		mem::swap(&mut forward_htlcs, &mut self.forward_htlcs.lock().unwrap());
 
 		for (short_chan_id, mut pending_forwards) in forward_htlcs {
