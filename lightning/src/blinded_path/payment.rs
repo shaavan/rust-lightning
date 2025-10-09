@@ -12,6 +12,7 @@
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
+use crate::blinded_path::message::MAX_DUMMY_HOPS_COUNT;
 use crate::blinded_path::utils::{self, BlindedPathWithPadding};
 use crate::blinded_path::{BlindedHop, BlindedPath, IntroductionNode, NodeIdLookUp};
 use crate::crypto::streams::ChaChaDualPolyReadAdapter;
@@ -124,6 +125,70 @@ impl BlindedPaymentPath {
 	where
 		ES::Target: EntropySource,
 	{
+		BlindedPaymentPath::new_inner(
+			intermediate_nodes,
+			payee_node_id,
+			local_node_receive_key,
+			0,
+			None,
+			payee_tlvs,
+			htlc_maximum_msat,
+			min_final_cltv_expiry_delta,
+			entropy_source,
+			secp_ctx,
+		)
+	}
+
+	/// Same as [`BlindedPaymentPath::new`], but allows specifying a number of dummy hops.
+	///
+	/// Dummy TLVs allow callers to override the payment relay values used for dummy hops.
+	/// Any additional fees introduced by these dummy hops are ultimately paid to the final
+	/// recipient as part of the total amount.
+	///
+	/// This improves privacy by making path-length analysis based on fee and CLTV delta
+	/// values less reliable.
+	///
+	/// Note:
+	/// At most [`MAX_DUMMY_HOPS_COUNT`] dummy hops can be added to the blinded path.
+	pub fn new_with_dummy_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+		intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
+		dummy_hop_count: usize, dummy_tlvs: DummyTlvs, local_node_receive_key: ReceiveAuthKey,
+		payee_tlvs: ReceiveTlvs, htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16,
+		entropy_source: ES, secp_ctx: &Secp256k1<T>,
+	) -> Result<Self, ()>
+	where
+		ES::Target: EntropySource,
+	{
+		BlindedPaymentPath::new_inner(
+			intermediate_nodes,
+			payee_node_id,
+			local_node_receive_key,
+			dummy_hop_count,
+			Some(dummy_tlvs),
+			payee_tlvs,
+			htlc_maximum_msat,
+			min_final_cltv_expiry_delta,
+			entropy_source,
+			secp_ctx,
+		)
+	}
+
+	fn new_inner<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
+		intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
+		local_node_receive_key: ReceiveAuthKey, dummy_hop_count: usize,
+		dummy_tlvs_opt: Option<DummyTlvs>, payee_tlvs: ReceiveTlvs, htlc_maximum_msat: u64,
+		min_final_cltv_expiry_delta: u16, entropy_source: ES, secp_ctx: &Secp256k1<T>,
+	) -> Result<Self, ()>
+	where
+		ES::Target: EntropySource,
+	{
+		debug_assert!(
+			(dummy_hop_count > 0) == dummy_tlvs_opt.is_some(),
+			"dummy_hop_count and dummy_tlvs must either both be present or both be absent"
+		);
+
+		let dummy_tlvs = dummy_tlvs_opt.unwrap_or_default();
+
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(payee_node_id, |n| n.node_id),
 		);
@@ -137,6 +202,7 @@ impl BlindedPaymentPath {
 			htlc_maximum_msat,
 			min_final_cltv_expiry_delta,
 		)?;
+
 		Ok(Self {
 			inner_path: BlindedPath {
 				introduction_node,
@@ -145,6 +211,8 @@ impl BlindedPaymentPath {
 					secp_ctx,
 					intermediate_nodes,
 					payee_node_id,
+					dummy_hop_count,
+					dummy_tlvs,
 					payee_tlvs,
 					&blinding_secret,
 					local_node_receive_key,
@@ -393,6 +461,7 @@ pub(crate) enum BlindedTrampolineTlvs {
 }
 
 // Used to include forward and receive TLVs in the same iterator for encoding.
+#[derive(Clone)]
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
 	Dummy(&'a DummyTlvs),
@@ -678,20 +747,46 @@ pub(crate) const PAYMENT_PADDING_ROUND_OFF: usize = 30;
 /// Construct blinded payment hops for the given `intermediate_nodes` and payee info.
 pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	secp_ctx: &Secp256k1<T>, intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
-	payee_tlvs: ReceiveTlvs, session_priv: &SecretKey, local_node_receive_key: ReceiveAuthKey,
+	dummy_hop_count: usize, dummy_tlvs: DummyTlvs, payee_tlvs: ReceiveTlvs,
+	session_priv: &SecretKey, local_node_receive_key: ReceiveAuthKey,
 ) -> Vec<BlindedHop> {
+	let dummy_count = core::cmp::min(dummy_hop_count, MAX_DUMMY_HOPS_COUNT);
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| (node.node_id, None))
+		.chain(core::iter::repeat((payee_node_id, Some(local_node_receive_key))).take(dummy_count))
 		.chain(core::iter::once((payee_node_id, Some(local_node_receive_key))));
 	let tlvs = intermediate_nodes
 		.iter()
 		.map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
+		.chain(core::iter::repeat(BlindedPaymentTlvsRef::Dummy(&dummy_tlvs)).take(dummy_count))
 		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
 	let path = pks.zip(
 		tlvs.map(|tlv| BlindedPathWithPadding { tlvs: tlv, round_off: PAYMENT_PADDING_ROUND_OFF }),
 	);
+
+	// Debug invariant: all non-final hops must have identical serialized size.
+	#[cfg(debug_assertions)]
+	{
+		let mut iter = path.clone();
+		if let Some((_, first)) = iter.next() {
+			let remaining = iter.clone().count(); // includes intermediate + final
+
+			// At least one intermediate hop
+			if remaining > 1 {
+				let expected = first.serialized_length();
+
+				// skip final hop: take(remaining - 1)
+				for (_, hop) in iter.take(remaining - 1) {
+					debug_assert!(
+						hop.serialized_length() == expected,
+						"All intermediate blinded hops must have identical serialized size"
+					);
+				}
+			}
+		}
+	}
 
 	utils::construct_blinded_hops(secp_ctx, path, session_priv)
 }
