@@ -15,7 +15,7 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs;
+use crate::ln::msgs::{self, OnionPacket, UpdateAddHTLC};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -123,6 +123,7 @@ pub(super) fn create_fwd_pending_htlc_info(
 			(RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }, amt_to_forward, outgoing_cltv_value, intro_node_blinding_point,
 				next_blinding_override)
 		},
+		onion_utils::Hop::Dummy { .. } => unreachable!("Dummy Hops should not reach create_fwd_pending_htlc_info"),
 		onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } =>
 			return Err(InboundHTLCErr {
 				msg: "Final Node OnionHopData provided for us as an intermediary node",
@@ -330,6 +331,7 @@ where
 				sender_intended_htlc_amt_msat, cltv_expiry_height, None, Some(payment_context),
 				intro_node_blinding_point.is_none(), true, invoice_request)
 		},
+		onion_utils::Hop::Dummy { .. } => unreachable!("Dummy Hops should not reach get_pending_htlc_info"),
 		onion_utils::Hop::Forward { .. } => {
 			return Err(InboundHTLCErr {
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
@@ -469,16 +471,14 @@ where
 	Ok(match hop {
 		onion_utils::Hop::Forward { shared_secret, .. } |
 		onion_utils::Hop::BlindedForward { shared_secret, .. } => {
-			let NextPacketDetails {
-				next_packet_pubkey, outgoing_amt_msat: _, outgoing_connector: _, outgoing_cltv_value
-			} = match next_packet_details_opt {
-				Some(next_packet_details) => next_packet_details,
+			let (next_packet_pubkey, outgoing_cltv_value) = match next_packet_details_opt { 
+				Some(NextPacketDetails::Forward { next_packet_pubkey, outgoing_cltv_value , ..}) => (next_packet_pubkey, outgoing_cltv_value),
 				// Forward should always include the next hop details
-				None => return Err(InboundHTLCErr {
-					msg: "Failed to decode update add htlc onion",
-					reason: LocalHTLCFailureReason::InvalidOnionPayload,
-					err_data: Vec::new(),
-				}),
+				_ => return Err(InboundHTLCErr {
+						msg: "Failed to decode update add htlc onion",
+						reason: LocalHTLCFailureReason::InvalidOnionPayload,
+						err_data: Vec::new(),
+					}),
 			};
 
 			if let Err(reason) = check_incoming_htlc_cltv(
@@ -514,12 +514,48 @@ pub(super) enum HopConnector {
 	Trampoline(PublicKey),
 }
 
-pub(super) struct NextPacketDetails {
-	pub(super) next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-	pub(super) outgoing_connector: HopConnector,
-	pub(super) outgoing_amt_msat: u64,
-	pub(super) outgoing_cltv_value: u32,
+pub(super) enum NextPacketDetails {
+	Forward {
+		next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+		outgoing_connector: HopConnector,
+		outgoing_amt_msat: u64,
+		outgoing_cltv_value: u32,
+	},
+	Dummy {
+		next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	}
 }
+
+impl NextPacketDetails {
+	pub(super) fn next_packet_pubkey(&self) -> Result<PublicKey, secp256k1::Error> {
+		match self {
+			Self::Forward { next_packet_pubkey, .. } => *next_packet_pubkey,
+			Self::Dummy { next_packet_pubkey } => *next_packet_pubkey,
+		}
+	}
+
+	pub(super) fn outgoing_connector(&self) -> Result<&HopConnector, ()> {
+		match self {
+			Self::Forward { outgoing_connector, .. } => Ok(outgoing_connector),
+			Self::Dummy { .. } => Err(()),
+		}
+	}
+
+	pub(super) fn outgoing_amt_msat(&self) -> Result<u64, ()> {
+		match self {
+			Self::Forward { outgoing_amt_msat, .. } => Ok(*outgoing_amt_msat),
+			Self::Dummy { .. } => Err(()),
+		}
+	}
+
+	pub(super) fn outgoing_cltv_value(&self) -> Result<u32, ()> {
+		match self {
+			Self::Forward { outgoing_cltv_value, .. } => Ok(*outgoing_cltv_value),
+			Self::Dummy { .. } => Err(()),
+		}
+	}
+}
+
 
 #[rustfmt::skip]
 pub(super) fn decode_incoming_update_add_htlc_onion<NS: Deref, L: Deref, T: secp256k1::Verification>(
@@ -591,7 +627,7 @@ where
 		onion_utils::Hop::Forward { next_hop_data: msgs::InboundOnionForwardPayload { short_channel_id, amt_to_forward, outgoing_cltv_value }, shared_secret, .. } => {
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
-			Some(NextPacketDetails {
+			Some(NextPacketDetails::Forward {
 				next_packet_pubkey, outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
 				outgoing_amt_msat: amt_to_forward, outgoing_cltv_value
 			})
@@ -608,7 +644,7 @@ where
 			};
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(&secp_ctx,
 				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
-			Some(NextPacketDetails {
+			Some(NextPacketDetails::Forward {
 				next_packet_pubkey, outgoing_connector: HopConnector::ShortChannelId(short_channel_id), outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value
 			})
@@ -616,17 +652,41 @@ where
 		onion_utils::Hop::TrampolineForward { next_trampoline_hop_data: msgs::InboundTrampolineForwardPayload { amt_to_forward, outgoing_cltv_value, next_trampoline }, trampoline_shared_secret, incoming_trampoline_public_key, .. } => {
 			let next_trampoline_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				incoming_trampoline_public_key, &trampoline_shared_secret.secret_bytes());
-			Some(NextPacketDetails {
+			Some(NextPacketDetails::Forward {
 				next_packet_pubkey: next_trampoline_packet_pubkey,
 				outgoing_connector: HopConnector::Trampoline(next_trampoline),
 				outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value,
 			})
+		},
+		onion_utils::Hop::Dummy { shared_secret, .. } => {
+			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
+				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
+
+			Some(NextPacketDetails::Dummy { next_packet_pubkey })
 		}
 		_ => None
 	};
 
 	Ok((next_hop, next_packet_details))
+}
+
+pub(super) fn create_new_update_add_htlc(
+	msg: msgs::UpdateAddHTLC, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300],
+) -> Result<UpdateAddHTLC, (HTLCFailureMsg, LocalHTLCFailureReason)>
+{
+	let new_packet = OnionPacket {
+		version: 0,
+		public_key: new_packet_pubkey,
+		hop_data: new_packet_bytes,
+		hmac: next_hop_hmac,
+	};
+
+	Ok(UpdateAddHTLC {
+		onion_routing_packet: new_packet,
+		..msg
+	})
 }
 
 pub(super) fn check_incoming_htlc_cltv(

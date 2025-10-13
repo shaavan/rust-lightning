@@ -71,13 +71,12 @@ use crate::ln::msgs::{
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
-	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_recv_pending_htlc_info,
-	decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr,
-	NextPacketDetails,
+	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_new_update_add_htlc,
+	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data,
+	HopConnector, InboundHTLCErr, NextPacketDetails,
 };
-use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
-	decode_fulfill_attribution_data, HTLCFailReason, LocalHTLCFailureReason,
+	self, decode_fulfill_attribution_data, HTLCFailReason, LocalHTLCFailureReason,
 };
 use crate::ln::onion_utils::{process_fulfill_attribution_data, AttributionData};
 use crate::ln::our_peer_storage::{EncryptedOurPeerStorage, PeerStorageMonitorHolder};
@@ -4695,8 +4694,8 @@ where
 			// we don't allow forwards outbound over them.
 			return Err(LocalHTLCFailureReason::PrivateChannelForward);
 		}
-		if let HopConnector::ShortChannelId(outgoing_scid) = next_packet.outgoing_connector {
-			if chan.funding.get_channel_type().supports_scid_privacy() && outgoing_scid != chan.context.outbound_scid_alias() {
+		if let HopConnector::ShortChannelId(outgoing_scid) = next_packet.outgoing_connector().map_err(|_| LocalHTLCFailureReason::InvalidOnionPayload)? {
+			if chan.funding.get_channel_type().supports_scid_privacy() && *outgoing_scid != chan.context.outbound_scid_alias() {
 				// `option_scid_alias` (referred to in LDK as `scid_privacy`) means
 				// "refuse to forward unless the SCID alias was used", so we pretend
 				// we don't have the channel here.
@@ -4718,10 +4717,13 @@ where
 				return Err(LocalHTLCFailureReason::ChannelNotReady);
 			}
 		}
-		if next_packet.outgoing_amt_msat < chan.context.get_counterparty_htlc_minimum_msat() {
+
+		let outgoing_amt_msat = next_packet.outgoing_amt_msat().map_err(|_| LocalHTLCFailureReason::InvalidOnionPayload)?;
+		let outgoing_cltv_value = next_packet.outgoing_cltv_value().map_err(|_| LocalHTLCFailureReason::InvalidOnionPayload)?;
+		if outgoing_amt_msat < chan.context.get_counterparty_htlc_minimum_msat() {
 			return Err(LocalHTLCFailureReason::AmountBelowMinimum);
 		}
-		chan.htlc_satisfies_config(msg, next_packet.outgoing_amt_msat, next_packet.outgoing_cltv_value)?;
+		chan.htlc_satisfies_config(msg, outgoing_amt_msat, outgoing_cltv_value)?;
 
 		Ok(())
 	}
@@ -4753,11 +4755,11 @@ where
 	fn can_forward_htlc(
 		&self, msg: &msgs::UpdateAddHTLC, next_packet_details: &NextPacketDetails
 	) -> Result<(), LocalHTLCFailureReason> {
-		let outgoing_scid = match next_packet_details.outgoing_connector {
-			HopConnector::ShortChannelId(scid) => scid,
+		let outgoing_scid = match next_packet_details.outgoing_connector().map_err(|_| LocalHTLCFailureReason::InvalidOnionPayload)? {
+			HopConnector::ShortChannelId(scid) => *scid,
 			HopConnector::Trampoline(_) => {
 				return Err(LocalHTLCFailureReason::InvalidTrampolineForward);
-			}
+			},
 		};
 		match self.do_funded_channel_callback(outgoing_scid, |chan: &mut FundedChannel<SP>| {
 			self.can_forward_htlc_to_outgoing_channel(chan, msg, next_packet_details)
@@ -4777,7 +4779,7 @@ where
 		}
 
 		let cur_height = self.best_block.read().unwrap().height + 1;
-		check_incoming_htlc_cltv(cur_height, next_packet_details.outgoing_cltv_value, msg.cltv_expiry)?;
+		check_incoming_htlc_cltv(cur_height, next_packet_details.outgoing_cltv_value().map_err(|_| LocalHTLCFailureReason::InvalidOnionPayload)?, msg.cltv_expiry)?;
 
 		Ok(())
 	}
@@ -4883,6 +4885,7 @@ where
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
 					current_height, &*self.logger)
 			},
+			onion_utils::Hop::Dummy { .. } => unreachable!("Dummy Hops should not reach get_pending_htlc_info"),
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
 			},
@@ -6537,6 +6540,8 @@ where
 		let mut decode_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
+		let mut dummy_update_add_htlcs = new_hash_map();
+
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
 			if let Some(outgoing_scid) = outgoing_scid_opt {
 				match self.short_to_chan_info.read().unwrap().get(&outgoing_scid) {
@@ -6598,7 +6603,27 @@ where
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => decoded_onion,
+						Ok(decoded_onion) => {
+							match decoded_onion {
+								(onion_utils::Hop::Dummy { next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails::Dummy { next_packet_pubkey })) => {
+									let new_update_add_htlc = match create_new_update_add_htlc(update_add_htlc.clone(), next_packet_pubkey, next_hop_hmac, new_packet_bytes) {
+										Ok(msg) => msg,
+										Err((htlc_fail, reason)) => {
+											let failure_type = HTLCHandlingFailureType::InvalidOnion;
+											htlc_fails.push((htlc_fail, failure_type, reason.into()));
+											continue;
+										}
+									};
+
+									dummy_update_add_htlcs.entry(incoming_scid_alias)
+										.or_insert_with(Vec::new)
+										.push(new_update_add_htlc);
+									
+									continue;
+								},
+								_ => decoded_onion
+							}
+						}
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
@@ -6609,8 +6634,8 @@ where
 
 				let is_intro_node_blinded_forward = next_hop.is_intro_node_blinded_forward();
 				let outgoing_scid_opt =
-					next_packet_details_opt.as_ref().and_then(|d| match d.outgoing_connector {
-						HopConnector::ShortChannelId(scid) => Some(scid),
+					next_packet_details_opt.as_ref().and_then(|d| match d.outgoing_connector().expect("Shouldn't fail") {
+						HopConnector::ShortChannelId(scid) => Some(*scid),
 						HopConnector::Trampoline(_) => None,
 					});
 				let shared_secret = next_hop.shared_secret().secret_bytes();
@@ -6695,7 +6720,7 @@ where
 					shared_secret,
 					next_hop,
 					incoming_accept_underpaying_htlcs,
-					next_packet_details_opt.map(|d| d.next_packet_pubkey),
+					next_packet_details_opt.map(|d| d.next_packet_pubkey()),
 				) {
 					Ok(info) => htlc_forwards.push((info, update_add_htlc.htlc_id)),
 					Err(inbound_err) => {
@@ -6754,6 +6779,12 @@ where
 				));
 			}
 		}
+
+		// Before finishing we replace the dummy update htlcs back in decode_update_add_htlcs with one layer peeled,
+		// which will be picked up in the next cycle.
+		let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
+		mem::swap(&mut *decode_update_add_htlc_source, &mut dummy_update_add_htlcs);
+
 		should_persist
 	}
 

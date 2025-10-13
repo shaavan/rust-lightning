@@ -1699,12 +1699,12 @@ fn route_blinding_spec_test_vector() {
 	let carol_packet_details = next_packet_details_opt.unwrap();
 	let carol_onion = msgs::OnionPacket {
 		version: 0,
-		public_key: carol_packet_details.next_packet_pubkey,
+		public_key: carol_packet_details.next_packet_pubkey(),
 		hop_data: carol_packet_bytes,
 		hmac: carol_hmac,
 	};
 	let carol_update_add = update_add_msg(
-		carol_packet_details.outgoing_amt_msat, carol_packet_details.outgoing_cltv_value,
+		carol_packet_details.outgoing_amt_msat().unwrap(), carol_packet_details.outgoing_cltv_value().unwrap(),
 		Some(pubkey_from_hex("034e09f450a80c3d252b258aba0a61215bf60dda3b0dc78ffb0736ea1259dfd8a0")),
 		carol_onion
 	);
@@ -1733,12 +1733,12 @@ fn route_blinding_spec_test_vector() {
 	let dave_packet_details = next_packet_details_opt.unwrap();
 	let dave_onion = msgs::OnionPacket {
 		version: 0,
-		public_key: dave_packet_details.next_packet_pubkey,
+		public_key: dave_packet_details.next_packet_pubkey(),
 		hop_data: dave_packet_bytes,
 		hmac: dave_hmac,
 	};
 	let dave_update_add = update_add_msg(
-		dave_packet_details.outgoing_amt_msat, dave_packet_details.outgoing_cltv_value,
+		dave_packet_details.outgoing_amt_msat().unwrap(), dave_packet_details.outgoing_cltv_value().unwrap(),
 		Some(pubkey_from_hex("031b84c5567b126440995d3ed5aaba0565d71e1834604819ff9c17f5e9d5dd078f")),
 		dave_onion
 	);
@@ -1767,12 +1767,12 @@ fn route_blinding_spec_test_vector() {
 	let eve_packet_details = next_packet_details_opt.unwrap();
 	let eve_onion = msgs::OnionPacket {
 		version: 0,
-		public_key: eve_packet_details.next_packet_pubkey,
+		public_key: eve_packet_details.next_packet_pubkey(),
 		hop_data: eve_packet_bytes,
 		hmac: eve_hmac,
 	};
 	let eve_update_add = update_add_msg(
-		eve_packet_details.outgoing_amt_msat, eve_packet_details.outgoing_cltv_value,
+		eve_packet_details.outgoing_amt_msat().unwrap(), eve_packet_details.outgoing_cltv_value().unwrap(),
 		Some(pubkey_from_hex("03e09038ee76e50f444b19abf0a555e8697e035f62937168b80adf0931b31ce52a")),
 		eve_onion
 	);
@@ -1999,11 +1999,11 @@ fn test_trampoline_inbound_payment_decoding() {
 	let carol_packet_details = next_packet_details_opt.unwrap();
 	let carol_onion = msgs::OnionPacket {
 		version: 0,
-		public_key: carol_packet_details.next_packet_pubkey,
+		public_key: carol_packet_details.next_packet_pubkey(),
 		hop_data: carol_packet_bytes,
 		hmac: carol_hmac,
 	};
-	let carol_update_add = update_add_msg(carol_packet_details.outgoing_amt_msat, carol_packet_details.outgoing_cltv_value, None, carol_onion);
+	let carol_update_add = update_add_msg(carol_packet_details.outgoing_amt_msat().unwrap(), carol_packet_details.outgoing_cltv_value().unwrap(), None, carol_onion);
 
 	let carol_node_signer = TestEcdhSigner { node_secret: carol_secret };
 	let (carol_peeled_onion, _) = onion_payment::decode_incoming_update_add_htlc_onion(
