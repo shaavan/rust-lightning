@@ -15,7 +15,7 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs;
+use crate::ln::msgs::{self, OnionPacket, UpdateAddHTLC};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -512,6 +512,8 @@ pub(super) enum HopConnector {
 	// Trampoline-based routing
 	#[allow(unused)]
 	Trampoline(PublicKey),
+	// This is a dummy hop connector
+	Dummy,
 }
 
 pub(super) struct NextPacketDetails {
@@ -559,6 +561,7 @@ where
 	}
 
 	let encode_relay_error = |message: &str, reason: LocalHTLCFailureReason, shared_secret: [u8; 32], trampoline_shared_secret: Option<[u8; 32]>, data: &[u8]| {
+		panic!();
 		if msg.blinding_point.is_some() {
 			return encode_malformed_error(message, LocalHTLCFailureReason::InvalidOnionBlinding)
 		}
@@ -622,11 +625,45 @@ where
 				outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value,
 			})
+		},
+		onion_utils::Hop::Dummy { shared_secret, .. } => {
+			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
+				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
+
+			Some(NextPacketDetails {
+				next_packet_pubkey, outgoing_connector: HopConnector::Dummy,
+				outgoing_amt_msat: 0, // TODO: These values are unused, that's why filled with placeholder. A better way of filling them will be figured out later.
+				outgoing_cltv_value: 0 // TODO: These values are unused, that's why filled with placeholder. A better way of filling them will be figured out later.
+			})	
 		}
 		_ => None
 	};
 
 	Ok((next_hop, next_packet_details))
+}
+
+pub(super) fn create_new_update_add_htlc<L: Deref, T: secp256k1::Verification>(
+	update_add_htlc: UpdateAddHTLC, shared_secret: SharedSecret, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300], logger: L, secp_ctx: &Secp256k1<T>,
+) -> Result<UpdateAddHTLC, ()>
+{
+	let new_packet = OnionPacket {
+		version: 0,
+		public_key: new_packet_pubkey,
+		hop_data: new_packet_bytes,
+		hmac: next_hop_hmac,
+	};
+
+	let blinding_point = onion_utils::next_hop_pubkey(
+		secp_ctx,
+		update_add_htlc.blinding_point.expect("Relaying through a Blinded Path, so must be Some"),
+		&shared_secret.secret_bytes()
+	).map_err(|| ())?;
+
+	Ok(UpdateAddHTLC {
+		onion_routing_packet: new_packet,
+		..update_add_htlc
+	})
 }
 
 pub(super) fn check_incoming_htlc_cltv(

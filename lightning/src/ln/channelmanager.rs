@@ -75,7 +75,7 @@ use crate::ln::onion_payment::{
 	decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr,
 	NextPacketDetails,
 };
-use crate::ln::onion_utils::{self};
+use crate::ln::onion_utils::{self, Hop, NextPacketBytes};
 use crate::ln::onion_utils::{
 	decode_fulfill_attribution_data, HTLCFailReason, LocalHTLCFailureReason,
 };
@@ -6607,11 +6607,22 @@ where
 						},
 					};
 
+				match (next_hop, next_packet_details_opt) {
+					(Hop::Dummy { shared_secret, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails { next_packet_pubkey, .. })) => {
+						
+					},
+
+					_ => {}
+				}
 				let is_intro_node_blinded_forward = next_hop.is_intro_node_blinded_forward();
 				let outgoing_scid_opt =
 					next_packet_details_opt.as_ref().and_then(|d| match d.outgoing_connector {
 						HopConnector::ShortChannelId(scid) => Some(scid),
 						HopConnector::Trampoline(_) => None,
+						HopConnector::Dummy => {
+							debug_assert!(false, "Shouldn't be triggered");
+							None
+						},
 					});
 				let shared_secret = next_hop.shared_secret().secret_bytes();
 

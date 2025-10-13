@@ -2228,6 +2228,14 @@ pub(crate) enum Hop {
 		/// Bytes of the onion packet we're forwarding.
 		new_packet_bytes: [u8; ONION_DATA_LEN],
 	},
+	Dummy {
+		/// Shared secret that was used to decrypt next_hop_data.
+		shared_secret: SharedSecret,
+		/// HMAC of the next hop's onion packet.
+		next_hop_hmac: [u8; 32],
+		/// Bytes of the onion packet we're forwarding.
+		new_packet_bytes: [u8; ONION_DATA_LEN],	
+	},
 	/// This onion payload was for us, not for forwarding to a next-hop. Contains information for
 	/// verifying the incoming payment.
 	Receive {
@@ -2286,6 +2294,7 @@ impl Hop {
 			Hop::BlindedForward { shared_secret, .. } => shared_secret,
 			Hop::TrampolineForward { outer_shared_secret, .. } => outer_shared_secret,
 			Hop::TrampolineBlindedForward { outer_shared_secret, .. } => outer_shared_secret,
+			Hop::Dummy { .. } => todo!(), // TODO: Dummy doesn't need to contain shared_secret, have to decide right way to handle it.
 			Hop::Receive { shared_secret, .. } => shared_secret,
 			Hop::BlindedReceive { shared_secret, .. } => shared_secret,
 			Hop::TrampolineReceive { outer_shared_secret, .. } => outer_shared_secret,
@@ -2327,6 +2336,18 @@ where
 	let shared_secret =
 		node_signer.ecdh(recipient, hop_pubkey, blinded_node_id_tweak.as_ref()).unwrap();
 
+	let check_authentication = |payment_tlvs_authenticated: bool| -> Result<(), OnionDecodeErr> {
+		if !payment_tlvs_authenticated {
+			return Err(OnionDecodeErr::Relay {
+				err_msg: "Final Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				shared_secret,
+				trampoline_shared_secret: None,
+			})
+		}
+		Ok(())
+	};
+
 	let decoded_hop: Result<(msgs::InboundOnionPayload, Option<_>), _> = decode_next_hop(
 		shared_secret.secret_bytes(),
 		hop_data,
@@ -2351,6 +2372,14 @@ where
 						new_packet_bytes,
 					})
 				},
+				msgs::InboundOnionPayload::Dummy { payment_tlvs_authenticated } => {
+					check_authentication(payment_tlvs_authenticated)?;
+					Ok(Hop::Dummy {
+						shared_secret,
+						next_hop_hmac,
+						new_packet_bytes,
+					})
+				}
 				_ => {
 					if blinding_point.is_some() {
 						return Err(OnionDecodeErr::Malformed {
