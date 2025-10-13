@@ -71,13 +71,12 @@ use crate::ln::msgs::{
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
-	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_recv_pending_htlc_info,
-	decode_incoming_update_add_htlc_onion, invalid_payment_err_data, HopConnector, InboundHTLCErr,
-	NextPacketDetails,
+	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_new_update_add_htlc,
+	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data,
+	HopConnector, InboundHTLCErr, NextPacketDetails,
 };
-use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
-	decode_fulfill_attribution_data, HTLCFailReason, LocalHTLCFailureReason,
+	self, decode_fulfill_attribution_data, HTLCFailReason, LocalHTLCFailureReason,
 };
 use crate::ln::onion_utils::{process_fulfill_attribution_data, AttributionData};
 use crate::ln::our_peer_storage::{EncryptedOurPeerStorage, PeerStorageMonitorHolder};
@@ -4757,7 +4756,8 @@ where
 			HopConnector::ShortChannelId(scid) => scid,
 			HopConnector::Trampoline(_) => {
 				return Err(LocalHTLCFailureReason::InvalidTrampolineForward);
-			}
+			},
+			HopConnector::Dummy => todo!(),
 		};
 		match self.do_funded_channel_callback(outgoing_scid, |chan: &mut FundedChannel<SP>| {
 			self.can_forward_htlc_to_outgoing_channel(chan, msg, next_packet_details)
@@ -4883,6 +4883,7 @@ where
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
 					current_height, &*self.logger)
 			},
+			onion_utils::Hop::Dummy { .. } => todo!(),
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
 			},
@@ -6537,6 +6538,8 @@ where
 		let mut decode_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
+		let mut dummy_update_add_htlcs = new_hash_map();
+
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
 			if let Some(outgoing_scid) = outgoing_scid_opt {
 				match self.short_to_chan_info.read().unwrap().get(&outgoing_scid) {
@@ -6598,7 +6601,27 @@ where
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => decoded_onion,
+						Ok(decoded_onion) => {
+							match decoded_onion {
+								(onion_utils::Hop::Dummy { shared_secret, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails { next_packet_pubkey, .. })) => {
+									let new_update_add_htlc = match create_new_update_add_htlc(update_add_htlc.clone(), shared_secret, next_packet_pubkey, next_hop_hmac, new_packet_bytes, &*self.logger) {
+										Ok(msg) => msg,
+										Err((htlc_fail, reason)) => {
+											let failure_type = HTLCHandlingFailureType::InvalidOnion;
+											htlc_fails.push((htlc_fail, failure_type, reason.into()));
+											continue;
+										}
+									};
+
+									dummy_update_add_htlcs.entry(incoming_scid_alias)
+										.or_insert_with(Vec::new)
+										.push(new_update_add_htlc);
+									
+									continue;
+								},
+								_ => decoded_onion
+							}
+						}
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
@@ -6612,6 +6635,10 @@ where
 					next_packet_details_opt.as_ref().and_then(|d| match d.outgoing_connector {
 						HopConnector::ShortChannelId(scid) => Some(scid),
 						HopConnector::Trampoline(_) => None,
+						HopConnector::Dummy => {
+							debug_assert!(false, "Shouldn't be triggered");
+							None
+						},
 					});
 				let shared_secret = next_hop.shared_secret().secret_bytes();
 
@@ -6754,6 +6781,12 @@ where
 				));
 			}
 		}
+
+		// Before finishing we replace the dummy update htlcs back in decode_update_add_htlcs with one layer peeled,
+		// which will be picked up in the next cycle.
+		let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
+		mem::swap(&mut *decode_update_add_htlc_source, &mut dummy_update_add_htlcs);
+
 		should_persist
 	}
 

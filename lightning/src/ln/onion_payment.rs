@@ -15,7 +15,7 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs;
+use crate::ln::msgs::{self, OnionPacket, UpdateAddHTLC};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -123,6 +123,7 @@ pub(super) fn create_fwd_pending_htlc_info(
 			(RoutingInfo::Direct { short_channel_id, new_packet_bytes, next_hop_hmac }, amt_to_forward, outgoing_cltv_value, intro_node_blinding_point,
 				next_blinding_override)
 		},
+		onion_utils::Hop::Dummy { .. } => todo!(),
 		onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } =>
 			return Err(InboundHTLCErr {
 				msg: "Final Node OnionHopData provided for us as an intermediary node",
@@ -330,6 +331,7 @@ where
 				sender_intended_htlc_amt_msat, cltv_expiry_height, None, Some(payment_context),
 				intro_node_blinding_point.is_none(), true, invoice_request)
 		},
+		onion_utils::Hop::Dummy { .. } => todo!(),
 		onion_utils::Hop::Forward { .. } => {
 			return Err(InboundHTLCErr {
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
@@ -512,6 +514,8 @@ pub(super) enum HopConnector {
 	// Trampoline-based routing
 	#[allow(unused)]
 	Trampoline(PublicKey),
+	// This is a dummy hop connector
+	Dummy,
 }
 
 pub(super) struct NextPacketDetails {
@@ -622,11 +626,66 @@ where
 				outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value,
 			})
+		},
+		onion_utils::Hop::Dummy { shared_secret, .. } => {
+			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
+				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
+
+			Some(NextPacketDetails {
+				next_packet_pubkey, outgoing_connector: HopConnector::Dummy,
+				outgoing_amt_msat: 0, // TODO: These values are unused, that's why filled with placeholder. A better way of filling them will be figured out later.
+				outgoing_cltv_value: 0 // TODO: These values are unused, that's why filled with placeholder. A better way of filling them will be figured out later.
+			})	
 		}
 		_ => None
 	};
 
 	Ok((next_hop, next_packet_details))
+}
+
+pub(super) fn create_new_update_add_htlc<L: Deref>(
+	msg: msgs::UpdateAddHTLC, shared_secret: SharedSecret, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300], logger: L,
+) -> Result<UpdateAddHTLC, (HTLCFailureMsg, LocalHTLCFailureReason)>
+where
+	L::Target: Logger
+{
+	// let encode_malformed_error = |message: &str, failure_reason: LocalHTLCFailureReason| {
+	// 	log_info!(logger, "Failed to accept/forward incoming HTLC: {}", message);
+	// 	let (sha256_of_onion, failure_reason) = if msg.blinding_point.is_some() || failure_reason == LocalHTLCFailureReason::InvalidOnionBlinding {
+	// 		([0; 32], LocalHTLCFailureReason::InvalidOnionBlinding)
+	// 	} else {
+	// 		(Sha256::hash(&msg.onion_routing_packet.hop_data).to_byte_array(), failure_reason)
+	// 	};
+	// 	return Err((HTLCFailureMsg::Malformed(msgs::UpdateFailMalformedHTLC {
+	// 		channel_id: msg.channel_id,
+	// 		htlc_id: msg.htlc_id,
+	// 		sha256_of_onion,
+	// 		failure_code: failure_reason.failure_code(),
+	// 	}), failure_reason));
+	// };
+
+	let new_packet = OnionPacket {
+		version: 0,
+		public_key: new_packet_pubkey,
+		hop_data: new_packet_bytes,
+		hmac: next_hop_hmac,
+	};
+
+	// let blinding_point = match onion_utils::next_hop_pubkey(
+	// 	secp_ctx,
+	// 	msg.blinding_point.expect("Relaying through a Blinded Path, so must be Some"),
+	// 	&shared_secret.secret_bytes()
+	// ) {
+	// 	Ok(bp) => bp,
+	// 	Err(_) => return encode_malformed_error("Failed to forward/accept Dummy", LocalHTLCFailureReason::InvalidOnionBlinding),
+	// };
+
+	Ok(UpdateAddHTLC {
+		onion_routing_packet: new_packet,
+		// blinding_point: Some(blinding_point),
+		..msg
+	})
 }
 
 pub(super) fn check_incoming_htlc_cltv(
