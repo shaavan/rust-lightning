@@ -3392,7 +3392,9 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 		}
 
 		if let Some(count) = dummy_count {
+			println!("\n\ndummy count: {}\n\n", count);
 			for _ in 0..count {
+				println!("This ran");
 				node.node.process_pending_htlc_forwards();
 			}
 		}

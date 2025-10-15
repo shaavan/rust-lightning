@@ -6560,6 +6560,8 @@ where
 			}
 		};
 
+		println!("\n\nState before processing of decode_update_add_htlcs: {:?}\n\n", &decode_update_add_htlcs);
+
 		'outer_loop: for (incoming_scid_alias, update_add_htlcs) in decode_update_add_htlcs {
 			// If any decoded update_add_htlcs were processed, we need to persist.
 			should_persist = true;
@@ -6783,7 +6785,9 @@ where
 		// Before finishing we replace the dummy update htlcs back in decode_update_add_htlcs with one layer peeled,
 		// which will be picked up in the next cycle.
 		let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
+		println!("\n\nFinal state of decode_update_add_htlc: {:?}\n\n", &dummy_update_add_htlcs);
 		mem::swap(&mut *decode_update_add_htlc_source, &mut dummy_update_add_htlcs);
+
 
 		should_persist
 	}

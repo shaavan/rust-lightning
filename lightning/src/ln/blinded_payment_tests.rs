@@ -226,7 +226,7 @@ fn one_hop_blinded_path_with_dummy_hops() {
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(),
 	PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], Some(1), amt_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
 }
 
