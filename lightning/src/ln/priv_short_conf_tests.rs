@@ -168,6 +168,7 @@ fn test_priv_forwarding_rejection() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
+		None,
 		10_000,
 		our_payment_hash,
 		our_payment_secret,
@@ -350,7 +351,7 @@ fn test_routed_scid_alias() {
 	nodes[0].node.send_payment_with_route(route, payment_hash, onion, id).unwrap();
 	check_added_monitors!(nodes[0], 1);
 
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], 100_000, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, 100_000, payment_hash, payment_secret);
 
 	as_channel_ready.short_channel_id_alias = Some(0xeadbeef);
 	nodes[2].node.handle_channel_ready(node_b_id, &as_channel_ready);
@@ -580,7 +581,7 @@ fn test_inbound_scid_privacy() {
 	nodes[0].node.send_payment_with_route(route, payment_hash, onion, id).unwrap();
 	check_added_monitors!(nodes[0], 1);
 
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], 100_000, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, 100_000, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
 
 	// ... but if we try to pay using the real SCID, nodes[1] will just tell us they don't know

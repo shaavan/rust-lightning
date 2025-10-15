@@ -3281,6 +3281,7 @@ fn do_test_htlc_timeout(send_partial_mpp: bool) {
 		pass_along_path(
 			&nodes[0],
 			&[&nodes[1]],
+			None,
 			100000,
 			our_payment_hash,
 			Some(payment_secret),
@@ -6954,7 +6955,7 @@ pub fn test_onion_value_mpp_set_calculation() {
 	let ev =
 		remove_first_msg_event_to_node(&expected_paths[1][0].node.get_our_node_id(), &mut events);
 	let payment_secret = Some(payment_secret);
-	pass_along_path(&nodes[0], expected_paths[1], 101_000, hash, payment_secret, ev, true, None);
+	pass_along_path(&nodes[0], expected_paths[1], None, 101_000, hash, payment_secret, ev, true, None);
 
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], expected_paths, preimage));
 }
@@ -7033,6 +7034,7 @@ fn do_test_overshoot_mpp(msat_amounts: &[u64], total_msat: u64) {
 		pass_along_path(
 			&nodes[src_idx],
 			expected_path,
+			None,
 			amount_received,
 			hash.clone(),
 			Some(payment_secret),
@@ -8326,7 +8328,7 @@ pub fn test_inconsistent_mpp_params() {
 	assert_eq!(events.len(), 1);
 	let path_a = &[&nodes[1], &nodes[3]];
 	let event = events.pop().unwrap();
-	pass_along_path(&nodes[0], path_a, real_amt, hash, Some(payment_secret), event, false, None);
+	pass_along_path(&nodes[0], path_a, None, real_amt, hash, Some(payment_secret), event, false, None);
 	assert!(nodes[3].node.get_and_clear_pending_events().is_empty());
 
 	let path_b = &route.paths[1];
@@ -8400,7 +8402,7 @@ pub fn test_inconsistent_mpp_params() {
 	assert_eq!(events.len(), 1);
 	let event = events.pop().unwrap();
 	let path_b = &[&nodes[2], &nodes[3]];
-	pass_along_path(&nodes[0], path_b, real_amt, hash, Some(payment_secret), event, true, None);
+	pass_along_path(&nodes[0], path_b, None, real_amt, hash, Some(payment_secret), event, true, None);
 
 	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path_a, path_b], preimage));
 	expect_payment_sent(&nodes[0], preimage, Some(None), true, true);
@@ -8464,7 +8466,7 @@ pub fn test_double_partial_claim() {
 	assert_eq!(events.len(), 2);
 	let msgs = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let path = &[&nodes[1], &nodes[3]];
-	pass_along_path(&nodes[0], path, 15_000_000, hash, Some(payment_secret), msgs, false, None);
+	pass_along_path(&nodes[0], path, None, 15_000_000, hash, Some(payment_secret), msgs, false, None);
 
 	// At this point nodes[3] has received one half of the payment, and the user goes to handle
 	// that PaymentClaimable event they got hours ago and never handled...we should refuse to claim.

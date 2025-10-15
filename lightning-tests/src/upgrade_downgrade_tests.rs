@@ -141,7 +141,7 @@ fn test_125_dangling_post_update_actions() {
 
 		check_added_monitors_0_0_125!(nodes[0], 2);
 		let paths = &[&[&nodes[1], &nodes[3]][..], &[&nodes[2], &nodes[3]]];
-		lightning_0_0_125_utils::pass_along_route(&nodes[0], paths, 15_000_000, hash, secret);
+		lightning_0_0_125_utils::pass_along_route(&nodes[0], paths, None, 15_000_000, hash, secret);
 
 		let preimage_2 = lightning_0_0_125_utils::route_payment(&nodes[1], &[&nodes[3]], 100_000).0;
 

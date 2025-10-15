@@ -407,6 +407,7 @@ fn test_fee_failures() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
+		None,
 		40_000,
 		payment_hash_success,
 		payment_secret_success,
@@ -458,6 +459,7 @@ fn test_fee_failures() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
+		None,
 		40_000,
 		payment_hash_success,
 		payment_secret_success,

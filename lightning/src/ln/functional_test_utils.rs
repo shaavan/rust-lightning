@@ -3252,7 +3252,7 @@ pub fn send_along_route_with_secret<'a, 'b, 'c>(
 		)
 		.unwrap();
 	check_added_monitors!(origin_node, expected_paths.len());
-	pass_along_route(origin_node, expected_paths, recv_value, our_payment_hash, our_payment_secret);
+	pass_along_route(origin_node, expected_paths, None, recv_value, our_payment_hash, our_payment_secret);
 	payment_id
 }
 
@@ -3276,6 +3276,7 @@ fn fail_payment_along_path<'a, 'b, 'c>(expected_path: &[&Node<'a, 'b, 'c>]) {
 pub struct PassAlongPathArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_path: &'a [&'a Node<'b, 'c, 'd>],
+	pub dummy_count: Option<usize>,
 	pub recv_value: u64,
 	pub payment_hash: PaymentHash,
 	pub payment_secret: Option<PaymentSecret>,
@@ -3297,6 +3298,7 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node,
 			expected_path,
+			dummy_count: None,
 			recv_value,
 			payment_hash,
 			payment_secret: None,
@@ -3344,12 +3346,18 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		self.expected_failure = Some(failure);
 		self
 	}
+
+	pub fn with_dummy_hops(mut self, dummy_count: usize) -> Self {
+		self.dummy_count = Some(dummy_count);
+		self
+	}
 }
 
 pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> {
 	let PassAlongPathArgs {
 		origin_node,
 		expected_path,
+		dummy_count,
 		recv_value,
 		payment_hash: our_payment_hash,
 		payment_secret: our_payment_secret,
@@ -3381,6 +3389,12 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 		} else {
 			commitment_signed_dance!(node, prev_node, payment_event.commitment_msg, false);
 			node.node.process_pending_htlc_forwards();
+		}
+
+		if let Some(count) = dummy_count {
+			for _ in 0..count {
+				node.node.process_pending_htlc_forwards();
+			}
 		}
 
 		if is_last_hop && clear_recipient_events {
@@ -3491,12 +3505,17 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 }
 
 pub fn pass_along_path<'a, 'b, 'c>(
-	origin_node: &Node<'a, 'b, 'c>, expected_path: &[&Node<'a, 'b, 'c>], recv_value: u64,
-	our_payment_hash: PaymentHash, our_payment_secret: Option<PaymentSecret>, ev: MessageSendEvent,
-	payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
+	origin_node: &Node<'a, 'b, 'c>, expected_path: &[&Node<'a, 'b, 'c>], dummy_count: Option<usize>,
+	recv_value: u64, our_payment_hash: PaymentHash, our_payment_secret: Option<PaymentSecret>,
+	ev: MessageSendEvent, payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
 ) -> Option<Event> {
 	let mut args =
 		PassAlongPathArgs::new(origin_node, expected_path, recv_value, our_payment_hash, ev);
+
+	if let Some(count) = dummy_count {
+		args = args.with_dummy_hops(count);
+	}
+
 	if !payment_claimable_expected {
 		args = args.without_claimable_event();
 	}
@@ -3538,7 +3557,7 @@ pub fn send_probe_along_route<'a, 'b, 'c>(
 }
 
 pub fn pass_along_route<'a, 'b, 'c>(
-	origin_node: &Node<'a, 'b, 'c>, expected_route: &[&[&Node<'a, 'b, 'c>]], recv_value: u64,
+	origin_node: &Node<'a, 'b, 'c>, expected_route: &[&[&Node<'a, 'b, 'c>]], dummy_count: Option<usize>, recv_value: u64,
 	our_payment_hash: PaymentHash, our_payment_secret: PaymentSecret,
 ) {
 	let mut events = origin_node.node.get_and_clear_pending_msg_events();
@@ -3553,6 +3572,7 @@ pub fn pass_along_route<'a, 'b, 'c>(
 		pass_along_path(
 			origin_node,
 			expected_path,
+			dummy_count,
 			recv_value,
 			our_payment_hash.clone(),
 			Some(our_payment_secret),

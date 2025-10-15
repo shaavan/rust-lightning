@@ -151,7 +151,7 @@ fn mpp_retry() {
 	// Pass half of the payment along the success path.
 	let init_msgs = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let path = &[&nodes[1], &nodes[3]];
-	pass_along_path(&nodes[0], path, 2_000_000, hash, Some(pay_secret), init_msgs, false, None);
+	pass_along_path(&nodes[0], path, None, 2_000_000, hash, Some(pay_secret), init_msgs, false, None);
 
 	// Add the HTLC along the first hop.
 	let second_msgs = remove_first_msg_event_to_node(&node_c_id, &mut events);
@@ -196,7 +196,7 @@ fn mpp_retry() {
 	assert_eq!(events.len(), 1);
 	let event = events.pop().unwrap();
 	let last_path = &[&nodes[2], &nodes[3]];
-	pass_along_path(&nodes[0], last_path, 2_000_000, hash, Some(pay_secret), event, true, None);
+	pass_along_path(&nodes[0], last_path, None, 2_000_000, hash, Some(pay_secret), event, true, None);
 	let claim_paths: &[&[_]] = &[&[&nodes[1], &nodes[3]], &[&nodes[2], &nodes[3]]];
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], claim_paths, preimage));
 }
@@ -269,7 +269,7 @@ fn mpp_retry_overpay() {
 	// Pass half of the payment along the success path.
 	let init_msgs = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let path = &[&nodes[1], &nodes[3]];
-	pass_along_path(&nodes[0], path, amt_msat, hash, Some(pay_secret), init_msgs, false, None);
+	pass_along_path(&nodes[0], path, None, amt_msat, hash, Some(pay_secret), init_msgs, false, None);
 
 	// Add the HTLC along the first hop.
 	let fail_path_msgs_1 = remove_first_msg_event_to_node(&node_c_id, &mut events);
@@ -319,7 +319,7 @@ fn mpp_retry_overpay() {
 	assert_eq!(events.len(), 1);
 	let event = events.pop().unwrap();
 	let path = &[&nodes[2], &nodes[3]];
-	pass_along_path(&nodes[0], path, amt_msat, hash, Some(pay_secret), event, true, None);
+	pass_along_path(&nodes[0], path, None, amt_msat, hash, Some(pay_secret), event, true, None);
 
 	// Can't use claim_payment_along_route as it doesn't support overpayment, so we break out the
 	// individual steps here.
@@ -369,7 +369,7 @@ fn do_mpp_receive_timeout(send_partial_mpp: bool) {
 	// Pass half of the payment along the first path.
 	let node_1_msgs = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let path = &[&nodes[1], &nodes[3]];
-	pass_along_path(&nodes[0], path, 200_000, hash, Some(payment_secret), node_1_msgs, false, None);
+	pass_along_path(&nodes[0], path, None, 200_000, hash, Some(payment_secret), node_1_msgs, false, None);
 
 	if send_partial_mpp {
 		// Time out the partial MPP
@@ -408,7 +408,7 @@ fn do_mpp_receive_timeout(send_partial_mpp: bool) {
 		let node_2_msgs = remove_first_msg_event_to_node(&node_c_id, &mut events);
 		let path = &[&nodes[2], &nodes[3]];
 		let payment_secret = Some(payment_secret);
-		pass_along_path(&nodes[0], path, 200_000, hash, payment_secret, node_2_msgs, true, None);
+		pass_along_path(&nodes[0], path, None, 200_000, hash, payment_secret, node_2_msgs, true, None);
 
 		// Even after MPP_TIMEOUT_TICKS we should not timeout the MPP if we have all the parts
 		for _ in 0..MPP_TIMEOUT_TICKS {
@@ -516,10 +516,10 @@ fn test_mpp_keysend() {
 
 	let ev = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let payment_secret = Some(payment_secret);
-	pass_along_path(&nodes[0], route[0], recv_value, hash, payment_secret, ev, false, preimage);
+	pass_along_path(&nodes[0], route[0], None, recv_value, hash, payment_secret, ev, false, preimage);
 
 	let ev = remove_first_msg_event_to_node(&node_c_id, &mut events);
-	pass_along_path(&nodes[0], route[1], recv_value, hash, payment_secret, ev, true, preimage);
+	pass_along_path(&nodes[0], route[1], None, recv_value, hash, payment_secret, ev, true, preimage);
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], route, preimage.unwrap()));
 }
 
@@ -559,7 +559,7 @@ fn test_fulfill_hold_times() {
 
 	let ev = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let payment_secret = Some(payment_secret);
-	pass_along_path(&nodes[0], route[0], recv_value, hash, payment_secret, ev, true, preimage);
+	pass_along_path(&nodes[0], route[0], None, recv_value, hash, payment_secret, ev, true, preimage);
 
 	// Delay claiming so that we get a non-zero hold time.
 	thread::sleep(Duration::from_millis(200));
@@ -992,7 +992,7 @@ fn do_retry_with_no_persist(confirm_before_reload: bool) {
 	let event = events.pop().unwrap();
 	let path = &[&nodes[1], &nodes[2]];
 	let payment_secret = Some(payment_secret);
-	pass_along_path(&nodes[0], path, 1_000_000, payment_hash, payment_secret, event, true, None);
+	pass_along_path(&nodes[0], path, None, 1_000_000, payment_hash, payment_secret, event, true, None);
 	do_claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path], payment_preimage));
 	expect_payment_sent!(nodes[0], payment_preimage, Some(new_route.paths[0].hops[0].fee_msat));
 }
@@ -1192,7 +1192,7 @@ fn do_test_completed_payment_not_retryable_on_reload(use_dust: bool) {
 	let onion = RecipientOnionFields::secret_only(payment_secret);
 	nodes[0].node.send_payment_with_route(new_route.clone(), hash, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], amt, hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, amt, hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
 
 	let onion = RecipientOnionFields::secret_only(payment_secret);
@@ -1518,7 +1518,7 @@ fn get_ldk_payment_preimage() {
 	let event = events.pop().unwrap();
 	let payment_secret = Some(payment_secret);
 	let path = &[&nodes[1]];
-	pass_along_path(&nodes[0], path, amt_msat, payment_hash, payment_secret, event, true, preimage);
+	pass_along_path(&nodes[0], path, None, amt_msat, payment_hash, payment_secret, event, true, preimage);
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path], preimage.unwrap()));
 }
 
@@ -1918,7 +1918,7 @@ fn claimed_send_payment_idempotent() {
 	let onion = RecipientOnionFields::secret_only(second_payment_secret);
 	nodes[0].node.send_payment_with_route(route, hash_b, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], 100_000, hash_b, second_payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, 100_000, hash_b, second_payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], preimage_b);
 }
 
@@ -1987,7 +1987,7 @@ fn abandoned_send_payment_idempotent() {
 	let onion = RecipientOnionFields::secret_only(second_payment_secret);
 	nodes[0].node.send_payment_with_route(route, hash_b, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], 100_000, hash_b, second_payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, 100_000, hash_b, second_payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], second_payment_preimage);
 }
 
@@ -2705,7 +2705,7 @@ fn do_automatic_retries(test: AutoRetry) {
 		let event = msg_events.pop().unwrap();
 
 		let path = &[&nodes[1], &nodes[2]];
-		pass_along_path(&nodes[0], path, amt_msat, hash, Some(payment_secret), event, true, None);
+		pass_along_path(&nodes[0], path, None, amt_msat, hash, Some(payment_secret), event, true, None);
 		claim_payment_along_route(ClaimAlongRouteArgs::new(
 			&nodes[0],
 			&[&[&nodes[1], &nodes[2]]],
@@ -2733,7 +2733,7 @@ fn do_automatic_retries(test: AutoRetry) {
 		let event = msg_events.pop().unwrap();
 
 		let path = &[&nodes[1], &nodes[2]];
-		pass_along_path(&nodes[0], path, amt_msat, hash, None, event, true, Some(preimage));
+		pass_along_path(&nodes[0], path, None, amt_msat, hash, None, event, true, Some(preimage));
 		claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path], preimage));
 	} else if test == AutoRetry::FailAttempts {
 		// Ensure ChannelManager will not retry a payment if it has run out of payment attempts.
@@ -4283,9 +4283,9 @@ fn do_claim_from_closed_chan(fail_payment: bool) {
 	let (msg_a, msg_b) = (send_msgs.remove(0), send_msgs.remove(0));
 	let (path_a, path_b) = (&[&nodes[1], &nodes[3]], &[&nodes[2], &nodes[3]]);
 
-	pass_along_path(&nodes[0], path_a, amt_msat, hash, Some(payment_secret), msg_a, false, None);
+	pass_along_path(&nodes[0], path_a, None, amt_msat, hash, Some(payment_secret), msg_a, false, None);
 	let receive_event =
-		pass_along_path(&nodes[0], path_b, amt_msat, hash, Some(payment_secret), msg_b, true, None);
+		pass_along_path(&nodes[0], path_b, None, amt_msat, hash, Some(payment_secret), msg_b, true, None);
 
 	match receive_event.unwrap() {
 		Event::PaymentClaimable { claim_deadline, .. } => {
@@ -4658,7 +4658,7 @@ fn do_test_custom_tlvs_consistency(
 	assert_eq!(events.len(), 1);
 	let event = events.pop().unwrap();
 	let path_a = &[&nodes[1], &nodes[3]];
-	pass_along_path(&nodes[0], path_a, amt_msat, hash, Some(payment_secret), event, false, None);
+	pass_along_path(&nodes[0], path_a, None, amt_msat, hash, Some(payment_secret), event, false, None);
 
 	assert!(nodes[3].node.get_and_clear_pending_events().is_empty());
 
@@ -5325,7 +5325,7 @@ fn pay_route_without_params() {
 	assert_eq!(events.len(), 1);
 	let node_1_msgs = remove_first_msg_event_to_node(&node_b_id, &mut events);
 	let path = &[&nodes[1]];
-	pass_along_path(&nodes[0], path, amt_msat, hash, Some(payment_secret), node_1_msgs, true, None);
+	pass_along_path(&nodes[0], path, None, amt_msat, hash, Some(payment_secret), node_1_msgs, true, None);
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path], preimage));
 }
 
