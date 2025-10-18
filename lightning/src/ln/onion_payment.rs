@@ -521,13 +521,13 @@ pub(super) enum HopConnector {
 
 pub(super) struct NextPacketDetails {
 	pub next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-    pub forward_info: Option<ForwardInfo>,
+	pub forward_info: Option<ForwardInfo>,
 }
 
 pub(super) struct ForwardInfo {
-    pub outgoing_connector: HopConnector,
-    pub outgoing_amt_msat: u64,
-    pub outgoing_cltv_value: u32,
+	pub outgoing_connector: HopConnector,
+	pub outgoing_amt_msat: u64,
+	pub outgoing_cltv_value: u32,
 }
 
 // impl NextPacketDetails {
@@ -559,7 +559,6 @@ pub(super) struct ForwardInfo {
 // 		}
 // 	}
 // }
-
 
 #[rustfmt::skip]
 pub(super) fn decode_incoming_update_add_htlc_onion<NS: Deref, L: Deref, T: secp256k1::Verification>(
@@ -693,8 +692,9 @@ where
 
 pub(super) fn create_new_update_add_htlc<NS: Deref, T: secp256k1::Verification>(
 	msg: msgs::UpdateAddHTLC, node_signer: NS, secp_ctx: &Secp256k1<T>,
-	intro_node_blinding_point: Option<PublicKey>, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300]
+	intro_node_blinding_point: Option<PublicKey>,
+	new_packet_pubkey: Result<PublicKey, secp256k1::Error>, next_hop_hmac: [u8; 32],
+	new_packet_bytes: [u8; 1300],
 ) -> UpdateAddHTLC
 where
 	NS::Target: NodeSigner,
@@ -706,26 +706,14 @@ where
 		hmac: next_hop_hmac,
 	};
 
-	let next_blinding_point = intro_node_blinding_point
-		.or(msg.blinding_point)
-		.and_then(|blinding_point| {
-			let encrypted_tlvs_ss = node_signer
-				.ecdh(Recipient::Node, &blinding_point, None)
-				.unwrap()
-				.secret_bytes();
-			onion_utils::next_hop_pubkey(
-				&secp_ctx,
-				blinding_point,
-				&encrypted_tlvs_ss,
-			)
-			.ok()
+	let next_blinding_point =
+		intro_node_blinding_point.or(msg.blinding_point).and_then(|blinding_point| {
+			let encrypted_tlvs_ss =
+				node_signer.ecdh(Recipient::Node, &blinding_point, None).unwrap().secret_bytes();
+			onion_utils::next_hop_pubkey(&secp_ctx, blinding_point, &encrypted_tlvs_ss).ok()
 		});
 
-	UpdateAddHTLC {
-		onion_routing_packet: new_packet,
-		blinding_point: next_blinding_point,
-		..msg
-	}
+	UpdateAddHTLC { onion_routing_packet: new_packet, blinding_point: next_blinding_point, ..msg }
 }
 
 pub(super) fn check_incoming_htlc_cltv(

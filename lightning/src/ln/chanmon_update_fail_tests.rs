@@ -2332,7 +2332,17 @@ fn test_path_paused_mpp() {
 	assert_eq!(events.len(), 1);
 	let path_1 = &[&nodes[1], &nodes[3]];
 	let ev = events.pop().unwrap();
-	pass_along_path(&nodes[0], path_1, None, 0, payment_hash, Some(payment_secret), ev, false, None);
+	pass_along_path(
+		&nodes[0],
+		path_1,
+		None,
+		0,
+		payment_hash,
+		Some(payment_secret),
+		ev,
+		false,
+		None,
+	);
 
 	// And check that, after we successfully update the monitor for chan_2 we can pass the second
 	// HTLC along to nodes[3] and claim the whole payment back to nodes[0].
@@ -2343,7 +2353,17 @@ fn test_path_paused_mpp() {
 	assert_eq!(events.len(), 1);
 	let path_2 = &[&nodes[2], &nodes[3]];
 	let ev = events.pop().unwrap();
-	pass_along_path(&nodes[0], path_2, None, 200_000, payment_hash, Some(payment_secret), ev, true, None);
+	pass_along_path(
+		&nodes[0],
+		path_2,
+		None,
+		200_000,
+		payment_hash,
+		Some(payment_secret),
+		ev,
+		true,
+		None,
+	);
 
 	claim_payment_along_route(ClaimAlongRouteArgs::new(
 		&nodes[0],

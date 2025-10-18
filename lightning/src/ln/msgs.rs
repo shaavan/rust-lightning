@@ -2348,10 +2348,7 @@ mod fuzzy_internal_msgs {
 		Receive(InboundOnionReceivePayload),
 		BlindedForward(InboundOnionBlindedForwardPayload),
 		BlindedReceive(InboundOnionBlindedReceivePayload),
-		Dummy {
-			intro_node_blinding_point: Option<PublicKey>,
-			payment_tlvs_authenticated: bool,
-		},
+		Dummy { intro_node_blinding_point: Option<PublicKey>, payment_tlvs_authenticated: bool },
 	}
 
 	pub struct InboundTrampolineForwardPayload {
@@ -3706,7 +3703,7 @@ where
 					}
 					Ok(Self::Dummy {
 						intro_node_blinding_point,
-						payment_tlvs_authenticated: used_aad
+						payment_tlvs_authenticated: used_aad,
 					})
 				},
 				ChaChaDualPolyReadAdapter {

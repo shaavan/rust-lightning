@@ -6577,7 +6577,10 @@ where
 			}
 		};
 
-		println!("\n\nState before processing of decode_update_add_htlcs: {:?}\n\n", &decode_update_add_htlcs);
+		println!(
+			"\n\nState before processing of decode_update_add_htlcs: {:?}\n\n",
+			&decode_update_add_htlcs
+		);
 
 		'outer_loop: for (incoming_scid_alias, update_add_htlcs) in decode_update_add_htlcs {
 			// If any decoded update_add_htlcs were processed, we need to persist.
@@ -6622,24 +6625,39 @@ where
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => {
-							match decoded_onion {
-								(onion_utils::Hop::Dummy { intro_node_blinding_point, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails { next_packet_pubkey, forward_info })) => {
-									debug_assert!(
+						Ok(decoded_onion) => match decoded_onion {
+							(
+								onion_utils::Hop::Dummy {
+									intro_node_blinding_point,
+									next_hop_hmac,
+									new_packet_bytes,
+									..
+								},
+								Some(NextPacketDetails { next_packet_pubkey, forward_info }),
+							) => {
+								debug_assert!(
 										forward_info.is_none(),
 										"Dummy hops must not contain any forward info, since they are not actually forwarded."
 									);
-									let new_update_add_htlc = create_new_update_add_htlc(update_add_htlc.clone(), &*self.node_signer, &self.secp_ctx, intro_node_blinding_point, next_packet_pubkey, next_hop_hmac, new_packet_bytes);
+								let new_update_add_htlc = create_new_update_add_htlc(
+									update_add_htlc.clone(),
+									&*self.node_signer,
+									&self.secp_ctx,
+									intro_node_blinding_point,
+									next_packet_pubkey,
+									next_hop_hmac,
+									new_packet_bytes,
+								);
 
-									dummy_update_add_htlcs.entry(incoming_scid_alias)
-										.or_insert_with(Vec::new)
-										.push(new_update_add_htlc);
-									
-									continue;
-								},
-								_ => decoded_onion
-							}
-						}
+								dummy_update_add_htlcs
+									.entry(incoming_scid_alias)
+									.or_insert_with(Vec::new)
+									.push(new_update_add_htlc);
+
+								continue;
+							},
+							_ => decoded_onion,
+						},
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
@@ -6802,7 +6820,6 @@ where
 		let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
 		println!("\n\nFinal state of decode_update_add_htlc: {:?}\n\n", &dummy_update_add_htlcs);
 		mem::swap(&mut *decode_update_add_htlc_source, &mut dummy_update_add_htlcs);
-
 
 		should_persist
 	}

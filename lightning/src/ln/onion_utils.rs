@@ -2345,7 +2345,7 @@ where
 				reason: LocalHTLCFailureReason::InvalidOnionPayload,
 				shared_secret,
 				trampoline_shared_secret: None,
-			})
+			});
 		}
 		Ok(())
 	};
@@ -2374,7 +2374,10 @@ where
 						new_packet_bytes,
 					})
 				},
-				msgs::InboundOnionPayload::Dummy { intro_node_blinding_point, payment_tlvs_authenticated } => {
+				msgs::InboundOnionPayload::Dummy {
+					intro_node_blinding_point,
+					payment_tlvs_authenticated,
+				} => {
 					check_authentication(payment_tlvs_authenticated)?;
 					Ok(Hop::Dummy {
 						intro_node_blinding_point,
@@ -2382,7 +2385,7 @@ where
 						next_hop_hmac,
 						new_packet_bytes,
 					})
-				}
+				},
 				_ => {
 					if blinding_point.is_some() {
 						return Err(OnionDecodeErr::Malformed {
