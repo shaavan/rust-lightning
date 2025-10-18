@@ -6607,8 +6607,8 @@ where
 					) {
 						Ok(decoded_onion) => {
 							match decoded_onion {
-								(onion_utils::Hop::Dummy { shared_secret, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails::Dummy { next_packet_pubkey })) => {
-									let new_update_add_htlc = match create_new_update_add_htlc(update_add_htlc.clone(), &*self.logger, &self.secp_ctx, shared_secret, next_packet_pubkey, next_hop_hmac, new_packet_bytes) {
+								(onion_utils::Hop::Dummy { intro_node_blinding_point, shared_secret, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails::Dummy { next_packet_pubkey })) => {
+									let new_update_add_htlc = match create_new_update_add_htlc(update_add_htlc.clone(), &*self.node_signer, &*self.logger, &self.secp_ctx, shared_secret, intro_node_blinding_point, next_packet_pubkey, next_hop_hmac, new_packet_bytes) {
 										Ok(msg) => msg,
 										Err((htlc_fail, reason)) => {
 											let failure_type = HTLCHandlingFailureType::InvalidOnion;

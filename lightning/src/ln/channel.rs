@@ -11990,6 +11990,7 @@ where
 		F::Target: FeeEstimator,
 		L::Target: Logger,
 	{
+		println!("\n\nBlinding Point after processing of htlc: {:?} \n\n", blinding_point);
 		self.send_htlc(
 			amount_msat,
 			payment_hash,

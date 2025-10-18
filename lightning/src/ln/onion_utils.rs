@@ -2229,12 +2229,14 @@ pub(crate) enum Hop {
 		new_packet_bytes: [u8; ONION_DATA_LEN],
 	},
 	Dummy {
+		/// Onion payload data used in interpreting the dummy hop
+		intro_node_blinding_point: Option<PublicKey>,
 		/// Shared secret that was used to decrypt next_hop_data.
 		shared_secret: SharedSecret,
 		/// HMAC of the next hop's onion packet.
 		next_hop_hmac: [u8; 32],
 		/// Bytes of the onion packet we're forwarding.
-		new_packet_bytes: [u8; ONION_DATA_LEN],	
+		new_packet_bytes: [u8; ONION_DATA_LEN],
 	},
 	/// This onion payload was for us, not for forwarding to a next-hop. Contains information for
 	/// verifying the incoming payment.
@@ -2372,9 +2374,10 @@ where
 						new_packet_bytes,
 					})
 				},
-				msgs::InboundOnionPayload::Dummy { payment_tlvs_authenticated } => {
+				msgs::InboundOnionPayload::Dummy { intro_node_blinding_point, payment_tlvs_authenticated } => {
 					check_authentication(payment_tlvs_authenticated)?;
 					Ok(Hop::Dummy {
+						intro_node_blinding_point,
 						shared_secret,
 						next_hop_hmac,
 						new_packet_bytes,

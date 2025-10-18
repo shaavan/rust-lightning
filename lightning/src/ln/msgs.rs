@@ -2349,6 +2349,7 @@ mod fuzzy_internal_msgs {
 		BlindedForward(InboundOnionBlindedForwardPayload),
 		BlindedReceive(InboundOnionBlindedReceivePayload),
 		Dummy {
+			intro_node_blinding_point: Option<PublicKey>,
 			payment_tlvs_authenticated: bool,
 		},
 	}
@@ -3704,6 +3705,7 @@ where
 						return Err(DecodeError::InvalidValue);
 					}
 					Ok(Self::Dummy {
+						intro_node_blinding_point,
 						payment_tlvs_authenticated: used_aad
 					})
 				},
