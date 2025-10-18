@@ -672,15 +672,13 @@ where
 	Ok((next_hop, next_packet_details))
 }
 
-pub(super) fn create_new_update_add_htlc<NS: Deref, L: Deref, T: secp256k1::Verification>(
-	msg: msgs::UpdateAddHTLC, node_signer: NS, logger: L, secp_ctx: &Secp256k1<T>,
-	shared_secret: SharedSecret, intro_node_blinding_point: Option<PublicKey>,
-	new_packet_pubkey: Result<PublicKey, secp256k1::Error>, next_hop_hmac: [u8; 32],
-	new_packet_bytes: [u8; 1300]
-) -> Result<UpdateAddHTLC, (HTLCFailureMsg, LocalHTLCFailureReason)>
+pub(super) fn create_new_update_add_htlc<NS: Deref, T: secp256k1::Verification>(
+	msg: msgs::UpdateAddHTLC, node_signer: NS, secp_ctx: &Secp256k1<T>,
+	intro_node_blinding_point: Option<PublicKey>, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300]
+) -> UpdateAddHTLC
 where
 	NS::Target: NodeSigner,
-	L::Target: Logger,
 {
 	let new_packet = OnionPacket {
 		version: 0,
@@ -689,59 +687,26 @@ where
 		hmac: next_hop_hmac,
 	};
 
-	// let next_blinding_point = msg.blinding_point.map(|bp| {
-	// 		match onion_utils::next_hop_pubkey(
-	// 		&secp_ctx,
-	// 		bp,
-	// 		&shared_secret.secret_bytes()
-	// 	) {
-	// 		Ok(bp) => bp,
-	// 		Err(e) => {
-	// 			log_trace!(logger, "Failed to compute next blinding point: {}", e);
-	// 			return todo!()
-	// 		},
-	// 	}
-	// });
-
-	// While running a real Blinded Forward I noticed that this value is None.
-	// Maybe this is fundamental to be supported for dummy hops or maybe not.
-	// For now we simply ignore it.
-	let next_blinding_override = None;
-
-	let blinded = intro_node_blinding_point.or(msg.blinding_point)
-		.map(|bp| BlindedForward {
-			inbound_blinding_point: bp,
-			next_blinding_override,
-			failure: intro_node_blinding_point
-				.map(|_| BlindedFailure::FromIntroductionNode)
-				.unwrap_or(BlindedFailure::FromBlindedNode),
-		});
-
-	// This is how next_blinding_override will look.
-	// This was calculated in process_forward_htlcs, and this is how
-	// the blinding point is created for next_update_add_htlc. Since
-	// we are bypassing the entire routing process, we need to get
-	// these values here.
-	let next_blinding_point = blinded.and_then(|b| {
-		b.next_blinding_override.or_else(|| {
+	let next_blinding_point = intro_node_blinding_point
+		.or(msg.blinding_point)
+		.and_then(|blinding_point| {
 			let encrypted_tlvs_ss = node_signer
-				.ecdh(Recipient::Node, &b.inbound_blinding_point, None)
+				.ecdh(Recipient::Node, &blinding_point, None)
 				.unwrap()
 				.secret_bytes();
 			onion_utils::next_hop_pubkey(
 				&secp_ctx,
-				b.inbound_blinding_point,
+				blinding_point,
 				&encrypted_tlvs_ss,
 			)
 			.ok()
-		})
-	});
+		});
 
-	Ok(UpdateAddHTLC {
+	UpdateAddHTLC {
 		onion_routing_packet: new_packet,
 		blinding_point: next_blinding_point,
 		..msg
-	})
+	}
 }
 
 pub(super) fn check_incoming_htlc_cltv(
