@@ -473,13 +473,17 @@ where
 		onion_utils::Hop::Forward { shared_secret, .. } |
 		onion_utils::Hop::BlindedForward { shared_secret, .. } => {
 			let (next_packet_pubkey, outgoing_cltv_value) = match next_packet_details_opt { 
-				Some(NextPacketDetails::Forward { next_packet_pubkey, outgoing_cltv_value , ..}) => (next_packet_pubkey, outgoing_cltv_value),
-				// Forward should always include the next hop details
-				_ => return Err(InboundHTLCErr {
+				Some(NextPacketDetails {
+					next_packet_pubkey,
+					forward_info: Some(ForwardInfo { outgoing_cltv_value, .. }),
+				}) => (next_packet_pubkey, outgoing_cltv_value),
+				_ => {
+					return Err(InboundHTLCErr {
 						msg: "Failed to decode update add htlc onion",
 						reason: LocalHTLCFailureReason::InvalidOnionPayload,
 						err_data: Vec::new(),
-					}),
+					});
+				}
 			};
 
 			if let Err(reason) = check_incoming_htlc_cltv(
@@ -515,47 +519,46 @@ pub(super) enum HopConnector {
 	Trampoline(PublicKey),
 }
 
-pub(super) enum NextPacketDetails {
-	Forward {
-		next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-		outgoing_connector: HopConnector,
-		outgoing_amt_msat: u64,
-		outgoing_cltv_value: u32,
-	},
-	Dummy {
-		next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-	}
+pub(super) struct NextPacketDetails {
+	pub next_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+    pub forward_info: Option<ForwardInfo>,
 }
 
-impl NextPacketDetails {
-	pub(super) fn next_packet_pubkey(&self) -> Result<PublicKey, secp256k1::Error> {
-		match self {
-			Self::Forward { next_packet_pubkey, .. } => *next_packet_pubkey,
-			Self::Dummy { next_packet_pubkey } => *next_packet_pubkey,
-		}
-	}
-
-	pub(super) fn outgoing_connector(&self) -> Result<&HopConnector, ()> {
-		match self {
-			Self::Forward { outgoing_connector, .. } => Ok(outgoing_connector),
-			Self::Dummy { .. } => Err(()),
-		}
-	}
-
-	pub(super) fn outgoing_amt_msat(&self) -> Result<u64, ()> {
-		match self {
-			Self::Forward { outgoing_amt_msat, .. } => Ok(*outgoing_amt_msat),
-			Self::Dummy { .. } => Err(()),
-		}
-	}
-
-	pub(super) fn outgoing_cltv_value(&self) -> Result<u32, ()> {
-		match self {
-			Self::Forward { outgoing_cltv_value, .. } => Ok(*outgoing_cltv_value),
-			Self::Dummy { .. } => Err(()),
-		}
-	}
+pub(super) struct ForwardInfo {
+    pub outgoing_connector: HopConnector,
+    pub outgoing_amt_msat: u64,
+    pub outgoing_cltv_value: u32,
 }
+
+// impl NextPacketDetails {
+// 	pub(super) fn next_packet_pubkey(&self) -> Result<PublicKey, secp256k1::Error> {
+// 		match self {
+// 			Self::Forward { next_packet_pubkey, .. } => *next_packet_pubkey,
+// 			Self::Dummy { next_packet_pubkey } => *next_packet_pubkey,
+// 		}
+// 	}
+
+// 	pub(super) fn outgoing_connector(&self) -> Result<&HopConnector, ()> {
+// 		match self {
+// 			Self::Forward { outgoing_connector, .. } => Ok(outgoing_connector),
+// 			Self::Dummy { .. } => Err(()),
+// 		}
+// 	}
+
+// 	pub(super) fn outgoing_amt_msat(&self) -> Result<u64, ()> {
+// 		match self {
+// 			Self::Forward { outgoing_amt_msat, .. } => Ok(*outgoing_amt_msat),
+// 			Self::Dummy { .. } => Err(()),
+// 		}
+// 	}
+
+// 	pub(super) fn outgoing_cltv_value(&self) -> Result<u32, ()> {
+// 		match self {
+// 			Self::Forward { outgoing_cltv_value, .. } => Ok(*outgoing_cltv_value),
+// 			Self::Dummy { .. } => Err(()),
+// 		}
+// 	}
+// }
 
 
 #[rustfmt::skip]
@@ -628,9 +631,15 @@ where
 		onion_utils::Hop::Forward { next_hop_data: msgs::InboundOnionForwardPayload { short_channel_id, amt_to_forward, outgoing_cltv_value }, shared_secret, .. } => {
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
-			Some(NextPacketDetails::Forward {
-				next_packet_pubkey, outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
-				outgoing_amt_msat: amt_to_forward, outgoing_cltv_value
+
+			let forward_info = ForwardInfo {
+				outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
+				outgoing_amt_msat: amt_to_forward,
+				outgoing_cltv_value
+			};
+			Some(NextPacketDetails {
+				next_packet_pubkey,
+				forward_info: Some(forward_info)
 			})
 		}
 		onion_utils::Hop::BlindedForward { next_hop_data: msgs::InboundOnionBlindedForwardPayload { short_channel_id, ref payment_relay, ref payment_constraints, ref features, .. }, shared_secret, .. } => {
@@ -645,26 +654,36 @@ where
 			};
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(&secp_ctx,
 				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
-			Some(NextPacketDetails::Forward {
-				next_packet_pubkey, outgoing_connector: HopConnector::ShortChannelId(short_channel_id), outgoing_amt_msat: amt_to_forward,
+
+			let forward_info = ForwardInfo {
+				outgoing_connector: HopConnector::ShortChannelId(short_channel_id),
+				outgoing_amt_msat: amt_to_forward,
 				outgoing_cltv_value
+			};
+			Some(NextPacketDetails {
+				next_packet_pubkey,
+				forward_info: Some(forward_info)
 			})
 		}
 		onion_utils::Hop::TrampolineForward { next_trampoline_hop_data: msgs::InboundTrampolineForwardPayload { amt_to_forward, outgoing_cltv_value, next_trampoline }, trampoline_shared_secret, incoming_trampoline_public_key, .. } => {
 			let next_trampoline_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				incoming_trampoline_public_key, &trampoline_shared_secret.secret_bytes());
-			Some(NextPacketDetails::Forward {
-				next_packet_pubkey: next_trampoline_packet_pubkey,
+
+			let forward_info = ForwardInfo {
 				outgoing_connector: HopConnector::Trampoline(next_trampoline),
 				outgoing_amt_msat: amt_to_forward,
-				outgoing_cltv_value,
+				outgoing_cltv_value
+			};
+			Some(NextPacketDetails {
+				next_packet_pubkey: next_trampoline_packet_pubkey,
+				forward_info: Some(forward_info)
 			})
 		},
 		onion_utils::Hop::Dummy { shared_secret, .. } => {
 			let next_packet_pubkey = onion_utils::next_hop_pubkey(secp_ctx,
 				msg.onion_routing_packet.public_key.unwrap(), &shared_secret.secret_bytes());
 
-			Some(NextPacketDetails::Dummy { next_packet_pubkey })
+			Some(NextPacketDetails { next_packet_pubkey, forward_info: None })
 		}
 		_ => None
 	};
