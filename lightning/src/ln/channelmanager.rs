@@ -6607,15 +6607,8 @@ where
 					) {
 						Ok(decoded_onion) => {
 							match decoded_onion {
-								(onion_utils::Hop::Dummy { intro_node_blinding_point, shared_secret, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails::Dummy { next_packet_pubkey })) => {
-									let new_update_add_htlc = match create_new_update_add_htlc(update_add_htlc.clone(), &*self.node_signer, &*self.logger, &self.secp_ctx, shared_secret, intro_node_blinding_point, next_packet_pubkey, next_hop_hmac, new_packet_bytes) {
-										Ok(msg) => msg,
-										Err((htlc_fail, reason)) => {
-											let failure_type = HTLCHandlingFailureType::InvalidOnion;
-											htlc_fails.push((htlc_fail, failure_type, reason.into()));
-											continue;
-										}
-									};
+								(onion_utils::Hop::Dummy { intro_node_blinding_point, next_hop_hmac, new_packet_bytes, .. }, Some(NextPacketDetails::Dummy { next_packet_pubkey })) => {
+									let new_update_add_htlc = create_new_update_add_htlc(update_add_htlc.clone(), &*self.node_signer, &self.secp_ctx, intro_node_blinding_point, next_packet_pubkey, next_hop_hmac, new_packet_bytes);
 
 									dummy_update_add_htlcs.entry(incoming_scid_alias)
 										.or_insert_with(Vec::new)
