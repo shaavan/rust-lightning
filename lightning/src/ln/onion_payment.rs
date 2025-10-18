@@ -671,10 +671,13 @@ where
 	Ok((next_hop, next_packet_details))
 }
 
-pub(super) fn create_new_update_add_htlc(
-	msg: msgs::UpdateAddHTLC, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
-	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300],
+pub(super) fn create_new_update_add_htlc<L: Deref, T: secp256k1::Verification>(
+	msg: msgs::UpdateAddHTLC, logger: L, secp_ctx: &Secp256k1<T>,
+	shared_secret: SharedSecret, new_packet_pubkey: Result<PublicKey, secp256k1::Error>,
+	next_hop_hmac: [u8; 32], new_packet_bytes: [u8; 1300]
 ) -> Result<UpdateAddHTLC, (HTLCFailureMsg, LocalHTLCFailureReason)>
+where
+	L::Target: Logger,
 {
 	let new_packet = OnionPacket {
 		version: 0,
@@ -683,8 +686,23 @@ pub(super) fn create_new_update_add_htlc(
 		hmac: next_hop_hmac,
 	};
 
+	let next_blinding_point = msg.blinding_point.map(|bp| {
+			match onion_utils::next_hop_pubkey(
+			&secp_ctx,
+			bp,
+			&shared_secret.secret_bytes()
+		) {
+			Ok(bp) => bp,
+			Err(e) => {
+				log_trace!(logger, "Failed to compute next blinding point: {}", e);
+				return todo!()
+			},
+		}
+	});
+
 	Ok(UpdateAddHTLC {
 		onion_routing_packet: new_packet,
+		blinding_point: next_blinding_point,
 		..msg
 	})
 }
