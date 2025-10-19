@@ -2335,7 +2335,6 @@ fn test_path_paused_mpp() {
 	pass_along_path(
 		&nodes[0],
 		path_1,
-		None,
 		0,
 		payment_hash,
 		Some(payment_secret),
@@ -2356,7 +2355,6 @@ fn test_path_paused_mpp() {
 	pass_along_path(
 		&nodes[0],
 		path_2,
-		None,
 		200_000,
 		payment_hash,
 		Some(payment_secret),
@@ -4234,7 +4232,6 @@ fn do_test_glacial_peer_cant_hang(hold_chan_a: bool) {
 		pass_along_path(
 			&nodes[1],
 			&[&nodes[2]],
-			None,
 			1_000_000,
 			payment_hash_2,
 			Some(payment_secret_2),

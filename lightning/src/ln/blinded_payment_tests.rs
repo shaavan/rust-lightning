@@ -184,7 +184,7 @@ fn do_one_hop_blinded_path(success: bool) {
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(),
 	PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], amt_msat, payment_hash, payment_secret);
 	if success {
 		claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
 	} else {
@@ -226,7 +226,24 @@ fn one_hop_blinded_path_with_dummy_hops() {
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(),
 	PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], Some(1), amt_msat, payment_hash, payment_secret);
+
+	let mut events = nodes[0].node.get_and_clear_pending_msg_events();
+	assert_eq!(events.len(), 1);
+
+	let ev = remove_first_msg_event_to_node(&nodes[1].node.get_our_node_id(), &mut events);
+
+	pass_along_path_with_dummy(
+		&nodes[0],
+		&[&nodes[1]],
+		Some(1),
+		amt_msat,
+		payment_hash,
+		Some(payment_secret),
+		ev,
+		true,
+		None,
+	);
+
 	claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
 }
 
@@ -280,11 +297,11 @@ fn mpp_to_one_hop_blinded_path() {
 	assert_eq!(events.len(), 2);
 
 	let ev = remove_first_msg_event_to_node(&nodes[1].node.get_our_node_id(), &mut events);
-	pass_along_path(&nodes[0], expected_route[0], None, amt_msat, payment_hash.clone(),
+	pass_along_path(&nodes[0], expected_route[0], amt_msat, payment_hash.clone(),
 		Some(payment_secret), ev.clone(), false, None);
 
 	let ev = remove_first_msg_event_to_node(&nodes[2].node.get_our_node_id(), &mut events);
-	let event = pass_along_path(&nodes[0], expected_route[1], None, amt_msat, payment_hash.clone(),
+	let event = pass_along_path(&nodes[0], expected_route[1], amt_msat, payment_hash.clone(),
 		Some(payment_secret), ev.clone(), true, None);
 
 	match event.unwrap() {
@@ -372,11 +389,11 @@ fn mpp_to_three_hop_blinded_paths() {
 	assert_eq!(events.len(), 2);
 
 	let ev = remove_first_msg_event_to_node(&nodes[1].node.get_our_node_id(), &mut events);
-	pass_along_path(&nodes[0], expected_route[0], None, amt_msat, payment_hash.clone(),
+	pass_along_path(&nodes[0], expected_route[0], amt_msat, payment_hash.clone(),
 		Some(payment_secret), ev.clone(), false, None);
 
 	let ev = remove_first_msg_event_to_node(&nodes[2].node.get_our_node_id(), &mut events);
-	pass_along_path(&nodes[0], expected_route[1], None, amt_msat, payment_hash.clone(),
+	pass_along_path(&nodes[0], expected_route[1], amt_msat, payment_hash.clone(),
 		Some(payment_secret), ev.clone(), true, None);
 	claim_payment_along_route(
 		ClaimAlongRouteArgs::new(&nodes[0], expected_route, payment_preimage)
@@ -823,7 +840,7 @@ fn two_hop_blinded_path_success() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], amt_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
 }
 
@@ -852,7 +869,7 @@ fn three_hop_blinded_path_success() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], amt_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2], &nodes[3], &nodes[4]], payment_preimage);
 }
 
@@ -876,7 +893,7 @@ fn three_hop_blinded_path_fail() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3]]], amt_msat, payment_hash, payment_secret);
 
 	nodes[3].node.fail_htlc_backwards(&payment_hash);
 	expect_htlc_failure_conditions(
@@ -1164,7 +1181,7 @@ fn blinded_path_retries() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params.clone(), Retry::Attempts(2)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[3]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[3]]], amt_msat, payment_hash, payment_secret);
 
 	macro_rules! fail_payment_back {
 		($intro_node: expr) => {
@@ -1207,7 +1224,7 @@ fn blinded_path_retries() {
 	check_added_monitors!(nodes[0], 1);
 	let mut msg_events = nodes[0].node.get_and_clear_pending_msg_events();
 	assert_eq!(msg_events.len(), 1);
-	pass_along_path(&nodes[0], &[&nodes[2], &nodes[3]], None, amt_msat, payment_hash, Some(payment_secret), msg_events.pop().unwrap(), true, None);
+	pass_along_path(&nodes[0], &[&nodes[2], &nodes[3]], amt_msat, payment_hash, Some(payment_secret), msg_events.pop().unwrap(), true, None);
 
 	fail_payment_back!(nodes[2]);
 	let evs = nodes[0].node.get_and_clear_pending_events();
@@ -1262,7 +1279,7 @@ fn min_htlc() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params.clone(), Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3]]], None, min_htlc_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3]]], min_htlc_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2], &nodes[3]], payment_preimage);
 
 	// Paying 1 less than the min fails.
@@ -1339,7 +1356,7 @@ fn conditionally_round_fwd_amt() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], amt_msat, payment_hash, payment_secret);
 	nodes[4].node.claim_funds(payment_preimage);
 	let expected_path = &[&nodes[1], &nodes[2], &nodes[3], &nodes[4]];
 	let expected_route = &[&expected_path[..]];
@@ -1439,7 +1456,7 @@ fn fails_receive_tlvs_authentication() {
 	// Test authentication works normally.
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], amt_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
 
 	// Swap in a different nonce to force authentication to fail.
@@ -1525,7 +1542,7 @@ fn blinded_payment_path_padding() {
 
 	nodes[0].node.send_payment(payment_hash, RecipientOnionFields::spontaneous_empty(), PaymentId(payment_hash.0), route_params, Retry::Attempts(0)).unwrap();
 	check_added_monitors(&nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], None, amt_msat, payment_hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2], &nodes[3], &nodes[4]]], amt_msat, payment_hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2], &nodes[3], &nodes[4]], payment_preimage);
 }
 
@@ -2142,7 +2159,7 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 	check_added_monitors!(&nodes[0], 1);
 
 	if success {
-		pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, amt_msat, payment_hash, payment_secret);
+		pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], amt_msat, payment_hash, payment_secret);
 		claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
 	} else {
 		let replacement_onion = {

@@ -3255,7 +3255,6 @@ pub fn send_along_route_with_secret<'a, 'b, 'c>(
 	pass_along_route(
 		origin_node,
 		expected_paths,
-		None,
 		recv_value,
 		our_payment_hash,
 		our_payment_secret,
@@ -3515,6 +3514,25 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 
 pub fn pass_along_path<'a, 'b, 'c>(
 	origin_node: &Node<'a, 'b, 'c>, expected_path: &[&Node<'a, 'b, 'c>],
+	recv_value: u64, our_payment_hash: PaymentHash,
+	our_payment_secret: Option<PaymentSecret>, ev: MessageSendEvent,
+	payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
+) -> Option<Event> {
+	pass_along_path_with_dummy(
+		origin_node,
+		expected_path,
+		None, // no dummy hops
+		recv_value,
+		our_payment_hash,
+		our_payment_secret,
+		ev,
+		payment_claimable_expected,
+		expected_preimage,
+	)
+}
+
+pub fn pass_along_path_with_dummy<'a, 'b, 'c>(
+	origin_node: &Node<'a, 'b, 'c>, expected_path: &[&Node<'a, 'b, 'c>],
 	dummy_count: Option<usize>, recv_value: u64, our_payment_hash: PaymentHash,
 	our_payment_secret: Option<PaymentSecret>, ev: MessageSendEvent,
 	payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
@@ -3525,7 +3543,6 @@ pub fn pass_along_path<'a, 'b, 'c>(
 	if let Some(count) = dummy_count {
 		args = args.with_dummy_hops(count);
 	}
-
 	if !payment_claimable_expected {
 		args = args.without_claimable_event();
 	}
@@ -3568,8 +3585,7 @@ pub fn send_probe_along_route<'a, 'b, 'c>(
 
 pub fn pass_along_route<'a, 'b, 'c>(
 	origin_node: &Node<'a, 'b, 'c>, expected_route: &[&[&Node<'a, 'b, 'c>]],
-	dummy_count: Option<usize>, recv_value: u64, our_payment_hash: PaymentHash,
-	our_payment_secret: PaymentSecret,
+	recv_value: u64, our_payment_hash: PaymentHash, our_payment_secret: PaymentSecret,
 ) {
 	let mut events = origin_node.node.get_and_clear_pending_msg_events();
 	assert_eq!(events.len(), expected_route.len());
@@ -3583,7 +3599,6 @@ pub fn pass_along_route<'a, 'b, 'c>(
 		pass_along_path(
 			origin_node,
 			expected_path,
-			dummy_count,
 			recv_value,
 			our_payment_hash.clone(),
 			Some(our_payment_secret),

@@ -154,7 +154,6 @@ fn mpp_retry() {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		2_000_000,
 		hash,
 		Some(pay_secret),
@@ -209,7 +208,6 @@ fn mpp_retry() {
 	pass_along_path(
 		&nodes[0],
 		last_path,
-		None,
 		2_000_000,
 		hash,
 		Some(pay_secret),
@@ -292,7 +290,6 @@ fn mpp_retry_overpay() {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		amt_msat,
 		hash,
 		Some(pay_secret),
@@ -349,7 +346,7 @@ fn mpp_retry_overpay() {
 	assert_eq!(events.len(), 1);
 	let event = events.pop().unwrap();
 	let path = &[&nodes[2], &nodes[3]];
-	pass_along_path(&nodes[0], path, None, amt_msat, hash, Some(pay_secret), event, true, None);
+	pass_along_path(&nodes[0], path, amt_msat, hash, Some(pay_secret), event, true, None);
 
 	// Can't use claim_payment_along_route as it doesn't support overpayment, so we break out the
 	// individual steps here.
@@ -402,7 +399,6 @@ fn do_mpp_receive_timeout(send_partial_mpp: bool) {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		200_000,
 		hash,
 		Some(payment_secret),
@@ -451,7 +447,6 @@ fn do_mpp_receive_timeout(send_partial_mpp: bool) {
 		pass_along_path(
 			&nodes[0],
 			path,
-			None,
 			200_000,
 			hash,
 			payment_secret,
@@ -569,7 +564,6 @@ fn test_mpp_keysend() {
 	pass_along_path(
 		&nodes[0],
 		route[0],
-		None,
 		recv_value,
 		hash,
 		payment_secret,
@@ -582,7 +576,6 @@ fn test_mpp_keysend() {
 	pass_along_path(
 		&nodes[0],
 		route[1],
-		None,
 		recv_value,
 		hash,
 		payment_secret,
@@ -632,7 +625,6 @@ fn test_fulfill_hold_times() {
 	pass_along_path(
 		&nodes[0],
 		route[0],
-		None,
 		recv_value,
 		hash,
 		payment_secret,
@@ -1075,7 +1067,6 @@ fn do_retry_with_no_persist(confirm_before_reload: bool) {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		1_000_000,
 		payment_hash,
 		payment_secret,
@@ -1282,7 +1273,7 @@ fn do_test_completed_payment_not_retryable_on_reload(use_dust: bool) {
 	let onion = RecipientOnionFields::secret_only(payment_secret);
 	nodes[0].node.send_payment_with_route(new_route.clone(), hash, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], None, amt, hash, payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1], &nodes[2]]], amt, hash, payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1], &nodes[2]], payment_preimage);
 
 	let onion = RecipientOnionFields::secret_only(payment_secret);
@@ -1611,7 +1602,6 @@ fn get_ldk_payment_preimage() {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		amt_msat,
 		payment_hash,
 		payment_secret,
@@ -2018,7 +2008,7 @@ fn claimed_send_payment_idempotent() {
 	let onion = RecipientOnionFields::secret_only(second_payment_secret);
 	nodes[0].node.send_payment_with_route(route, hash_b, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, 100_000, hash_b, second_payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], 100_000, hash_b, second_payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], preimage_b);
 }
 
@@ -2087,7 +2077,7 @@ fn abandoned_send_payment_idempotent() {
 	let onion = RecipientOnionFields::secret_only(second_payment_secret);
 	nodes[0].node.send_payment_with_route(route, hash_b, onion, payment_id).unwrap();
 	check_added_monitors!(nodes[0], 1);
-	pass_along_route(&nodes[0], &[&[&nodes[1]]], None, 100_000, hash_b, second_payment_secret);
+	pass_along_route(&nodes[0], &[&[&nodes[1]]], 100_000, hash_b, second_payment_secret);
 	claim_payment(&nodes[0], &[&nodes[1]], second_payment_preimage);
 }
 
@@ -2808,7 +2798,6 @@ fn do_automatic_retries(test: AutoRetry) {
 		pass_along_path(
 			&nodes[0],
 			path,
-			None,
 			amt_msat,
 			hash,
 			Some(payment_secret),
@@ -2843,7 +2832,7 @@ fn do_automatic_retries(test: AutoRetry) {
 		let event = msg_events.pop().unwrap();
 
 		let path = &[&nodes[1], &nodes[2]];
-		pass_along_path(&nodes[0], path, None, amt_msat, hash, None, event, true, Some(preimage));
+		pass_along_path(&nodes[0], path, amt_msat, hash, None, event, true, Some(preimage));
 		claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], &[path], preimage));
 	} else if test == AutoRetry::FailAttempts {
 		// Ensure ChannelManager will not retry a payment if it has run out of payment attempts.
@@ -4396,7 +4385,6 @@ fn do_claim_from_closed_chan(fail_payment: bool) {
 	pass_along_path(
 		&nodes[0],
 		path_a,
-		None,
 		amt_msat,
 		hash,
 		Some(payment_secret),
@@ -4407,7 +4395,6 @@ fn do_claim_from_closed_chan(fail_payment: bool) {
 	let receive_event = pass_along_path(
 		&nodes[0],
 		path_b,
-		None,
 		amt_msat,
 		hash,
 		Some(payment_secret),
@@ -4790,7 +4777,6 @@ fn do_test_custom_tlvs_consistency(
 	pass_along_path(
 		&nodes[0],
 		path_a,
-		None,
 		amt_msat,
 		hash,
 		Some(payment_secret),
@@ -5467,7 +5453,6 @@ fn pay_route_without_params() {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		amt_msat,
 		hash,
 		Some(payment_secret),

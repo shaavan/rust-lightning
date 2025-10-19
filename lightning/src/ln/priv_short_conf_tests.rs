@@ -168,7 +168,6 @@ fn test_priv_forwarding_rejection() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
-		None,
 		10_000,
 		our_payment_hash,
 		our_payment_secret,
@@ -354,7 +353,6 @@ fn test_routed_scid_alias() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
-		None,
 		100_000,
 		payment_hash,
 		payment_secret,
@@ -591,7 +589,6 @@ fn test_inbound_scid_privacy() {
 	pass_along_route(
 		&nodes[0],
 		&[&[&nodes[1], &nodes[2]]],
-		None,
 		100_000,
 		payment_hash,
 		payment_secret,

@@ -3281,7 +3281,6 @@ fn do_test_htlc_timeout(send_partial_mpp: bool) {
 		pass_along_path(
 			&nodes[0],
 			&[&nodes[1]],
-			None,
 			100000,
 			our_payment_hash,
 			Some(payment_secret),
@@ -6958,7 +6957,6 @@ pub fn test_onion_value_mpp_set_calculation() {
 	pass_along_path(
 		&nodes[0],
 		expected_paths[1],
-		None,
 		101_000,
 		hash,
 		payment_secret,
@@ -7044,7 +7042,6 @@ fn do_test_overshoot_mpp(msat_amounts: &[u64], total_msat: u64) {
 		pass_along_path(
 			&nodes[src_idx],
 			expected_path,
-			None,
 			amount_received,
 			hash.clone(),
 			Some(payment_secret),
@@ -8341,7 +8338,6 @@ pub fn test_inconsistent_mpp_params() {
 	pass_along_path(
 		&nodes[0],
 		path_a,
-		None,
 		real_amt,
 		hash,
 		Some(payment_secret),
@@ -8425,7 +8421,6 @@ pub fn test_inconsistent_mpp_params() {
 	pass_along_path(
 		&nodes[0],
 		path_b,
-		None,
 		real_amt,
 		hash,
 		Some(payment_secret),
@@ -8499,7 +8494,6 @@ pub fn test_double_partial_claim() {
 	pass_along_path(
 		&nodes[0],
 		path,
-		None,
 		15_000_000,
 		hash,
 		Some(payment_secret),

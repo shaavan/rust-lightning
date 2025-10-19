@@ -18056,7 +18056,7 @@ mod tests {
 		check_added_monitors!(nodes[0], 1);
 		let mut events = nodes[0].node.get_and_clear_pending_msg_events();
 		assert_eq!(events.len(), 1);
-		pass_along_path(&nodes[0], &[&nodes[1]], None, 200_000, our_payment_hash, Some(payment_secret), events.drain(..).next().unwrap(), false, None);
+		pass_along_path(&nodes[0], &[&nodes[1]], 200_000, our_payment_hash, Some(payment_secret), events.drain(..).next().unwrap(), false, None);
 
 		// Next, send a keysend payment with the same payment_hash and make sure it fails.
 		nodes[0].node.send_spontaneous_payment(
@@ -18092,7 +18092,7 @@ mod tests {
 		check_added_monitors!(nodes[0], 1);
 		let mut events = nodes[0].node.get_and_clear_pending_msg_events();
 		assert_eq!(events.len(), 1);
-		pass_along_path(&nodes[0], &[&nodes[1]], None, 200_000, our_payment_hash, Some(payment_secret), events.drain(..).next().unwrap(), true, None);
+		pass_along_path(&nodes[0], &[&nodes[1]], 200_000, our_payment_hash, Some(payment_secret), events.drain(..).next().unwrap(), true, None);
 
 		// Claim the full MPP payment. Note that we can't use a test utility like
 		// claim_funds_along_route because the ordering of the messages causes the second half of the
@@ -18224,7 +18224,7 @@ mod tests {
 		assert_eq!(events.len(), 1);
 		let event = events.pop().unwrap();
 		let path = vec![&nodes[1]];
-		pass_along_path(&nodes[0], &path, None, 100_000, payment_hash, None, event, true, Some(payment_preimage));
+		pass_along_path(&nodes[0], &path, 100_000, payment_hash, None, event, true, Some(payment_preimage));
 
 		// Next, attempt a regular payment and make sure it fails.
 		let payment_secret = PaymentSecret([43; 32]);
@@ -18267,7 +18267,7 @@ mod tests {
 		assert_eq!(events.len(), 1);
 		let event = events.pop().unwrap();
 		let path = vec![&nodes[1]];
-		pass_along_path(&nodes[0], &path, None, 100_000, payment_hash, None, event, true, Some(payment_preimage));
+		pass_along_path(&nodes[0], &path, 100_000, payment_hash, None, event, true, Some(payment_preimage));
 
 		// Next, attempt a keysend payment and make sure it fails.
 		let route_params = RouteParameters::from_payment_params_and_value(
