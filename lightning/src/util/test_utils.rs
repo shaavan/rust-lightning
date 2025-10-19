@@ -191,6 +191,8 @@ impl<'a> TestRouter<'a> {
 }
 
 impl<'a> Router for TestRouter<'a> {
+	const DUMMY_HOPS: usize = 3;
+
 	fn find_route(
 		&self, payer: &PublicKey, params: &RouteParameters, first_hops: Option<&[&ChannelDetails]>,
 		inflight_htlcs: InFlightHtlcs,

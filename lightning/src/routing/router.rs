@@ -108,6 +108,8 @@ where
 	S::Target: for<'a> LockableScore<'a, ScoreLookUp = Sc>,
 	ES::Target: EntropySource,
 {
+	const DUMMY_HOPS: usize = 3;
+
 	#[rustfmt::skip]
 	fn find_route(
 		&self,
@@ -198,9 +200,9 @@ where
 				})
 			})
 			.map(|forward_node| {
-				BlindedPaymentPath::new(
-					&[forward_node], recipient, receive_auth_key, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA,
-					&*self.entropy_source, secp_ctx
+				BlindedPaymentPath::new_with_dummy_hops(
+					&[forward_node], recipient, Self::DUMMY_HOPS, receive_auth_key, tlvs.clone(), u64::MAX,
+					MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source, secp_ctx
 				)
 			})
 			.take(MAX_PAYMENT_PATHS)
@@ -210,9 +212,9 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
-					BlindedPaymentPath::new(
-						&[], recipient, receive_auth_key, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source,
-						secp_ctx
+					BlindedPaymentPath::new_with_dummy_hops(
+						&[], recipient, Self::DUMMY_HOPS, receive_auth_key, tlvs, u64::MAX,
+						MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source, secp_ctx
 					).map(|path| vec![path])
 				} else {
 					Err(())
@@ -237,6 +239,8 @@ impl FixedRouter {
 }
 
 impl Router for FixedRouter {
+	const DUMMY_HOPS: usize = 0;
+
 	fn find_route(
 		&self, _payer: &PublicKey, _route_params: &RouteParameters,
 		_first_hops: Option<&[&ChannelDetails]>, _inflight_htlcs: InFlightHtlcs,
@@ -257,6 +261,8 @@ impl Router for FixedRouter {
 
 /// A trait defining behavior for routing a payment.
 pub trait Router {
+	const DUMMY_HOPS: usize;
+
 	/// Finds a [`Route`] for a payment between the given `payer` and a payee.
 	///
 	/// The `payee` and the payment's value are given in [`RouteParameters::payment_params`]

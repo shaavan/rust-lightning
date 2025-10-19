@@ -37,7 +37,7 @@ use crate::ln::peer_handler::IgnoringMessageHandler;
 use crate::ln::types::ChannelId;
 use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{NetworkGraph, NetworkUpdate, P2PGossipSync};
-use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
+use crate::routing::router::{self, PaymentParameters, Route, RouteParameters, Router};
 use crate::sign::{EntropySource, RandomBytes};
 use crate::types::features::ChannelTypeFeatures;
 use crate::types::features::InitFeatures;
@@ -48,7 +48,7 @@ use crate::util::scid_utils;
 use crate::util::ser::{ReadableArgs, Writeable};
 use crate::util::test_channel_signer::SignerOp;
 use crate::util::test_channel_signer::TestChannelSigner;
-use crate::util::test_utils::{self, TestLogger};
+use crate::util::test_utils::{self, TestLogger, TestRouter};
 use crate::util::test_utils::{TestChainMonitor, TestKeysInterface, TestScorer};
 
 use bitcoin::amount::Amount;
@@ -3282,7 +3282,7 @@ fn fail_payment_along_path<'a, 'b, 'c>(expected_path: &[&Node<'a, 'b, 'c>]) {
 pub struct PassAlongPathArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_path: &'a [&'a Node<'b, 'c, 'd>],
-	pub dummy_count: Option<usize>,
+	pub dummy_hop_override: Option<usize>,
 	pub recv_value: u64,
 	pub payment_hash: PaymentHash,
 	pub payment_secret: Option<PaymentSecret>,
@@ -3304,7 +3304,7 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node,
 			expected_path,
-			dummy_count: None,
+			dummy_hop_override: None,
 			recv_value,
 			payment_hash,
 			payment_secret: None,
@@ -3353,8 +3353,8 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		self
 	}
 
-	pub fn with_dummy_hops(mut self, dummy_count: usize) -> Self {
-		self.dummy_count = Some(dummy_count);
+	pub fn with_dummy_override(mut self, dummy_override: usize) -> Self {
+		self.dummy_hop_override = Some(dummy_override);
 		self
 	}
 }
@@ -3363,7 +3363,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 	let PassAlongPathArgs {
 		origin_node,
 		expected_path,
-		dummy_count,
+		dummy_hop_override,
 		recv_value,
 		payment_hash: our_payment_hash,
 		payment_secret: our_payment_secret,
@@ -3397,14 +3397,14 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 			node.node.process_pending_htlc_forwards();
 		}
 
-		if let Some(count) = dummy_count {
-			println!("\n\ndummy count: {}\n\n", count);
-			for _ in 0..count {
+		if is_last_hop {
+			let dummy_count = dummy_hop_override.unwrap_or(<TestRouter as Router>::DUMMY_HOPS);
+			for _ in 0..dummy_count {
 				println!("This ran");
 				node.node.process_pending_htlc_forwards();
 			}
 		}
-
+		
 		if is_last_hop && clear_recipient_events {
 			let events_2 = node.node.get_and_clear_pending_events();
 			if payment_claimable_expected {
@@ -3541,7 +3541,7 @@ pub fn pass_along_path_with_dummy<'a, 'b, 'c>(
 		PassAlongPathArgs::new(origin_node, expected_path, recv_value, our_payment_hash, ev);
 
 	if let Some(count) = dummy_count {
-		args = args.with_dummy_hops(count);
+		args = args.with_dummy_override(count);
 	}
 	if !payment_claimable_expected {
 		args = args.without_claimable_event();
