@@ -2356,6 +2356,12 @@ where
 						new_packet_bytes,
 					})
 				},
+				msgs::InboundOnionPayload::Dummy(dummy_hop_data) => Ok(Hop::Dummy {
+					dummy_hop_data,
+					shared_secret,
+					next_hop_hmac,
+					new_packet_bytes,
+				}),
 				_ => {
 					if blinding_point.is_some() {
 						return Err(OnionDecodeErr::Malformed {
