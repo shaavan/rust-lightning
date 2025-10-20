@@ -66,7 +66,7 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::ln::funding::SpliceContribution;
 use crate::ln::inbound_payment;
 use crate::ln::interactivetxs::InteractiveTxMessageSend;
-use crate::ln::msgs;
+use crate::ln::msgs::{self, OnionPacket, UpdateAddHTLC};
 use crate::ln::msgs::{
 	BaseMessageHandler, ChannelMessageHandler, CommitmentUpdate, DecodeError, LightningError,
 	MessageSendEvent,
@@ -6884,6 +6884,7 @@ where
 	fn process_pending_update_add_htlcs(&self) -> bool {
 		let mut should_persist = false;
 		let mut decode_update_add_htlcs = new_hash_map();
+		let mut dummy_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
@@ -6947,7 +6948,67 @@ where
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => decoded_onion,
+						Ok(decoded_onion) => match decoded_onion {
+							(
+								onion_utils::Hop::Dummy {
+									intro_node_blinding_point,
+									next_hop_hmac,
+									new_packet_bytes,
+									..
+								},
+								Some(NextPacketDetails {
+									next_packet_pubkey,
+									next_hop_forward_info,
+								}),
+							) => {
+								debug_assert!(
+										next_hop_forward_info.is_none(),
+										"Dummy hops must not contain any forward info, since they are not actually forwarded."
+									);
+
+								// Dummy hops are not forwarded. Instead, we reconstruct a new UpdateAddHTLC
+								// with the next onion packet (ephemeral pubkey, hop data, and HMAC) and push
+								// it back into our own processing queue. This lets us step through the dummy
+								// layers locally until we reach the next real hop.
+								let next_blinding_point = intro_node_blinding_point
+									.or(update_add_htlc.blinding_point)
+									.and_then(|blinding_point| {
+										let ss = self
+											.node_signer
+											.ecdh(Recipient::Node, &blinding_point, None)
+											.ok()?
+											.secret_bytes();
+
+										onion_utils::next_hop_pubkey(
+											&self.secp_ctx,
+											blinding_point,
+											&ss,
+										)
+										.ok()
+									});
+
+								let new_onion_packet = OnionPacket {
+									version: 0,
+									public_key: next_packet_pubkey,
+									hop_data: new_packet_bytes,
+									hmac: next_hop_hmac,
+								};
+
+								let new_update_add_htlc = UpdateAddHTLC {
+									onion_routing_packet: new_onion_packet,
+									blinding_point: next_blinding_point,
+									..update_add_htlc.clone()
+								};
+
+								dummy_update_add_htlcs
+									.entry(incoming_scid_alias)
+									.or_insert_with(Vec::new)
+									.push(new_update_add_htlc);
+
+								continue;
+							},
+							_ => decoded_onion,
+						},
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
@@ -7104,6 +7165,19 @@ where
 				));
 			}
 		}
+
+		// Merge peeled dummy HTLCs into the existing decode queue so they can be
+		// processed in the next iteration. We avoid replacing the whole queue
+		// (e.g. via mem::swap) because other threads may have enqueued new HTLCs
+		// meanwhile; merging preserves everything safely.
+		if !dummy_update_add_htlcs.is_empty() {
+			let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
+
+			for (incoming_scid_alias, htlcs) in dummy_update_add_htlcs.into_iter() {
+				decode_update_add_htlc_source.entry(incoming_scid_alias).or_default().extend(htlcs);
+			}
+		}
+
 		should_persist
 	}
 
