@@ -15,7 +15,7 @@ use crate::ln::channelmanager::{
 	BlindedFailure, BlindedForward, HTLCFailureMsg, PendingHTLCInfo, PendingHTLCRouting,
 	CLTV_FAR_FAR_AWAY, MIN_CLTV_EXPIRY_DELTA,
 };
-use crate::ln::msgs;
+use crate::ln::msgs::{self, OnionPacket, UpdateAddHTLC};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{HTLCFailReason, LocalHTLCFailureReason, ONION_DATA_LEN};
 use crate::sign::{NodeSigner, Recipient};
@@ -666,6 +666,32 @@ where
 	};
 
 	Ok((next_hop, next_packet_details))
+}
+
+pub(super) fn create_new_update_add_htlc<NS: Deref, T: secp256k1::Verification>(
+	msg: msgs::UpdateAddHTLC, node_signer: NS, secp_ctx: &Secp256k1<T>,
+	intro_node_blinding_point: Option<PublicKey>,
+	new_packet_pubkey: Result<PublicKey, secp256k1::Error>, next_hop_hmac: [u8; 32],
+	new_packet_bytes: [u8; 1300],
+) -> UpdateAddHTLC
+where
+	NS::Target: NodeSigner,
+{
+	let new_packet = OnionPacket {
+		version: 0,
+		public_key: new_packet_pubkey,
+		hop_data: new_packet_bytes,
+		hmac: next_hop_hmac,
+	};
+
+	let next_blinding_point =
+		intro_node_blinding_point.or(msg.blinding_point).and_then(|blinding_point| {
+			let encrypted_tlvs_ss =
+				node_signer.ecdh(Recipient::Node, &blinding_point, None).unwrap().secret_bytes();
+			onion_utils::next_hop_pubkey(&secp_ctx, blinding_point, &encrypted_tlvs_ss).ok()
+		});
+
+	UpdateAddHTLC { onion_routing_packet: new_packet, blinding_point: next_blinding_point, ..msg }
 }
 
 pub(super) fn check_incoming_htlc_cltv(

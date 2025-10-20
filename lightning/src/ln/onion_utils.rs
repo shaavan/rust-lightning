@@ -2339,6 +2339,18 @@ where
 	let shared_secret =
 		node_signer.ecdh(recipient, hop_pubkey, blinded_node_id_tweak.as_ref()).unwrap();
 
+	let check_authentication = |payment_tlvs_authenticated: bool| -> Result<(), OnionDecodeErr> {
+		if !payment_tlvs_authenticated {
+			return Err(OnionDecodeErr::Relay {
+				err_msg: "Final Node OnionHopData provided for us as an intermediary node",
+				reason: LocalHTLCFailureReason::InvalidOnionPayload,
+				shared_secret,
+				trampoline_shared_secret: None,
+			});
+		}
+		Ok(())
+	};
+
 	let decoded_hop: Result<(msgs::InboundOnionPayload, Option<_>), _> = decode_next_hop(
 		shared_secret.secret_bytes(),
 		hop_data,
@@ -2359,6 +2371,18 @@ where
 					Ok(Hop::BlindedForward {
 						shared_secret,
 						next_hop_data,
+						next_hop_hmac,
+						new_packet_bytes,
+					})
+				},
+				msgs::InboundOnionPayload::Dummy {
+					intro_node_blinding_point,
+					payment_tlvs_authenticated,
+				} => {
+					check_authentication(payment_tlvs_authenticated)?;
+					Ok(Hop::Dummy {
+						intro_node_blinding_point,
+						shared_secret,
 						next_hop_hmac,
 						new_packet_bytes,
 					})
