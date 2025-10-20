@@ -72,9 +72,9 @@ use crate::ln::msgs::{
 	MessageSendEvent,
 };
 use crate::ln::onion_payment::{
-	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_recv_pending_htlc_info,
-	decode_incoming_update_add_htlc_onion, invalid_payment_err_data, ForwardInfo, HopConnector,
-	InboundHTLCErr, NextPacketDetails,
+	check_incoming_htlc_cltv, create_fwd_pending_htlc_info, create_new_update_add_htlc,
+	create_recv_pending_htlc_info, decode_incoming_update_add_htlc_onion, invalid_payment_err_data,
+	ForwardInfo, HopConnector, InboundHTLCErr, NextPacketDetails,
 };
 use crate::ln::onion_utils::{self};
 use crate::ln::onion_utils::{
@@ -6851,6 +6851,7 @@ where
 	pub(crate) fn process_pending_update_add_htlcs(&self) -> bool {
 		let mut should_persist = false;
 		let mut decode_update_add_htlcs = new_hash_map();
+		let mut dummy_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
@@ -6914,7 +6915,39 @@ where
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => decoded_onion,
+						Ok(decoded_onion) => match decoded_onion {
+							(
+								onion_utils::Hop::Dummy {
+									intro_node_blinding_point,
+									next_hop_hmac,
+									new_packet_bytes,
+									..
+								},
+								Some(NextPacketDetails { next_packet_pubkey, forward_info }),
+							) => {
+								debug_assert!(
+										forward_info.is_none(),
+										"Dummy hops must not contain any forward info, since they are not actually forwarded."
+									);
+								let new_update_add_htlc = create_new_update_add_htlc(
+									update_add_htlc.clone(),
+									&*self.node_signer,
+									&self.secp_ctx,
+									intro_node_blinding_point,
+									next_packet_pubkey,
+									next_hop_hmac,
+									new_packet_bytes,
+								);
+
+								dummy_update_add_htlcs
+									.entry(incoming_scid_alias)
+									.or_insert_with(Vec::new)
+									.push(new_update_add_htlc);
+
+								continue;
+							},
+							_ => decoded_onion,
+						},
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
@@ -7071,6 +7104,11 @@ where
 				));
 			}
 		}
+
+		// Replace the decode queue with the peeled dummy HTLCs so they can be processed in the next iteration.
+		let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
+		mem::swap(&mut *decode_update_add_htlc_source, &mut dummy_update_add_htlcs);
+
 		should_persist
 	}
 
