@@ -7144,14 +7144,10 @@ where
 		// (e.g. via mem::swap) because other threads may have enqueued new HTLCs
 		// meanwhile; merging preserves everything safely.
 		if !dummy_update_add_htlcs.is_empty() {
-			let mut decode_update_add_htlc_source =
-				self.decode_update_add_htlcs.lock().unwrap();
+			let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
 
 			for (incoming_scid_alias, htlcs) in dummy_update_add_htlcs.into_iter() {
-				decode_update_add_htlc_source
-					.entry(incoming_scid_alias)
-					.or_default()
-					.extend(htlcs);
+				decode_update_add_htlc_source.entry(incoming_scid_alias).or_default().extend(htlcs);
 			}
 		}
 
