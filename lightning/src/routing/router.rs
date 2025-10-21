@@ -74,6 +74,9 @@ pub struct DefaultRouter<
 	score_params: SP,
 }
 
+/// Default number of Dummy Hops
+pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 0;
+
 impl<
 		G: Deref<Target = NetworkGraph<L>>,
 		L: Deref,
