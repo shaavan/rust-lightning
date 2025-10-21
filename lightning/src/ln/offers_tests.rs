@@ -185,7 +185,20 @@ fn route_bolt12_payment<'a, 'b, 'c>(
 fn claim_bolt12_payment<'a, 'b, 'c>(
 	node: &Node<'a, 'b, 'c>, path: &[&Node<'a, 'b, 'c>], expected_payment_context: PaymentContext, invoice: &Bolt12Invoice
 ) {
-	let recipient = &path[path.len() - 1];
+	claim_bolt12_payment_with_fees(
+		node,
+		path,
+		expected_payment_context,
+		invoice,
+		None,
+	)
+}
+
+fn claim_bolt12_payment_with_fees<'a, 'b, 'c>(
+	node: &Node<'a, 'b, 'c>, path: &[&Node<'a, 'b, 'c>], expected_payment_context: PaymentContext, invoice: &Bolt12Invoice,
+	expected_extra_fees_msat: Option<u64>,
+) {
+	let recipient = path.last().expect("Empty path?");
 	let payment_purpose = match get_event!(recipient, Event::PaymentClaimable) {
 		Event::PaymentClaimable { purpose, .. } => purpose,
 		_ => panic!("No Event::PaymentClaimable"),
@@ -194,20 +207,29 @@ fn claim_bolt12_payment<'a, 'b, 'c>(
 		Some(preimage) => preimage,
 		None => panic!("No preimage in Event::PaymentClaimable"),
 	};
-	match payment_purpose {
-		PaymentPurpose::Bolt12OfferPayment { payment_context, .. } => {
-			assert_eq!(PaymentContext::Bolt12Offer(payment_context), expected_payment_context);
-		},
-		PaymentPurpose::Bolt12RefundPayment { payment_context, .. } => {
-			assert_eq!(PaymentContext::Bolt12Refund(payment_context), expected_payment_context);
-		},
+	let context = match payment_purpose {
+		PaymentPurpose::Bolt12OfferPayment { payment_context, .. } =>
+			PaymentContext::Bolt12Offer(payment_context),
+		PaymentPurpose::Bolt12RefundPayment { payment_context, .. } =>
+			PaymentContext::Bolt12Refund(payment_context),
 		_ => panic!("Unexpected payment purpose: {:?}", payment_purpose),
-	}
-	if let Some(inv) = claim_payment(node, path, payment_preimage) {
-		assert_eq!(inv, PaidBolt12Invoice::Bolt12Invoice(invoice.to_owned()));
-	} else {
-		panic!("Expected PaidInvoice::Bolt12Invoice");
 	};
+
+	assert_eq!(context, expected_payment_context);
+
+	let expected_paths = [path];
+	let mut args = ClaimAlongRouteArgs::new(
+		node,
+		&expected_paths,
+		payment_preimage,
+	);
+
+	if let Some(extra) = expected_extra_fees_msat {
+		args = args.with_expected_extra_total_fees_msat(extra);
+	}
+
+	let (inv, _) = claim_payment_along_route(args);
+	assert_eq!(inv, Some(PaidBolt12Invoice::Bolt12Invoice(invoice.clone())));
 }
 
 fn extract_offer_nonce<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, message: &OnionMessage) -> Nonce {
@@ -1410,41 +1432,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	// Extract PaymentClaimable, verify context, and obtain the payment preimage.
-	let recipient = &alice;
-	let payment_purpose = match get_event!(recipient, Event::PaymentClaimable) {
-		Event::PaymentClaimable { purpose, .. } => purpose,
-		_ => panic!("No Event::PaymentClaimable"),
-	};
-
-	let payment_preimage = payment_purpose
-		.preimage()
-		.expect("No preimage in Event::PaymentClaimable");
-
-	match payment_purpose {
-		PaymentPurpose::Bolt12OfferPayment { payment_context: ctx, .. } => {
-			assert_eq!(PaymentContext::Bolt12Offer(ctx), payment_context);
-		},
-		PaymentPurpose::Bolt12RefundPayment { payment_context: ctx, .. } => {
-			assert_eq!(PaymentContext::Bolt12Refund(ctx), payment_context);
-		},
-		_ => panic!("Unexpected payment purpose: {:?}", payment_purpose),
-	};
-
-	// Build ClaimAlongRouteArgs and compensate for the expected overpayment
-	// caused by the payer being the introduction node of the blinded path with
-	// dummy hops.
-	let expected_paths: &[&[&Node]] = &[&[alice]];
-	let args = ClaimAlongRouteArgs::new(
-		bob,
-		expected_paths,
-		payment_preimage,
-	).with_expected_extra_total_fees_msat(1000);
-
-	// Execute the claim and verify the invoice was fulfilled.
-	let (inv, _events) = claim_payment_along_route(args);
-	assert_eq!(inv, Some(PaidBolt12Invoice::Bolt12Invoice(invoice.clone())));
-
+	claim_bolt12_payment_with_fees(bob, &[alice], payment_context, &invoice, Some(1000));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
