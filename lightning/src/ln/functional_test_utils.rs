@@ -39,7 +39,9 @@ use crate::ln::peer_handler::IgnoringMessageHandler;
 use crate::ln::types::ChannelId;
 use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{NetworkGraph, NetworkUpdate, P2PGossipSync};
-use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
+use crate::routing::router::{
+	self, PaymentParameters, Route, RouteParameters, DEFAULT_PAYMENT_DUMMY_HOPS,
+};
 use crate::sign::{EntropySource, RandomBytes};
 use crate::types::features::ChannelTypeFeatures;
 use crate::types::features::InitFeatures;
@@ -3435,6 +3437,7 @@ fn fail_payment_along_path<'a, 'b, 'c>(expected_path: &[&Node<'a, 'b, 'c>]) {
 pub struct PassAlongPathArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_path: &'a [&'a Node<'b, 'c, 'd>],
+	pub dummy_hop_override: Option<usize>,
 	pub recv_value: u64,
 	pub payment_hash: PaymentHash,
 	pub payment_secret: Option<PaymentSecret>,
@@ -3456,6 +3459,7 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node,
 			expected_path,
+			dummy_hop_override: None,
 			recv_value,
 			payment_hash,
 			payment_secret: None,
@@ -3503,12 +3507,17 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 		self.expected_failure = Some(failure);
 		self
 	}
+	pub fn with_dummy_override(mut self, dummy_override: usize) -> Self {
+		self.dummy_hop_override = Some(dummy_override);
+		self
+	}
 }
 
 pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> {
 	let PassAlongPathArgs {
 		origin_node,
 		expected_path,
+		dummy_hop_override,
 		recv_value,
 		payment_hash: our_payment_hash,
 		payment_secret: our_payment_secret,
@@ -3541,6 +3550,14 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 			let commitment = &payment_event.commitment_msg;
 			do_commitment_signed_dance(node, prev_node, commitment, false, false);
 			node.node.process_pending_htlc_forwards();
+		}
+
+		if is_last_hop {
+			let dummy_count = dummy_hop_override.unwrap_or(DEFAULT_PAYMENT_DUMMY_HOPS);
+			for _ in 0..dummy_count {
+				println!("This ran");
+				node.node.process_pending_htlc_forwards();
+			}
 		}
 
 		if is_last_hop && clear_recipient_events {
@@ -3655,8 +3672,32 @@ pub fn pass_along_path<'a, 'b, 'c>(
 	our_payment_hash: PaymentHash, our_payment_secret: Option<PaymentSecret>, ev: MessageSendEvent,
 	payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
 ) -> Option<Event> {
+	pass_along_path_with_dummy(
+		origin_node,
+		expected_path,
+		None, // no dummy hops
+		recv_value,
+		our_payment_hash,
+		our_payment_secret,
+		ev,
+		payment_claimable_expected,
+		expected_preimage,
+	)
+}
+
+pub fn pass_along_path_with_dummy<'a, 'b, 'c>(
+	origin_node: &Node<'a, 'b, 'c>, expected_path: &[&Node<'a, 'b, 'c>],
+	dummy_count: Option<usize>, recv_value: u64, our_payment_hash: PaymentHash,
+	our_payment_secret: Option<PaymentSecret>, ev: MessageSendEvent,
+	payment_claimable_expected: bool, expected_preimage: Option<PaymentPreimage>,
+) -> Option<Event> {
 	let mut args =
 		PassAlongPathArgs::new(origin_node, expected_path, recv_value, our_payment_hash, ev);
+
+	if let Some(count) = dummy_count {
+		args = args.with_dummy_override(count);
+	}
+
 	if !payment_claimable_expected {
 		args = args.without_claimable_event();
 	}
