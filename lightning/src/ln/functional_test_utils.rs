@@ -1076,6 +1076,7 @@ pub fn get_htlc_update_msgs(node: &Node, recipient: &PublicKey) -> msgs::Commitm
 	assert_eq!(events.len(), 1);
 	match events[0] {
 		MessageSendEvent::UpdateHTLCs { ref node_id, channel_id: _, ref updates } => {
+			println!("\n\ncommitment updates: {:?}\n\n", updates);
 			assert_eq!(node_id, recipient);
 			(*updates).clone()
 		},

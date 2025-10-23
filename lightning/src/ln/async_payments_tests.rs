@@ -1854,6 +1854,11 @@ fn expired_static_invoice_payment_path() {
 	// Extract the expiry height from the to-be-expired blinded payment path.
 	let final_max_cltv_expiry = {
 		let mut blinded_path = static_invoice_expired_paths.payment_paths().to_vec().pop().unwrap();
+		// Expected forward tlv
+		blinded_path
+			.advance_path_by_one(&nodes[1].keys_manager, &nodes[1].node, &secp_ctx)
+			.unwrap();
+		// Expected dummy tlv
 		blinded_path
 			.advance_path_by_one(&nodes[1].keys_manager, &nodes[1].node, &secp_ctx)
 			.unwrap();
