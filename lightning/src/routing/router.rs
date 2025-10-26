@@ -75,7 +75,7 @@ pub struct DefaultRouter<
 }
 
 /// Default number of Dummy Hops
-pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 3;
+pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 1;
 
 impl<
 		G: Deref<Target = NetworkGraph<L>>,
@@ -1529,6 +1529,7 @@ pub struct BlindedPathCandidate<'a> {
 	/// one from the public network graph (assuming the introduction point is a public node).
 	///
 	/// [`NodeInfo::node_counter`]: super::gossip::NodeInfo::node_counter
+	// This value distorts with the dummy hops. Is this okay?
 	source_node_counter: u32,
 }
 
@@ -2907,8 +2908,15 @@ where L::Target: Logger {
 						let curr_min = cmp::max(
 							$next_hops_path_htlc_minimum_msat, htlc_minimum_msat
 						);
+						// We are getting the wrong src_node_counter for dummy hops case.
+						// Getting 3 instead of expected 0
 						let src_node_counter = $candidate.src_node_counter();
+						println!("\n\nThe candidate hop: {:?}\n\n", &$candidate);
 						let mut candidate_fees = $candidate.fees();
+						println!("\n\nCandidate Fees before any change: {:?}\n\n", candidate_fees);
+						// Found the cause of failure. This condition is not triggered for dummy, and should be triggered.
+						println!("\n\nsource node counter: {:?}\n\n", src_node_counter);
+						println!("\n\npayer node counter: {:?}\n\n", payer_node_counter);
 						if src_node_counter == payer_node_counter {
 							// We do not charge ourselves a fee to use our own channels.
 							candidate_fees = RoutingFees {
@@ -2957,6 +2965,7 @@ where L::Target: Logger {
 
 						if should_process {
 							let mut hop_use_fee_msat = 0;
+							// Fee is as it should be till here.
 							let mut total_fee_msat: u64 = $next_hops_fee_msat;
 
 							// Ignore hop_use_fee_msat for channel-from-us as we assume all channels-from-us
@@ -2964,9 +2973,14 @@ where L::Target: Logger {
 							if src_node_id != our_node_id {
 								// Note that `u64::max_value` means we'll always fail the
 								// `old_entry.total_fee_msat > total_fee_msat` check below
+								println!("\n\nCandidate Fee: {:?}\n\n", candidate_fees);
+							
 								hop_use_fee_msat = compute_fees_saturating(amount_to_transfer_over_msat, candidate_fees);
 								total_fee_msat = total_fee_msat.saturating_add(hop_use_fee_msat);
 							}
+
+							// Fee unexpectedly increases by this point.
+							println!("\n\nTotal fee msat at point B: {}\n\n", total_fee_msat);
 
 							// Ignore hops if augmenting the current path to them would put us over `max_total_routing_fee_msat`
 							if total_fee_msat > max_total_routing_fee_msat {

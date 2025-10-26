@@ -44,6 +44,7 @@ use crate::prelude::*;
 #[derive(Clone, Debug, Hash, Eq, PartialEq)]
 pub struct BlindedPayInfo {
 	/// Base fee charged (in millisatoshi) for the entire blinded path.
+	// This value is set to 1000, instead of expected 0 with dummy hop path
 	pub fee_base_msat: u32,
 
 	/// Liquidity fee charged (in millionths of the amount transferred) for the entire blinded path
@@ -52,6 +53,7 @@ pub struct BlindedPayInfo {
 
 	/// Number of blocks subtracted from an incoming HTLC's `cltv_expiry` for the entire blinded
 	/// path.
+	// This value change to 122 instead of expected 42. Why? Is that okay?
 	pub cltv_expiry_delta: u16,
 
 	/// The minimum HTLC value (in millisatoshi) that is acceptable to all channel peers on the
@@ -158,12 +160,16 @@ impl BlindedPaymentPath {
 		let blinding_secret =
 			SecretKey::from_slice(&blinding_secret_bytes[..]).expect("RNG is busted");
 
+		// Found the source of error!! Wrong compute payinfo, when there are dummy hops!
 		let blinded_payinfo = compute_payinfo(
 			intermediate_nodes,
 			&payee_tlvs,
 			htlc_maximum_msat,
 			min_final_cltv_expiry_delta,
 		)?;
+
+		println!("\n\nPayinfo at time of Blinded Path creation: {:?}\n\n", &blinded_payinfo);
+
 		Ok(Self {
 			inner_path: BlindedPath {
 				introduction_node,

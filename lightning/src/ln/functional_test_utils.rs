@@ -2853,6 +2853,8 @@ pub fn expect_payment_sent<CM: AChannelManager, H: NodeHolder<CM = CM>>(
 			assert_eq!(expected_payment_hash, *payment_hash);
 			assert!(amount_msat.is_some());
 			if let Some(expected_fee_msat) = expected_fee_msat_opt {
+				println!("\n\nActual fee paid: {:?}\n\n", fee_paid_msat);
+				println!("\n\nExpected fee paid: {:?}\n\n", &expected_fee_msat);
 				assert_eq!(*fee_paid_msat, expected_fee_msat);
 			} else {
 				assert!(fee_paid_msat.is_some());
