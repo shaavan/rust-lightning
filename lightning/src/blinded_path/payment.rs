@@ -153,6 +153,8 @@ impl BlindedPaymentPath {
 	where
 		ES::Target: EntropySource,
 	{
+		println!("\n\n Intermediate Nodes: {:?}\n\n", intermediate_nodes);
+
 		let introduction_node = IntroductionNode::NodeId(
 			intermediate_nodes.first().map_or(payee_node_id, |n| n.node_id),
 		);
@@ -160,13 +162,27 @@ impl BlindedPaymentPath {
 		let blinding_secret =
 			SecretKey::from_slice(&blinding_secret_bytes[..]).expect("RNG is busted");
 
-		// Found the source of error!! Wrong compute payinfo, when there are dummy hops!
+		// Payinfo is being correctly calculated as expected for all paths.
 		let blinded_payinfo = compute_payinfo(
 			intermediate_nodes,
 			&payee_tlvs,
 			htlc_maximum_msat,
 			min_final_cltv_expiry_delta,
 		)?;
+
+		println!("\n\nlinded payinfo: {:?} \n\n", blinded_payinfo);
+
+		// That means the true blinded path length is just a single hop.
+		// So technically there shouldn't be any fee_base_msat, or fee_proportional_millionths for it,
+		// as the recipient of the payment don't charge themself for routing htlc to themself using
+		// their own channel
+
+		// Edit: Not correct. Say the blinded path is Alice-Bob, and Charilie is paying.
+		// Bob will take their fee, so blinded_payinfo must be Some.
+		// if intermediate_nodes.len() == 1 {
+		// 	blinded_payinfo.fee_base_msat = 0;
+		// 	blinded_payinfo.fee_proportional_millionths = 0;
+		// }
 
 		println!("\n\nPayinfo at time of Blinded Path creation: {:?}\n\n", &blinded_payinfo);
 

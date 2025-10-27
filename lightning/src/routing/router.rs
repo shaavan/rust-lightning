@@ -200,6 +200,7 @@ where
 					htlc_maximum_msat: details.inbound_htlc_maximum_msat.unwrap_or(u64::MAX),
 				})
 			})
+			// This is triggered for create and pays for offer with unannouced introduction node.
 			.map(|forward_node| {
 				BlindedPaymentPath::new_with_dummy_hops(
 					&[forward_node], recipient, DEFAULT_PAYMENT_DUMMY_HOPS, receive_auth_key, tlvs.clone(), u64::MAX,
@@ -212,6 +213,7 @@ where
 		match paths {
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
+				// This is triggered for create and pays for offer with announced introduction node.
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
 					BlindedPaymentPath::new_with_dummy_hops(
 						&[], recipient, DEFAULT_PAYMENT_DUMMY_HOPS, receive_auth_key, tlvs, u64::MAX,
@@ -1725,6 +1727,8 @@ impl<'a> CandidateRouteHop<'a> {
 					proportional_millionths: hop.hint.payinfo.fee_proportional_millionths
 				}
 			},
+			// Found it! For the One Hop Blinded Path, this is triggered correctly.
+			// However ones we add dummy hops we are not able to trigger it.
 			CandidateRouteHop::OneHopBlinded(_) =>
 				RoutingFees { base_msat: 0, proportional_millionths: 0 },
 		}
