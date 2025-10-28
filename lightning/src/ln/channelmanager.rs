@@ -97,7 +97,7 @@ use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferFromHrn};
+use crate::offers::offer::{Offer, OfferFromHrn, RecurrenceFields};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::signer;
@@ -12670,6 +12670,15 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	pub fn create_offer_builder(&$self) -> Result<$builder, Bolt12SemanticError> {
 		let builder = $self.flow.create_offer_builder(
 			&*$self.entropy_source, $self.get_peers_for_blinded_path()
+		)?;
+
+		Ok(builder.into())
+	}
+
+	/// Documentation
+	pub fn create_offer_builder_with_recurrence(&$self, recurrence_fields: RecurrenceFields) -> Result<$builder, Bolt12SemanticError> {
+		let builder = $self.flow.create_offer_builder_with_recurrence(
+			&*$self.entropy_source, recurrence_fields, $self.get_peers_for_blinded_path()
 		)?;
 
 		Ok(builder.into())
