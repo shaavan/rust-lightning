@@ -241,7 +241,6 @@ impl BlindedPaymentPath {
 		NL::Target: NodeIdLookUp,
 		T: secp256k1::Signing + secp256k1::Verification,
 	{
-		println!("\nBlinded Path Length: {:?}\n\n", self.blinded_hops().len());
 		match self.decrypt_intro_payload::<NS>(node_signer) {
 			Ok((
 				BlindedPaymentTlvs::Forward(ForwardTlvs { short_channel_id, .. }),
@@ -297,11 +296,9 @@ impl BlindedPaymentPath {
 		let mut reader = FixedLengthReader::new(&mut s, encrypted_control_tlvs.len() as u64);
 		match ChaChaDualPolyReadAdapter::read(&mut reader, (rho, receive_auth_key.0)) {
 			Ok(ChaChaDualPolyReadAdapter { readable, .. }) => {
-				println!("\n\nReading Successful\n\n");
 				Ok((readable, control_tlvs_ss))
 			},
 			_ => {
-				println!("\n\nReading Failed\n\n");
 				Err(())
 			},
 		}

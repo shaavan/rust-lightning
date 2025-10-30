@@ -1858,10 +1858,6 @@ fn expired_static_invoice_payment_path() {
 		blinded_path
 			.advance_path_by_one(&nodes[1].keys_manager, &nodes[1].node, &secp_ctx)
 			.unwrap();
-		// Expected dummy tlv
-		blinded_path
-			.advance_path_by_one(&nodes[1].keys_manager, &nodes[1].node, &secp_ctx)
-			.unwrap();
 		match blinded_path.decrypt_intro_payload(&nodes[2].keys_manager).unwrap().0 {
 			BlindedPaymentTlvs::Receive(tlvs) => tlvs.payment_constraints.max_cltv_expiry,
 			_ => panic!(),
