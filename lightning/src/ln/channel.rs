@@ -8351,6 +8351,7 @@ where
 										require_commitment = true;
 										match fail_msg {
 											HTLCFailureMsg::Relay(msg) => {
+												println!("\n\nHTLC State updated to FailRelay here.\n\n"); // Not here.
 												htlc.state = InboundHTLCState::LocalRemoved(
 													InboundHTLCRemovalReason::FailRelay(
 														msg.clone().into(),
@@ -8359,6 +8360,7 @@ where
 												update_fail_htlcs.push(msg)
 											},
 											HTLCFailureMsg::Malformed(msg) => {
+												println!("\n\nHTLC State updated to FailMalformed here.\n\n"); // Not here.
 												htlc.state = InboundHTLCState::LocalRemoved(
 													InboundHTLCRemovalReason::FailMalformed((
 														msg.sha256_of_onion,
@@ -8996,7 +8998,7 @@ where
 			commitment_update = None;
 		}
 
-		self.context.monitor_pending_revoke_and_ack = false;
+		self.context.monitor_pending_revoke_adnd_ack = false;
 		self.context.monitor_pending_commitment_signed = false;
 		let commitment_order = self.context.resend_order.clone();
 		log_debug!(logger, "Restored monitor updating in channel {} resulting in {}{} commitment update and {} RAA, with {} first",
@@ -9258,6 +9260,7 @@ where
 			if let &InboundHTLCState::LocalRemoved(ref reason) = &htlc.state {
 				match reason {
 					&InboundHTLCRemovalReason::FailRelay(ref err_packet) => {
+						println!("\n\nFailRelay triggered.\n\n"); // This is triggered when not Dummy
 						update_fail_htlcs.push(msgs::UpdateFailHTLC {
 							channel_id: self.context.channel_id(),
 							htlc_id: htlc.htlc_id,
@@ -9269,6 +9272,7 @@ where
 						ref sha256_of_onion,
 						ref failure_code,
 					)) => {
+						println!("\n\nFailMalformed triggered.\n\n"); // This is triggered when Dummy
 						update_fail_malformed_htlcs.push(msgs::UpdateFailMalformedHTLC {
 							channel_id: self.context.channel_id(),
 							htlc_id: htlc.htlc_id,
