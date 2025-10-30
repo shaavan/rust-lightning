@@ -8307,6 +8307,10 @@ where
 				ref channel_id,
 				..
 			}) => {
+				// This next condition is triggered, with:
+				// "" - when no dummy hops
+				// "blinded" - when dummy hops
+				// Rest things are same.
 				log_trace!(
 					WithContext::from(&self.logger, None, Some(*channel_id), Some(*payment_hash)),
 					"Failing {}HTLC with payment_hash {} backwards from us: {:?}",
