@@ -347,6 +347,11 @@ pub struct BlindedForward {
 impl PendingHTLCRouting {
 	// Used to override the onion failure code and data if the HTLC is blinded.
 	fn blinded_failure(&self) -> Option<BlindedFailure> {
+		println!("\n\nReceive Blinded Failure Type: {:?}\n\n", &self);
+		// There's a subtle difference between the two cases now.
+		// Both trigger the ReceiveKeysend
+		// However, with no dummy hops we trigger: ReceiveKeysend { requires_blinded_error: false }
+		// while with dummy hops we trigger requires_blinded_error to true.
 		match self {
 			Self::Forward { blinded: Some(BlindedForward { failure, .. }), .. } => Some(*failure),
 			Self::TrampolineForward { blinded: Some(BlindedForward { failure, .. }), .. } => {
@@ -6607,46 +6612,54 @@ where
 			let mut htlc_forwards = Vec::new();
 			let mut htlc_fails = Vec::new();
 			for update_add_htlc in &update_add_htlcs {
+				println!("\n\nBlinding Point in Update Add HTLC: {:?}\n\n", &update_add_htlc.blinding_point);
 				let (next_hop, next_packet_details_opt) =
+					// println!("\n\nBlinding Point in hop data itself: {:?}", &next_hop.in)
 					match decode_incoming_update_add_htlc_onion(
 						&update_add_htlc,
 						&*self.node_signer,
 						&*self.logger,
 						&self.secp_ctx,
 					) {
-						Ok(decoded_onion) => match decoded_onion {
-							(
-								onion_utils::Hop::Dummy {
-									intro_node_blinding_point,
-									next_hop_hmac,
-									new_packet_bytes,
-									..
-								},
-								Some(NextPacketDetails { next_packet_pubkey, forward_info }),
-							) => {
-								debug_assert!(
-										forward_info.is_none(),
-										"Dummy hops must not contain any forward info, since they are not actually forwarded."
+						Ok(decoded_onion) => {
+							println!("\n\nBlinding Point in hop data itself: {:?}\n\n", &decoded_onion.0.intro_node_blinding_point());
+							match decoded_onion {
+								(
+									onion_utils::Hop::Dummy {
+										intro_node_blinding_point,
+										next_hop_hmac,
+										new_packet_bytes,
+										..
+									},
+									Some(NextPacketDetails { next_packet_pubkey, forward_info }),
+								) => {
+									debug_assert!(
+											forward_info.is_none(),
+											"Dummy hops must not contain any forward info, since they are not actually forwarded."
+										);
+									// So we are getting the intro_node_blinding_point here in the dummy hop,
+									// However, that intro_node_blinding_point is not communicated to the final ReceiveTlv, and we need some way to convery it.
+									println!("\n\nIntro Node of Blinding Point in Dummy Hop: {:?}\n\n", &intro_node_blinding_point);
+									let new_update_add_htlc = create_new_update_add_htlc(
+										update_add_htlc.clone(),
+										&*self.node_signer,
+										&self.secp_ctx,
+										intro_node_blinding_point,
+										next_packet_pubkey,
+										next_hop_hmac,
+										new_packet_bytes,
 									);
-								let new_update_add_htlc = create_new_update_add_htlc(
-									update_add_htlc.clone(),
-									&*self.node_signer,
-									&self.secp_ctx,
-									intro_node_blinding_point,
-									next_packet_pubkey,
-									next_hop_hmac,
-									new_packet_bytes,
-								);
 
-								dummy_update_add_htlcs
-									.entry(incoming_scid_alias)
-									.or_insert_with(Vec::new)
-									.push(new_update_add_htlc);
+									dummy_update_add_htlcs
+										.entry(incoming_scid_alias)
+										.or_insert_with(Vec::new)
+										.push(new_update_add_htlc);
 
-								continue;
-							},
-							_ => decoded_onion,
-						},
+									continue;
+								},
+								_ => decoded_onion,
+							}
+						}
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;

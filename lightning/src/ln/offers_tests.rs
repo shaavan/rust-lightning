@@ -2398,7 +2398,7 @@ fn rejects_keysend_to_non_static_invoice_path() {
 	}
 
 	// Pay the invoice via keysend now that we have the preimage and make sure the recipient fails it
-	// due to incorrect payment context.
+	// due to incorrect payment details.
 	let pay_params = PaymentParameters::from_bolt12_invoice(&invoice);
 	let route_params = RouteParameters::from_payment_params_and_value(pay_params, amt_msat);
 	let keysend_payment_id = PaymentId([2; 32]);

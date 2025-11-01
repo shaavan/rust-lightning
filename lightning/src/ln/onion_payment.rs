@@ -302,6 +302,10 @@ where
 					}
 				})?;
 			let payment_data = msgs::FinalOnionHopData { payment_secret, total_msat };
+			// Found source of conflict.
+			// With no dummy hops we get a Some(pubkey) for intro_node_blinding_point.
+			// When there are dummy hops we get intro_node_blinding_point: None,
+			println!("\n\nIntro Node Blinding Point:\n {:?} \n\n", intro_node_blinding_point);
 			(Some(payment_data), keysend_preimage, custom_tlvs,
 			 sender_intended_htlc_amt_msat, cltv_expiry_height, None, Some(payment_context),
 			 intro_node_blinding_point.is_none(), true, invoice_request)
@@ -415,6 +419,7 @@ where
 				msg: "Payment preimage didn't match payment hash",
 			});
 		}
+		println!("\n\nRequires Blinding error at create_recv_pending_htlc_info: {:?}\n\n", requires_blinded_error);
 		PendingHTLCRouting::ReceiveKeysend {
 			payment_data,
 			payment_preimage,

@@ -741,6 +741,8 @@ impl RouteParameters {
 	/// [`Self::max_total_routing_fee_msat`] defaults to 1% of the payment amount + 50 sats
 	#[rustfmt::skip]
 	pub fn from_payment_params_and_value(payment_params: PaymentParameters, final_value_msat: u64) -> Self {
+		// As expected with Dummy Hops we have two blinded hops instead of one.
+		println!("\n\nPayment Params used: {:?}\n\n", &payment_params);
 		Self { payment_params, final_value_msat, max_total_routing_fee_msat: Some(final_value_msat / 100 + 50_000) }
 	}
 

@@ -14,7 +14,7 @@ use crate::crypto::streams::ChaChaReader;
 use crate::events::HTLCHandlingFailureReason;
 use crate::ln::channel::TOTAL_BITCOIN_SUPPLY_SATOSHIS;
 use crate::ln::channelmanager::{HTLCSource, RecipientOnionFields};
-use crate::ln::msgs::{self, DecodeError};
+use crate::ln::msgs::{self, DecodeError, InboundOnionBlindedReceivePayload};
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::routing::gossip::NetworkUpdate;
 use crate::routing::router::{BlindedTail, Path, RouteHop, RouteParameters, TrampolineHop};
@@ -2302,6 +2302,20 @@ impl Hop {
 			Hop::BlindedReceive { shared_secret, .. } => shared_secret,
 			Hop::TrampolineReceive { outer_shared_secret, .. } => outer_shared_secret,
 			Hop::TrampolineBlindedReceive { outer_shared_secret, .. } => outer_shared_secret,
+		}
+	}
+
+	pub(crate) fn intro_node_blinding_point(&self) -> Option<PublicKey> {
+		match self {
+			Self::BlindedReceive {
+				hop_data: InboundOnionBlindedReceivePayload { intro_node_blinding_point, .. },
+				..
+			}
+			| Self::Dummy { intro_node_blinding_point, .. } => *intro_node_blinding_point,
+			_ => {
+				println!("\nNeither Dummy, nor BlindedReceive\n");
+				None
+			},
 		}
 	}
 }

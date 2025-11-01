@@ -3649,6 +3649,8 @@ where
 			}));
 		}
 
+		println!("\n\nIntro Node Blinding Point during Reading: {:?}\n\n", intro_node_blinding_point);
+
 		if let Some(blinding_point) = intro_node_blinding_point.or(update_add_blinding_point) {
 			if short_id.is_some() || payment_data.is_some() || payment_metadata.is_some() {
 				return Err(DecodeError::InvalidValue);
