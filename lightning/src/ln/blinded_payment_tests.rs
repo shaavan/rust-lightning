@@ -110,6 +110,8 @@ pub fn get_blinded_route_parameters(
 	)
 }
 
+/// Interesting function. Can take inspiration.
+/// To check out.
 pub fn fail_blinded_htlc_backwards(
 	payment_hash: PaymentHash, intro_node_idx: usize, nodes: &[&Node],
 	retry_expected: bool

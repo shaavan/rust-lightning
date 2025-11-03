@@ -43,6 +43,8 @@ macro_rules! build_keys_helper {
 				let pk = *$hop.borrow();
 				let encrypted_data_ss = SharedSecret::new(&pk, &msg_blinding_point_priv);
 
+				println!("Is it blinded: {:?}", $blinded);
+
 				let blinded_hop_pk = if $blinded {
 					pk
 				} else {

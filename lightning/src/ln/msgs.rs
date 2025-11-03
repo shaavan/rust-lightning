@@ -3571,6 +3571,8 @@ impl<'a> Writeable for OutboundTrampolinePayload<'a> {
 				keysend_preimage,
 				custom_tlvs,
 			} => {
+				// This is not called
+				// println!("\n\nIs this called?\n\n");
 				_encode_varint_length_prefixed_tlv!(w, {
 					(2, HighZeroBytesDroppedBigSize(*sender_intended_htlc_amt_msat), required),
 					(4, HighZeroBytesDroppedBigSize(*cltv_expiry_height), required),
@@ -3632,6 +3634,8 @@ where
 		if amt.unwrap_or(0) > MAX_VALUE_MSAT {
 			return Err(DecodeError::InvalidValue);
 		}
+		// Intro_node_blinding_point: The blinding point present in the hop data itself
+		// update_add_blinding_point: The blinding point data supplied through msg.blinding_point
 		if intro_node_blinding_point.is_some() && update_add_blinding_point.is_some() {
 			return Err(DecodeError::InvalidValue);
 		}

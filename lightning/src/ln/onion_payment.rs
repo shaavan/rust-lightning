@@ -256,7 +256,8 @@ pub(super) fn create_fwd_pending_htlc_info(
 pub(super) fn create_recv_pending_htlc_info<L: Deref>(
 	hop_data: onion_utils::Hop, shared_secret: [u8; 32], payment_hash: PaymentHash,
 	amt_msat: u64, cltv_expiry: u32, phantom_shared_secret: Option<[u8; 32]>, allow_underpay: bool,
-	counterparty_skimmed_fee_msat: Option<u64>, current_height: u32, logger: L
+	counterparty_skimmed_fee_msat: Option<u64>, msg_blinding_point: Option<PublicKey>,
+	current_height: u32, logger: L
 ) -> Result<PendingHTLCInfo, InboundHTLCErr>
 where
 	L::Target: Logger,
@@ -308,7 +309,7 @@ where
 			println!("\n\nIntro Node Blinding Point:\n {:?} \n\n", intro_node_blinding_point);
 			(Some(payment_data), keysend_preimage, custom_tlvs,
 			 sender_intended_htlc_amt_msat, cltv_expiry_height, None, Some(payment_context),
-			 intro_node_blinding_point.is_none(), true, invoice_request)
+			 intro_node_blinding_point.is_none() && msg_blinding_point.is_none(), true, invoice_request)
 		}
 		onion_utils::Hop::TrampolineReceive {
 			trampoline_hop_data: msgs::InboundOnionReceivePayload {
@@ -524,7 +525,7 @@ where
 			create_recv_pending_htlc_info(
 				hop, shared_secret, msg.payment_hash, msg.amount_msat, msg.cltv_expiry,
 				None, allow_skimmed_fees, msg.skimmed_fee_msat,
-				cur_height, logger.deref()
+				msg.blinding_point, cur_height, logger.deref()
 			)?
 		}
 	})

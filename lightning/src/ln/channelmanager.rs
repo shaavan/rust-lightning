@@ -347,7 +347,7 @@ pub struct BlindedForward {
 impl PendingHTLCRouting {
 	// Used to override the onion failure code and data if the HTLC is blinded.
 	fn blinded_failure(&self) -> Option<BlindedFailure> {
-		println!("\n\nReceive Blinded Failure Type: {:?}\n\n", &self);
+		// println!("\n\nReceive Blinded Failure Type: {:?}\n\n", &self);
 		// There's a subtle difference between the two cases now.
 		// Both trigger the ReceiveKeysend
 		// However, with no dummy hops we trigger: ReceiveKeysend { requires_blinded_error: false }
@@ -4893,7 +4893,7 @@ where
 				let current_height: u32 = self.best_block.read().unwrap().height;
 				create_recv_pending_htlc_info(decoded_hop, shared_secret, msg.payment_hash,
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
-					current_height, &*self.logger)
+					msg.blinding_point, current_height, &*self.logger)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
@@ -6614,7 +6614,6 @@ where
 			for update_add_htlc in &update_add_htlcs {
 				println!("\n\nBlinding Point in Update Add HTLC: {:?}\n\n", &update_add_htlc.blinding_point);
 				let (next_hop, next_packet_details_opt) =
-					// println!("\n\nBlinding Point in hop data itself: {:?}", &next_hop.in)
 					match decode_incoming_update_add_htlc_onion(
 						&update_add_htlc,
 						&*self.node_signer,
@@ -7057,6 +7056,7 @@ where
 								outgoing_cltv_value,
 								Some(phantom_shared_secret),
 								false,
+								None,
 								None,
 								current_height,
 								&*self.logger,
@@ -18794,7 +18794,7 @@ mod tests {
 		if let Err(crate::ln::channelmanager::InboundHTLCErr { reason, .. }) =
 			create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
 				sender_intended_amt_msat - extra_fee_msat - 1, 42, None, true, Some(extra_fee_msat),
-				current_height, &logger)
+				None, current_height, &logger)
 		{
 			assert_eq!(reason, LocalHTLCFailureReason::FinalIncorrectHTLCAmount);
 		} else { panic!(); }
@@ -18817,7 +18817,7 @@ mod tests {
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		assert!(create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
 			sender_intended_amt_msat - extra_fee_msat, 42, None, true, Some(extra_fee_msat),
-			current_height, &logger).is_ok());
+			None, current_height, &logger).is_ok());
 	}
 
 	#[test]
@@ -18843,7 +18843,7 @@ mod tests {
 				custom_tlvs: Vec::new(),
 			},
 			shared_secret: SharedSecret::from_bytes([0; 32]),
-		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, current_height, &logger);
+		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, None, current_height, &logger);
 
 		// Should not return an error as this condition:
 		// https://github.com/lightning/bolts/blob/4dcc377209509b13cf89a4b91fde7d478f5b46d8/04-onion-routing.md?plain=1#L334
