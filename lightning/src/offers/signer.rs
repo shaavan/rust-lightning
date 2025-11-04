@@ -42,11 +42,6 @@ const WITH_ENCRYPTED_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[4; 16];
 // authentication.
 // Their corresponding values (`[5; 16]`, `[7; 16]` and `[8; 16]`) are now reserved and must not
 // be reused to ensure type confusion attacks are impossible.
-//
-// Reserved HMAC_INPUT values — do not reuse:
-//
-// const OFFER_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[5; 16];
-// const PAYMENT_HASH_HMAC_INPUT: &[u8; 16] = &[7; 16];
 
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
 /// verified.
