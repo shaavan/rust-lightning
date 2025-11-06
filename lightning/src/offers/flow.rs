@@ -343,6 +343,7 @@ where
 			payment_secret,
 			payment_constraints: PaymentConstraints { max_cltv_expiry, htlc_minimum_msat: 1 },
 			payment_context,
+			blinding_point: None,
 		};
 
 		router.create_blinded_payment_paths(

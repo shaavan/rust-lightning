@@ -592,6 +592,7 @@ where
 		}
 
 		log_info!(logger, "Failed to accept/forward incoming HTLC: {}", message);
+		// The shared secret here is right, for no dummy hops, and wrong when dummy hops.
 		let failure = HTLCFailReason::reason(reason, data.to_vec())
 			.get_encrypted_failure_packet(&shared_secret, &trampoline_shared_secret);
 		return Err((HTLCFailureMsg::Relay(msgs::UpdateFailHTLC {

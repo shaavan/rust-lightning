@@ -318,7 +318,7 @@ fn construct_onion_keys_generic<'a, T, H>(
 ) -> impl Iterator<Item = (SharedSecret, [u8; 32], PublicKey, Option<&'a H>, usize)> + 'a
 where
 	T: secp256k1::Signing,
-	H: HopInfo,
+	H: HopInfo + std::fmt::Debug,
 {
 	let mut blinded_priv = session_priv.clone();
 	let mut blinded_pub = PublicKey::from_secret_key(secp_ctx, &blinded_priv);
@@ -332,6 +332,8 @@ where
 
 	unblinded_hops.chain(blinded_pubkeys).enumerate().map(move |(idx, (pubkey, route_hop_opt))| {
 		let shared_secret = SharedSecret::new(pubkey, &blinded_priv);
+
+		println!("\n\nindex: {:?}\npubkey: {:?}\nroute_hop_opt: {:?}\n\n", &idx, &pubkey, &route_hop_opt);
 
 		let mut sha = Sha256::engine();
 		sha.input(&blinded_pub.serialize()[..]);
@@ -957,6 +959,8 @@ pub(super) fn build_failure_packet(
 		DEFAULT_MIN_FAILURE_PACKET_LEN,
 	);
 
+	println!("\n\nShared secret used to encrypt: {:?}\n\n", shared_secret.as_ref());
+
 	crypt_failure_packet(shared_secret, &mut onion_error_packet);
 
 	onion_error_packet
@@ -1166,7 +1170,10 @@ where
 					{
 						// Actually parse the onion error data in tests so we can check that blinded hops fail
 						// back correctly.
+						println!("\n\nshared_secret used to decrypt: {:?}\n", shared_secret.as_ref());
+						println!("\nencrypted packet before crypt: {:?}\n\n", &encrypted_packet);
 						crypt_failure_packet(shared_secret.as_ref(), &mut encrypted_packet);
+						println!("\n\nencrypted packet after crypt: {:?}\n\n", &encrypted_packet);
 						let err_packet = msgs::DecodedOnionErrorPacket::read(&mut Cursor::new(
 							&encrypted_packet.data,
 						))
@@ -1191,7 +1198,10 @@ where
 			}
 		};
 
+		println!("\n\nshared_secret used to decrypt: {:?}\n", shared_secret.as_ref());
+		println!("\n\nencrypted packet before crypt: {:?}\n\n", &encrypted_packet);
 		crypt_failure_packet(shared_secret.as_ref(), &mut encrypted_packet);
+		println!("\n\nencrypted packet after crypt: {:?}\n\n", &encrypted_packet);
 
 		let um = gen_um_from_shared_secret(shared_secret.as_ref());
 
@@ -2103,6 +2113,7 @@ impl HTLCFailReason {
 
 					packet
 				} else {
+					println!("\nincoming_packet_shared_secret: {:?}\n", incoming_packet_shared_secret);
 					build_failure_packet(
 						incoming_packet_shared_secret,
 						*failure_reason,

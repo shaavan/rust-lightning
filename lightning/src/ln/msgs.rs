@@ -3712,8 +3712,12 @@ where
 					readable: BlindedPaymentTlvs::Receive(receive_tlvs),
 					used_aad,
 				} => {
-					let ReceiveTlvs { payment_secret, payment_constraints, payment_context } =
+					let ReceiveTlvs { payment_secret, payment_constraints, payment_context, blinding_point } =
 						receive_tlvs;
+
+					// if intro_node_blinding_point.is_some() && blinding_point.is_some() {
+					// 	return Err(DecodeError::InvalidValue);
+					// }
 
 					if total_msat.unwrap_or(0) > MAX_VALUE_MSAT {
 						return Err(DecodeError::InvalidValue);
@@ -3725,7 +3729,7 @@ where
 						payment_secret,
 						payment_constraints,
 						payment_context,
-						intro_node_blinding_point,
+						intro_node_blinding_point: intro_node_blinding_point.or(blinding_point),
 						keysend_preimage,
 						invoice_request,
 						custom_tlvs,
@@ -3861,8 +3865,12 @@ where
 					readable: BlindedTrampolineTlvs::Receive(receive_tlvs),
 					used_aad,
 				} => {
-					let ReceiveTlvs { payment_secret, payment_constraints, payment_context } =
+					let ReceiveTlvs { payment_secret, payment_constraints, payment_context, blinding_point } =
 						receive_tlvs;
+
+					if intro_node_blinding_point.is_some() && blinding_point.is_some() {
+						return Err(DecodeError::InvalidValue);
+					}
 
 					if total_msat.unwrap_or(0) > MAX_VALUE_MSAT {
 						return Err(DecodeError::InvalidValue);
@@ -3874,7 +3882,7 @@ where
 						payment_secret,
 						payment_constraints,
 						payment_context,
-						intro_node_blinding_point,
+						intro_node_blinding_point: intro_node_blinding_point.or(blinding_point),
 						keysend_preimage,
 						invoice_request,
 						custom_tlvs,

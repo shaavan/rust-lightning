@@ -83,6 +83,7 @@ pub fn blinded_payment_path(
 				intro_node_min_htlc_opt.unwrap_or_else(|| channel_upds.last().unwrap().htlc_minimum_msat),
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 
 	let receive_auth_key = keys_manager.get_receive_auth_key();
@@ -167,6 +168,7 @@ fn do_one_hop_blinded_path(success: bool) {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
 
@@ -209,6 +211,7 @@ fn one_hop_blinded_path_with_dummy_hops() {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
 
@@ -272,6 +275,7 @@ fn mpp_to_one_hop_blinded_path() {
 			htlc_minimum_msat: chan_upd_1_3.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	let receive_auth_key = chanmon_cfgs[3].keys_manager.get_receive_auth_key();
 	let blinded_path = BlindedPaymentPath::new(
@@ -1381,6 +1385,7 @@ fn custom_tlvs_to_blinded_path() {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
 
@@ -1435,6 +1440,7 @@ fn fails_receive_tlvs_authentication() {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
 
@@ -1465,6 +1471,7 @@ fn fails_receive_tlvs_authentication() {
 			htlc_minimum_msat: chan_upd.htlc_minimum_msat,
 		},
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+		blinding_point: None,
 	};
 	// Use a mismatched ReceiveAuthKey to force auth failure:
 	let mismatched_receive_auth_key = ReceiveAuthKey([0u8; 32]);
@@ -2071,6 +2078,7 @@ fn do_test_trampoline_single_hop_receive(success: bool) {
 				htlc_minimum_msat: amt_msat,
 			},
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 
 		let carol_unblinded_tlvs = payee_tlvs.encode();

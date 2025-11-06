@@ -9260,7 +9260,8 @@ where
 			if let &InboundHTLCState::LocalRemoved(ref reason) = &htlc.state {
 				match reason {
 					&InboundHTLCRemovalReason::FailRelay(ref err_packet) => {
-						println!("\n\nFailRelay triggered.\n\n"); // This is triggered when not Dummy
+						println!("\n\nFailRelay triggered.\n"); // This is triggered when not Dummy
+						println!("\nerr_packet: {:?}\n\n", err_packet);
 						update_fail_htlcs.push(msgs::UpdateFailHTLC {
 							channel_id: self.context.channel_id(),
 							htlc_id: htlc.htlc_id,

@@ -146,7 +146,7 @@ impl BlindedPaymentPath {
 	/// At most [`MAX_DUMMY_HOPS_COUNT`] dummy hops can be added to the blinded path.
 	pub fn new_with_dummy_hops<ES: Deref, T: secp256k1::Signing + secp256k1::Verification>(
 		intermediate_nodes: &[PaymentForwardNode], payee_node_id: PublicKey,
-		dummy_hop_count: usize, receive_auth_key: ReceiveAuthKey, payee_tlvs: ReceiveTlvs,
+		dummy_hop_count: usize, receive_auth_key: ReceiveAuthKey, mut payee_tlvs: ReceiveTlvs,
 		htlc_maximum_msat: u64, min_final_cltv_expiry_delta: u16, entropy_source: ES,
 		secp_ctx: &Secp256k1<T>,
 	) -> Result<Self, ()>
@@ -161,6 +161,12 @@ impl BlindedPaymentPath {
 		let blinding_secret_bytes = entropy_source.get_secure_random_bytes();
 		let blinding_secret =
 			SecretKey::from_slice(&blinding_secret_bytes[..]).expect("RNG is busted");
+
+		let blinding_point = PublicKey::from_secret_key(secp_ctx, &blinding_secret);
+
+		if intermediate_nodes.is_empty() {
+			payee_tlvs.blinding_point = Some(blinding_point)
+		}
 
 		// Payinfo is being correctly calculated as expected for all paths.
 		let blinded_payinfo = compute_payinfo(
@@ -189,7 +195,7 @@ impl BlindedPaymentPath {
 		Ok(Self {
 			inner_path: BlindedPath {
 				introduction_node,
-				blinding_point: PublicKey::from_secret_key(secp_ctx, &blinding_secret),
+				blinding_point,
 				blinded_hops: blinded_hops(
 					secp_ctx,
 					intermediate_nodes,
@@ -410,6 +416,20 @@ pub struct ReceiveTlvs {
 	pub payment_constraints: PaymentConstraints,
 	/// Context for the receiver of this payment.
 	pub payment_context: PaymentContext,
+	/// When we are the payee, and we create the blinded path for the payer to pay, we can use blinded paths.
+	/// For decrypting the blinded path the payer creates the correct OutboundOnionPayload, with the first of them
+	/// containing the intro_node_blinding_point information.
+	/// Till LDK v0.2, the introduction node, could have been a forwarding node, or the final payee itself, leading
+	/// to proper usage of intro_node_blinding_point to decode the first hop.
+	/// However, with the introduction of dummy hops in LDK v0.3, if there's only one real hop in the blinded path
+	/// (that is payee itself), the blinded point will be associated to the dummy hops preceeding it, leading to loss
+	/// of intro_node_blinded_point information when decoding the payee tlvs.
+	/// Since payer can't know, whether the hops are forward, dummy, or receive, they will treat even dummy tlvs, as if they
+	/// were real forwarding hops, so they will keep attaching the blinding point, agnostic to whatever type it is.
+	/// So during the creation of blinded path itself, payee can save the blinding point within the ReceiveTlvs if there's
+	/// only one real hop, and rest are dummy so at the time of reading the InboundOnionPayload, this information can be
+	/// correctly associated with the payee tlvs.
+	pub blinding_point: Option<PublicKey>,
 }
 
 /// Data to construct a [`BlindedHop`] for sending a payment over.
@@ -590,7 +610,7 @@ impl Writeable for TrampolineForwardTlvs {
 impl Writeable for PaymentDummyTlv {
 	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
 		encode_tlv_stream!(writer, {
-			(65539, (), required),
+			(65541, (), required),
 		});
 		Ok(())
 	}
@@ -607,6 +627,7 @@ impl Writeable for ReceiveTlvs {
 			(12, self.payment_constraints, required),
 			(65536, self.payment_secret, required),
 			(65537, self.payment_context, required),
+			(65539, self.blinding_point, option),
 		});
 		Ok(())
 	}
@@ -637,7 +658,8 @@ impl Readable for BlindedPaymentTlvs {
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
-			(65539, is_dummy, option)
+			(65539, blinding_point, option),
+			(65541, is_dummy, option)
 		});
 
 		match (
@@ -648,6 +670,7 @@ impl Readable for BlindedPaymentTlvs {
 			features,
 			payment_secret,
 			payment_context,
+			blinding_point,
 			is_dummy,
 		) {
 			(
@@ -659,6 +682,7 @@ impl Readable for BlindedPaymentTlvs {
 				None,
 				None,
 				None,
+				None,
 			) => Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
 				short_channel_id,
 				payment_relay: relay,
@@ -666,14 +690,15 @@ impl Readable for BlindedPaymentTlvs {
 				next_blinding_override: next_override,
 				features: features.unwrap_or_else(BlindedHopFeatures::empty),
 			})),
-			(None, None, None, Some(constraints), None, Some(secret), Some(context), None) => {
+			(None, None, None, Some(constraints), None, Some(secret), Some(context), blinding_point, None) => {
 				Ok(BlindedPaymentTlvs::Receive(ReceiveTlvs {
 					payment_secret: secret,
 					payment_constraints: constraints,
 					payment_context: context,
+					blinding_point,
 				}))
 			},
-			(None, None, None, None, None, None, None, Some(())) => {
+			(None, None, None, None, None, None, None, None, Some(())) => {
 				Ok(BlindedPaymentTlvs::Dummy(PaymentDummyTlv))
 			},
 			_ => {
@@ -694,6 +719,7 @@ impl Readable for BlindedTrampolineTlvs {
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
+			(65539, blinding_point, option),
 		});
 
 		if let Some(next_trampoline) = next_trampoline {
@@ -715,6 +741,7 @@ impl Readable for BlindedTrampolineTlvs {
 				payment_secret: payment_secret.ok_or(DecodeError::InvalidValue)?,
 				payment_constraints: payment_constraints.0.unwrap(),
 				payment_context: payment_context.ok_or(DecodeError::InvalidValue)?,
+				blinding_point,
 			}))
 		}
 	}
@@ -981,6 +1008,7 @@ mod tests {
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints { max_cltv_expiry: 0, htlc_minimum_msat: 1 },
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 		let htlc_maximum_msat = 100_000;
 		let blinded_payinfo =
@@ -999,6 +1027,7 @@ mod tests {
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints { max_cltv_expiry: 0, htlc_minimum_msat: 1 },
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 		let blinded_payinfo =
 			super::compute_payinfo(&[], &recv_tlvs, 4242, TEST_FINAL_CLTV as u16).unwrap();
@@ -1056,6 +1085,7 @@ mod tests {
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints { max_cltv_expiry: 0, htlc_minimum_msat: 3 },
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 		let htlc_maximum_msat = 100_000;
 		let blinded_payinfo = super::compute_payinfo(
@@ -1115,6 +1145,7 @@ mod tests {
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints { max_cltv_expiry: 0, htlc_minimum_msat: 1 },
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 		let htlc_minimum_msat = 3798;
 		assert!(super::compute_payinfo(
@@ -1184,6 +1215,7 @@ mod tests {
 			payment_secret: PaymentSecret([0; 32]),
 			payment_constraints: PaymentConstraints { max_cltv_expiry: 0, htlc_minimum_msat: 1 },
 			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+			blinding_point: None,
 		};
 
 		let blinded_payinfo = super::compute_payinfo(
