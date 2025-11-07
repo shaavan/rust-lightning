@@ -468,6 +468,7 @@ impl PendingAddHTLCInfo {
 			PendingHTLCRouting::Receive { phantom_shared_secret, .. } => phantom_shared_secret,
 			_ => None,
 		};
+		println!("\n\nIs this called?\n\n");
 		HTLCPreviousHopData {
 			prev_outbound_scid_alias: self.prev_outbound_scid_alias,
 			user_channel_id: Some(self.prev_user_channel_id),
@@ -760,6 +761,10 @@ mod fuzzy_channelmanager {
 			/// we can provide proof-of-payment details in payment claim events even after a restart
 			/// with a stale ChannelManager state.
 			bolt12_invoice: Option<PaidBolt12Invoice>,
+			// Counterparty created shared secret using the first dummy hop's
+			// secret key and their key. We know about this, so we can use this
+			// to correctly decode the encrypted data.
+			// dummy_session_priv: Option<SecretKey>,
 		},
 	}
 
@@ -802,6 +807,7 @@ impl core::hash::Hash for HTLCSource {
 				payment_id,
 				first_hop_htlc_msat,
 				bolt12_invoice,
+				// dummy_session_priv,
 			} => {
 				1u8.hash(hasher);
 				path.hash(hasher);
@@ -809,6 +815,7 @@ impl core::hash::Hash for HTLCSource {
 				payment_id.hash(hasher);
 				first_hop_htlc_msat.hash(hasher);
 				bolt12_invoice.hash(hasher);
+				// dummy_session_priv.hash(hasher);
 			},
 		}
 	}
@@ -822,6 +829,7 @@ impl HTLCSource {
 			first_hop_htlc_msat: 0,
 			payment_id: PaymentId([2; 32]),
 			bolt12_invoice: None,
+			// dummy_session_priv: None,
 		}
 	}
 
@@ -6629,10 +6637,11 @@ where
 										intro_node_blinding_point,
 										next_hop_hmac,
 										new_packet_bytes,
-										..
+										shared_secret,
 									},
 									Some(NextPacketDetails { next_packet_pubkey, forward_info }),
 								) => {
+									println!("\n\nThis is shared secret between first dummy, and forward: {:?}\n\n", &shared_secret.secret_bytes());
 									debug_assert!(
 											forward_info.is_none(),
 											"Dummy hops must not contain any forward info, since they are not actually forwarded."
@@ -6676,6 +6685,8 @@ where
 					})
 				});
 				let shared_secret = next_hop.shared_secret().secret_bytes();
+
+				println!("\n\nThis is THE SHARED SECRET: {:?}\n\n", &shared_secret);
 
 				// Nodes shouldn't expect us to hold HTLCs for them if we don't advertise htlc_hold feature
 				// support.
@@ -8313,6 +8324,7 @@ where
 			HTLCSource::PreviousHopData(HTLCPreviousHopData {
 				ref prev_outbound_scid_alias,
 				ref htlc_id,
+				// this is the shared secret that's wrong.
 				ref incoming_packet_shared_secret,
 				ref phantom_shared_secret,
 				outpoint: _,
@@ -8349,6 +8361,7 @@ where
 						sha256_of_onion: [0; 32],
 					},
 					None => {
+						// !: This is the point where the error is encrypted.
 						let err_packet = onion_error.get_encrypted_failure_packet(
 							incoming_packet_shared_secret,
 							phantom_shared_secret,

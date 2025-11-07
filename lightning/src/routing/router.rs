@@ -75,7 +75,7 @@ pub struct DefaultRouter<
 }
 
 /// Default number of Dummy Hops
-pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 1;
+pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 0;
 
 impl<
 		G: Deref<Target = NetworkGraph<L>>,

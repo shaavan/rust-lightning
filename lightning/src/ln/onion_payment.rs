@@ -697,7 +697,10 @@ where
 			onion_utils::next_hop_pubkey(&secp_ctx, blinding_point, &encrypted_tlvs_ss).ok()
 		});
 
-	UpdateAddHTLC { onion_routing_packet: new_packet, blinding_point: next_blinding_point, ..msg }
+	UpdateAddHTLC {
+		onion_routing_packet: new_packet,
+		blinding_point: msg.blinding_point,
+		..msg }
 }
 
 pub(super) fn check_incoming_htlc_cltv(

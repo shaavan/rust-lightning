@@ -34,7 +34,7 @@ use crate::sign::{EntropySource, NodeSigner, Recipient};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
 use crate::util::errors::APIError;
-use crate::util::logger::Logger;
+use crate::util::logger::{Logger, WithContext};
 use crate::util::ser::ReadableArgs;
 #[cfg(feature = "std")]
 use crate::util::time::Instant;
@@ -2385,6 +2385,9 @@ where
 		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>,
 		completion_action: &mut Option<PaymentCompleteUpdate>,
 	) {
+		let logger = WithContext::from(&self.logger, None, None, None);
+		// This is running for node 0, which is aware about dummy hops.
+		log_trace!(logger, "\n\nThis is run in which node?\n\n");
 		#[cfg(any(test, feature = "_test_utils"))]
 		let DecodedOnionFailure {
 			network_update,
