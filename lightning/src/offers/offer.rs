@@ -82,6 +82,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::invoice_request::{CurrencyConversion, DefaultCurrencyConversion};
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
@@ -1282,7 +1283,43 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: FullOfferTlvStream) -> Result<Self, Self::Error> {
-		let (
+		OfferContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl core::fmt::Display for Offer {
+	fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
+		self.fmt_bech32_str(f)
+	}
+}
+
+/// An error indicating that a currency code is invalid.
+///
+/// A valid currency code must follow the ISO 4217 standard:
+/// - Exactly 3 characters in length.
+/// - Consist only of uppercase ASCII letters (A–Z).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CurrencyCodeError;
+
+impl core::fmt::Display for CurrencyCodeError {
+	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+		write!(f, "invalid currency code: must be 3 uppercase ASCII letters (ISO 4217)")
+	}
+}
+
+pub trait TryFromWithConversion<T, C>: Sized {
+    type Error;
+    fn try_from_with_conversion(t: T, converter: &C) -> Result<Self, Self::Error>;
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<FullOfferTlvStream, C> for OfferContents {
+	type Error = Bolt12SemanticError;
+
+	 fn try_from_with_conversion(
+        tlv_stream: FullOfferTlvStream,
+        converter: &C,
+    ) -> Result<Self, Self::Error> {
+        let (
 			OfferTlvStream {
 				chains,
 				metadata,
@@ -1314,7 +1351,13 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			(Some(currency_bytes), Some(amount)) => {
 				let iso4217_code = CurrencyCode::new(currency_bytes)
 					.map_err(|_| Bolt12SemanticError::InvalidCurrencyCode)?;
-				Some(Amount::Currency { iso4217_code, amount })
+
+				let amount_msats = converter
+					.fiat_to_msats(iso4217_code)?
+					.checked_mul(amount)
+					.ok_or(Bolt12SemanticError::InvalidAmount)?;
+
+				Some(Amount::Bitcoin { amount_msats })
 			},
 		};
 
@@ -1355,26 +1398,6 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			#[cfg(test)]
 			experimental_foo,
 		})
-	}
-}
-
-impl core::fmt::Display for Offer {
-	fn fmt(&self, f: &mut core::fmt::Formatter) -> Result<(), core::fmt::Error> {
-		self.fmt_bech32_str(f)
-	}
-}
-
-/// An error indicating that a currency code is invalid.
-///
-/// A valid currency code must follow the ISO 4217 standard:
-/// - Exactly 3 characters in length.
-/// - Consist only of uppercase ASCII letters (A–Z).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CurrencyCodeError;
-
-impl core::fmt::Display for CurrencyCodeError {
-	fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-		write!(f, "invalid currency code: must be 3 uppercase ASCII letters (ISO 4217)")
 	}
 }
 
