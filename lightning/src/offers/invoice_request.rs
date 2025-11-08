@@ -80,7 +80,10 @@ use crate::offers::offer::{
 	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
 	OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 };
-use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
+use crate::offers::parse::{
+	Bolt12ParseError, Bolt12SemanticError, CurrencyConversion, DefaultCurrencyConversion,
+	ParsedMessage, TryFromWithConversion,
+};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
@@ -1365,10 +1368,18 @@ impl TryFrom<Vec<u8>> for UnsignedInvoiceRequest {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		UnsignedInvoiceRequest::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for UnsignedInvoiceRequest {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let invoice_request = ParsedMessage::<PartialInvoiceRequestTlvStream>::try_from(bytes)?;
 		let ParsedMessage { mut bytes, tlv_stream } = invoice_request;
 
-		let contents = InvoiceRequestContents::try_from(tlv_stream)?;
+		let contents = InvoiceRequestContents::try_from_with_conversion(tlv_stream, converter)?;
 		let tagged_hash = TaggedHash::from_valid_tlv_stream_bytes(SIGNATURE_TAG, &bytes);
 
 		let offset = TlvStream::new(&bytes)
@@ -1385,6 +1396,14 @@ impl TryFrom<Vec<u8>> for InvoiceRequest {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		InvoiceRequest::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for InvoiceRequest {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let invoice_request = ParsedMessage::<FullInvoiceRequestTlvStream>::try_from(bytes)?;
 		let ParsedMessage { bytes, tlv_stream } = invoice_request;
 		let (
@@ -1395,13 +1414,16 @@ impl TryFrom<Vec<u8>> for InvoiceRequest {
 			experimental_offer_tlv_stream,
 			experimental_invoice_request_tlv_stream,
 		) = tlv_stream;
-		let contents = InvoiceRequestContents::try_from((
-			payer_tlv_stream,
-			offer_tlv_stream,
-			invoice_request_tlv_stream,
-			experimental_offer_tlv_stream,
-			experimental_invoice_request_tlv_stream,
-		))?;
+		let contents = InvoiceRequestContents::try_from_with_conversion(
+			(
+				payer_tlv_stream,
+				offer_tlv_stream,
+				invoice_request_tlv_stream,
+				experimental_offer_tlv_stream,
+				experimental_invoice_request_tlv_stream,
+			),
+			converter,
+		)?;
 
 		let signature = match signature {
 			None => {
@@ -1422,6 +1444,18 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: PartialInvoiceRequestTlvStream) -> Result<Self, Self::Error> {
+		InvoiceRequestContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<PartialInvoiceRequestTlvStream, C>
+	for InvoiceRequestContents
+{
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(
+		tlv_stream: PartialInvoiceRequestTlvStream, converter: &C,
+	) -> Result<Self, Self::Error> {
 		let (
 			PayerTlvStream { metadata },
 			offer_tlv_stream,
@@ -1446,7 +1480,10 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			None => return Err(Bolt12SemanticError::MissingPayerMetadata),
 			Some(metadata) => PayerContents(Metadata::Bytes(metadata)),
 		};
-		let offer = OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?;
+		let offer = OfferContents::try_from_with_conversion(
+			(offer_tlv_stream, experimental_offer_tlv_stream),
+			converter,
+		)?;
 
 		if !offer.supports_chain(chain.unwrap_or_else(|| offer.implied_chain())) {
 			return Err(Bolt12SemanticError::UnsupportedChain);

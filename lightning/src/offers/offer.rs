@@ -84,7 +84,10 @@ use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
-use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
+use crate::offers::parse::{
+	Bech32Encode, Bolt12ParseError, Bolt12SemanticError, CurrencyConversion,
+	DefaultCurrencyConversion, ParsedMessage, TryFromWithConversion,
+};
 use crate::offers::signer::{self, Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::OfferFeatures;
@@ -1269,9 +1272,17 @@ impl TryFrom<Vec<u8>> for Offer {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		Offer::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for Offer {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let offer = ParsedMessage::<FullOfferTlvStream>::try_from(bytes)?;
 		let ParsedMessage { bytes, tlv_stream } = offer;
-		let contents = OfferContents::try_from(tlv_stream)?;
+		let contents = OfferContents::try_from_with_conversion(tlv_stream, converter)?;
 		let id = OfferId::from_valid_offer_tlv_stream(&bytes);
 
 		Ok(Offer { bytes, contents, id })
@@ -1282,6 +1293,16 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: FullOfferTlvStream) -> Result<Self, Self::Error> {
+		OfferContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<FullOfferTlvStream, C> for OfferContents {
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(
+		tlv_stream: FullOfferTlvStream, converter: &C,
+	) -> Result<Self, Self::Error> {
 		let (
 			OfferTlvStream {
 				chains,
@@ -1314,7 +1335,13 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			(Some(currency_bytes), Some(amount)) => {
 				let iso4217_code = CurrencyCode::new(currency_bytes)
 					.map_err(|_| Bolt12SemanticError::InvalidCurrencyCode)?;
-				Some(Amount::Currency { iso4217_code, amount })
+
+				let amount_msats = converter
+					.fiat_to_msats(iso4217_code)?
+					.checked_mul(amount)
+					.ok_or(Bolt12SemanticError::InvalidAmount)?;
+
+				Some(Amount::Bitcoin { amount_msats })
 			},
 		};
 

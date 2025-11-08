@@ -31,7 +31,10 @@ use crate::offers::offer::{
 	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
 	OfferId, OfferTlvStream, OfferTlvStreamRef, Quantity, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 };
-use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
+use crate::offers::parse::{
+	Bolt12ParseError, Bolt12SemanticError, CurrencyConversion, DefaultCurrencyConversion,
+	ParsedMessage, TryFromWithConversion,
+};
 use crate::types::features::{Bolt12InvoiceFeatures, OfferFeatures};
 use crate::types::string::PrintableString;
 use crate::util::ser::{
@@ -585,8 +588,16 @@ impl TryFrom<Vec<u8>> for StaticInvoice {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		StaticInvoice::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for StaticInvoice {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let parsed_invoice = ParsedMessage::<FullInvoiceTlvStream>::try_from(bytes)?;
-		StaticInvoice::try_from(parsed_invoice)
+		StaticInvoice::try_from_with_conversion(parsed_invoice, converter)
 	}
 }
 
@@ -624,6 +635,18 @@ impl TryFrom<ParsedMessage<FullInvoiceTlvStream>> for StaticInvoice {
 	type Error = Bolt12ParseError;
 
 	fn try_from(invoice: ParsedMessage<FullInvoiceTlvStream>) -> Result<Self, Self::Error> {
+		StaticInvoice::try_from_with_conversion(invoice, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<ParsedMessage<FullInvoiceTlvStream>, C>
+	for StaticInvoice
+{
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(
+		invoice: ParsedMessage<FullInvoiceTlvStream>, converter: &C,
+	) -> Result<Self, Self::Error> {
 		let ParsedMessage { bytes, tlv_stream } = invoice;
 		let (
 			offer_tlv_stream,
@@ -632,12 +655,15 @@ impl TryFrom<ParsedMessage<FullInvoiceTlvStream>> for StaticInvoice {
 			experimental_offer_tlv_stream,
 			experimental_invoice_tlv_stream,
 		) = tlv_stream;
-		let contents = InvoiceContents::try_from((
-			offer_tlv_stream,
-			invoice_tlv_stream,
-			experimental_offer_tlv_stream,
-			experimental_invoice_tlv_stream,
-		))?;
+		let contents = InvoiceContents::try_from_with_conversion(
+			(
+				offer_tlv_stream,
+				invoice_tlv_stream,
+				experimental_offer_tlv_stream,
+				experimental_invoice_tlv_stream,
+			),
+			converter,
+		)?;
 
 		let signature = match signature {
 			None => {
@@ -660,6 +686,16 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: PartialInvoiceTlvStream) -> Result<Self, Self::Error> {
+		InvoiceContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<PartialInvoiceTlvStream, C> for InvoiceContents {
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(
+		tlv_stream: PartialInvoiceTlvStream, converter: &C,
+	) -> Result<Self, Self::Error> {
 		let (
 			offer_tlv_stream,
 			InvoiceTlvStream {
@@ -711,7 +747,10 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		}
 
 		Ok(InvoiceContents {
-			offer: OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?,
+			offer: OfferContents::try_from_with_conversion(
+				(offer_tlv_stream, experimental_offer_tlv_stream),
+				converter,
+			)?,
 			payment_paths,
 			message_paths,
 			created_at,
