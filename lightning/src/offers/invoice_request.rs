@@ -77,9 +77,7 @@ use crate::offers::merkle::{
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, CurrencyCode, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer,
-	OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES,
-	OFFER_TYPES,
+	Amount, CurrencyCode, EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, TryFromWithConversion
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
@@ -1451,6 +1449,17 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: PartialInvoiceRequestTlvStream) -> Result<Self, Self::Error> {
+		InvoiceRequestContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<PartialInvoiceRequestTlvStream, C> for InvoiceRequestContents {
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(
+		tlv_stream: PartialInvoiceRequestTlvStream,
+		converter: &C,
+	) -> Result<Self, Self::Error> {
 		let (
 			PayerTlvStream { metadata },
 			offer_tlv_stream,
@@ -1475,7 +1484,7 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			None => return Err(Bolt12SemanticError::MissingPayerMetadata),
 			Some(metadata) => PayerContents(Metadata::Bytes(metadata)),
 		};
-		let offer = OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?;
+		let offer = OfferContents::try_from_with_conversion((offer_tlv_stream, experimental_offer_tlv_stream), converter)?;
 
 		if !offer.supports_chain(chain.unwrap_or_else(|| offer.implied_chain())) {
 			return Err(Bolt12SemanticError::UnsupportedChain);
