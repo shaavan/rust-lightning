@@ -1270,11 +1270,18 @@ impl TryFrom<Vec<u8>> for Offer {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		Offer::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for Offer {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let offer = ParsedMessage::<FullOfferTlvStream>::try_from(bytes)?;
 		let ParsedMessage { bytes, tlv_stream } = offer;
-		let contents = OfferContents::try_from(tlv_stream)?;
+		let contents = OfferContents::try_from_with_conversion(tlv_stream, converter)?;
 		let id = OfferId::from_valid_offer_tlv_stream(&bytes);
-
 		Ok(Offer { bytes, contents, id })
 	}
 }
