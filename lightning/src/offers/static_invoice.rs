@@ -22,14 +22,13 @@ use crate::offers::invoice::{
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{CurrencyConversion, DefaultCurrencyConversion, InvoiceRequest};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
-	OfferId, OfferTlvStream, OfferTlvStreamRef, Quantity, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	Amount, EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, Offer, OfferContents, OfferId, OfferTlvStream, OfferTlvStreamRef, Quantity, TryFromWithConversion
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::types::features::{Bolt12InvoiceFeatures, OfferFeatures};
@@ -660,6 +659,14 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: PartialInvoiceTlvStream) -> Result<Self, Self::Error> {
+		InvoiceContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<PartialInvoiceTlvStream, C> for InvoiceContents {
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(tlv_stream: PartialInvoiceTlvStream, converter: &C) -> Result<Self, Self::Error> {
 		let (
 			offer_tlv_stream,
 			InvoiceTlvStream {
@@ -697,7 +704,6 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		};
 
 		let relative_expiry = relative_expiry.map(Into::<u64>::into).map(Duration::from_secs);
-
 		let features = features.unwrap_or_else(Bolt12InvoiceFeatures::empty);
 
 		let signing_pubkey = node_id.ok_or(Bolt12SemanticError::MissingSigningPubkey)?;
@@ -711,7 +717,7 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		}
 
 		Ok(InvoiceContents {
-			offer: OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?,
+			offer: OfferContents::try_from_with_conversion((offer_tlv_stream, experimental_offer_tlv_stream), converter)?,
 			payment_paths,
 			message_paths,
 			created_at,
@@ -724,6 +730,7 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		})
 	}
 }
+
 
 #[cfg(test)]
 mod tests {
