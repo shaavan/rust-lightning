@@ -125,18 +125,14 @@ use crate::ln::msgs::DecodeError;
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
 use crate::offers::invoice_request::{
-	ExperimentalInvoiceRequestTlvStream, ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest,
-	InvoiceRequestContents, InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef,
-	EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES,
-	IV_BYTES as INVOICE_REQUEST_IV_BYTES,
+	CurrencyConversion, DefaultCurrencyConversion, EXPERIMENTAL_INVOICE_REQUEST_TYPES, ExperimentalInvoiceRequestTlvStream, ExperimentalInvoiceRequestTlvStreamRef, INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES, IV_BYTES as INVOICE_REQUEST_IV_BYTES, InvoiceRequest, InvoiceRequestContents, InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef
 };
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OfferId, OfferTlvStream,
-	OfferTlvStreamRef, Quantity, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	Amount, EXPERIMENTAL_OFFER_TYPES, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OFFER_TYPES, OfferId, OfferTlvStream, OfferTlvStreamRef, Quantity, TryFromWithConversion
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerTlvStream, PayerTlvStreamRef, PAYER_METADATA_TYPE};
@@ -1659,6 +1655,14 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 	type Error = Bolt12SemanticError;
 
 	fn try_from(tlv_stream: PartialInvoiceTlvStream) -> Result<Self, Self::Error> {
+		InvoiceContents::try_from_with_conversion(tlv_stream, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<PartialInvoiceTlvStream, C> for InvoiceContents {
+	type Error = Bolt12SemanticError;
+
+	fn try_from_with_conversion(tlv_stream: PartialInvoiceTlvStream, converter: &C) -> Result<Self, Self::Error> {
 		let (
 			payer_tlv_stream,
 			offer_tlv_stream,
@@ -1695,13 +1699,9 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		};
 
 		let relative_expiry = relative_expiry.map(Into::<u64>::into).map(Duration::from_secs);
-
 		let payment_hash = payment_hash.ok_or(Bolt12SemanticError::MissingPaymentHash)?;
-
 		let amount_msats = amount.ok_or(Bolt12SemanticError::MissingAmount)?;
-
 		let features = features.unwrap_or_else(Bolt12InvoiceFeatures::empty);
-
 		let signing_pubkey = node_id.ok_or(Bolt12SemanticError::MissingSigningPubkey)?;
 
 		let fields = InvoiceFields {
@@ -1734,13 +1734,13 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 
 			Ok(InvoiceContents::ForRefund { refund, fields })
 		} else {
-			let invoice_request = InvoiceRequestContents::try_from((
+			let invoice_request = InvoiceRequestContents::try_from_with_conversion((
 				payer_tlv_stream,
 				offer_tlv_stream,
 				invoice_request_tlv_stream,
 				experimental_offer_tlv_stream,
 				experimental_invoice_request_tlv_stream,
-			))?;
+			), converter)?;
 
 			if let Some(requested_amount_msats) = invoice_request.amount_msats() {
 				if amount_msats != requested_amount_msats {

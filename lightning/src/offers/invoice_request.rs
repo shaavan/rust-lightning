@@ -1392,10 +1392,18 @@ impl TryFrom<Vec<u8>> for UnsignedInvoiceRequest {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		UnsignedInvoiceRequest::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for UnsignedInvoiceRequest {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let invoice_request = ParsedMessage::<PartialInvoiceRequestTlvStream>::try_from(bytes)?;
 		let ParsedMessage { mut bytes, tlv_stream } = invoice_request;
 
-		let contents = InvoiceRequestContents::try_from(tlv_stream)?;
+		let contents = InvoiceRequestContents::try_from_with_conversion(tlv_stream, converter)?;
 		let tagged_hash = TaggedHash::from_valid_tlv_stream_bytes(SIGNATURE_TAG, &bytes);
 
 		let offset = TlvStream::new(&bytes)
@@ -1412,6 +1420,14 @@ impl TryFrom<Vec<u8>> for InvoiceRequest {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		InvoiceRequest::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for InvoiceRequest {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let invoice_request = ParsedMessage::<FullInvoiceRequestTlvStream>::try_from(bytes)?;
 		let ParsedMessage { bytes, tlv_stream } = invoice_request;
 		let (
@@ -1422,13 +1438,14 @@ impl TryFrom<Vec<u8>> for InvoiceRequest {
 			experimental_offer_tlv_stream,
 			experimental_invoice_request_tlv_stream,
 		) = tlv_stream;
-		let contents = InvoiceRequestContents::try_from((
+
+		let contents = InvoiceRequestContents::try_from_with_conversion((
 			payer_tlv_stream,
 			offer_tlv_stream,
 			invoice_request_tlv_stream,
 			experimental_offer_tlv_stream,
 			experimental_invoice_request_tlv_stream,
-		))?;
+		), converter)?;
 
 		let signature = match signature {
 			None => {
@@ -1438,6 +1455,7 @@ impl TryFrom<Vec<u8>> for InvoiceRequest {
 			},
 			Some(signature) => signature,
 		};
+
 		let message = TaggedHash::from_valid_tlv_stream_bytes(SIGNATURE_TAG, &bytes);
 		merkle::verify_signature(&signature, &message, contents.payer_signing_pubkey)?;
 
