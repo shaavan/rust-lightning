@@ -853,7 +853,7 @@ impl OfferFromHrn {
 
 #[cfg(test)]
 impl Offer {
-	pub(super) fn as_tlv_stream(&self) -> FullOfferTlvStreamRef<'_> {
+	pub(crate) fn as_tlv_stream(&self) -> FullOfferTlvStreamRef<'_> {
 		self.contents.as_tlv_stream()
 	}
 }

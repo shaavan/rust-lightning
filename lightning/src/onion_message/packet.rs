@@ -22,6 +22,7 @@ use crate::blinded_path::message::{
 use crate::crypto::streams::{ChaChaDualPolyReadAdapter, ChaChaPolyWriteAdapter};
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
+use crate::offers::parse::CurrencyConversion;
 use crate::sign::ReceiveAuthKey;
 use crate::util::logger::Logger;
 use crate::util::ser::{
@@ -268,14 +269,14 @@ impl<T: OnionMessageContents> Writeable for (Payload<T>, [u8; 32]) {
 }
 
 // Uses the provided secret to simultaneously decode and decrypt the control TLVs and data TLV.
-impl<H: CustomOnionMessageHandler + ?Sized, L: Logger + ?Sized>
-	ReadableArgs<(SharedSecret, &H, ReceiveAuthKey, &L)>
+impl<H: CustomOnionMessageHandler + ?Sized, L: Logger + ?Sized, C: CurrencyConversion>
+	ReadableArgs<(SharedSecret, &H, ReceiveAuthKey, &L, &C)>
 	for Payload<ParsedOnionMessageContents<<H as CustomOnionMessageHandler>::CustomMessage>>
 {
 	fn read<R: Read>(
-		r: &mut R, args: (SharedSecret, &H, ReceiveAuthKey, &L),
+		r: &mut R, args: (SharedSecret, &H, ReceiveAuthKey, &L, &C),
 	) -> Result<Self, DecodeError> {
-		let (encrypted_tlvs_ss, handler, receive_tlvs_key, logger) = args;
+		let (encrypted_tlvs_ss, handler, receive_tlvs_key, logger, converter) = args;
 
 		let v: BigSize = Readable::read(r)?;
 		let mut rd = FixedLengthReader::new(r, v.0);
@@ -289,13 +290,12 @@ impl<H: CustomOnionMessageHandler + ?Sized, L: Logger + ?Sized>
 			(4, read_adapter, (option: LengthReadableArgs, (rho, receive_tlvs_key.0))),
 		}, |msg_type, msg_reader| {
 			if msg_type < 64 { return Ok(false) }
-			// Don't allow reading more than one data TLV from an onion message.
 			if message_type.is_some() { return Err(DecodeError::InvalidValue) }
 
 			message_type = Some(msg_type);
 			match msg_type {
 				tlv_type if OffersMessage::is_known_type(tlv_type) => {
-					let msg = OffersMessage::read(msg_reader, (tlv_type, logger))?;
+					let msg = OffersMessage::read(msg_reader, (tlv_type, logger, converter))?;
 					message = Some(ParsedOnionMessageContents::Offers(msg));
 					Ok(true)
 				},

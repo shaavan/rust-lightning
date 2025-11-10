@@ -15,7 +15,7 @@ use crate::ln::msgs::DecodeError;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::InvoiceRequest;
-use crate::offers::parse::Bolt12ParseError;
+use crate::offers::parse::{Bolt12ParseError, CurrencyConversion, TryFromWithConversion};
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::messenger::{MessageSendInstructions, Responder, ResponseInstruction};
 use crate::onion_message::packet::OnionMessageContents;
@@ -97,11 +97,11 @@ impl OffersMessage {
 		}
 	}
 
-	fn parse(tlv_type: u64, bytes: Vec<u8>) -> Result<Self, Bolt12ParseError> {
+	fn parse<C: CurrencyConversion>(tlv_type: u64, bytes: Vec<u8>, converter: &C) -> Result<Self, Bolt12ParseError> {
 		match tlv_type {
-			INVOICE_REQUEST_TLV_TYPE => Ok(Self::InvoiceRequest(InvoiceRequest::try_from(bytes)?)),
-			INVOICE_TLV_TYPE => Ok(Self::Invoice(Bolt12Invoice::try_from(bytes)?)),
-			STATIC_INVOICE_TLV_TYPE => Ok(Self::StaticInvoice(StaticInvoice::try_from(bytes)?)),
+			INVOICE_REQUEST_TLV_TYPE => Ok(Self::InvoiceRequest(InvoiceRequest::try_from_with_conversion(bytes, converter)?)),
+			INVOICE_TLV_TYPE => Ok(Self::Invoice(Bolt12Invoice::try_from_with_conversion(bytes, converter)?)),
+			STATIC_INVOICE_TLV_TYPE => Ok(Self::StaticInvoice(StaticInvoice::try_from_with_conversion(bytes, converter)?)),
 			_ => Err(Bolt12ParseError::Decode(DecodeError::InvalidValue)),
 		}
 	}
@@ -165,9 +165,9 @@ impl Writeable for OffersMessage {
 	}
 }
 
-impl<L: Logger + ?Sized> ReadableArgs<(u64, &L)> for OffersMessage {
-	fn read<R: Read>(r: &mut R, read_args: (u64, &L)) -> Result<Self, DecodeError> {
-		let (tlv_type, logger) = read_args;
+impl<L: Logger + ?Sized, C: CurrencyConversion> ReadableArgs<(u64, &L, &C)> for OffersMessage {
+	fn read<R: Read>(r: &mut R, read_args: (u64, &L, &C)) -> Result<Self, DecodeError> {
+		let (tlv_type, logger, converter) = read_args;
 		if tlv_type == INVOICE_ERROR_TLV_TYPE {
 			return Ok(Self::InvoiceError(InvoiceError::read(r)?));
 		}
@@ -175,7 +175,7 @@ impl<L: Logger + ?Sized> ReadableArgs<(u64, &L)> for OffersMessage {
 		let mut bytes = Vec::new();
 		r.read_to_limit(&mut bytes, u64::MAX).unwrap();
 
-		match Self::parse(tlv_type, bytes) {
+		match Self::parse(tlv_type, bytes, converter) {
 			Ok(message) => Ok(message),
 			Err(Bolt12ParseError::Decode(e)) => Err(e),
 			Err(Bolt12ParseError::InvalidSemantics(e)) => {
@@ -190,3 +190,4 @@ impl<L: Logger + ?Sized> ReadableArgs<(u64, &L)> for OffersMessage {
 		}
 	}
 }
+

@@ -135,6 +135,26 @@ impl CurrencyConversion for DefaultCurrencyConversion {
 	}
 }
 
+#[cfg(test)]
+pub struct TestCurrencyConversion;
+
+#[cfg(test)]
+impl CurrencyConversion for TestCurrencyConversion {
+	/// A mock [`CurrencyConversion`] implementation for tests.
+	///
+	/// Supports only the test currency code `"TST"`, which converts
+	/// one minor unit to exactly 1 millisatoshi (1 msat).
+	///
+	/// This minimal factor ensures deterministic behavior and avoids
+	/// multiplicity discrepancies during testing.
+	fn fiat_to_msats(&self, iso4217_code: CurrencyCode) -> Result<u64, Bolt12SemanticError> {
+		match iso4217_code.as_str() {
+			"TST" => Ok(1),
+			_ => Err(Bolt12SemanticError::UnsupportedCurrency),
+		}
+	}
+}
+
 /// A fallible conversion trait similar to [`TryFrom`], but with an additional
 /// conversion context or helper.
 ///

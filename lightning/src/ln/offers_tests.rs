@@ -51,7 +51,7 @@ use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, Paym
 use crate::blinded_path::message::OffersContext;
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{Bolt12PaymentError, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry, self};
-use crate::offers::offer::{Amount, CurrencyCode};
+use crate::offers::offer::{Amount, CurrencyCode, Offer};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, NodeAnnouncement, OnionMessage, OnionMessageHandler, RoutingMessageHandler, SocketAddress, UnsignedGossipMessage, UnsignedNodeAnnouncement};
@@ -60,7 +60,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::parse::{Bolt12SemanticError, TestCurrencyConversion, TryFromWithConversion};
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, PADDED_PATH_LENGTH};
 use crate::onion_message::offers::OffersMessage;
 use crate::routing::gossip::{NodeAlias, NodeId};
@@ -885,25 +885,36 @@ fn creates_and_pays_for_offer_with_currency_using_one_hop_blinded_path () {
 	let bob_id = bob.node.get_our_node_id();
 
 	let amount = Amount::Currency {
-		iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+		iso4217_code: CurrencyCode::new(*b"TST").unwrap(),
 		amount: 10_000_000,
 	};
 
-	let offer = alice.node
+	let offer_created = alice.node
 		.create_offer_builder().unwrap()
 		.amount(amount)
 		.build().unwrap();
-	assert_ne!(offer.issuer_signing_pubkey(), Some(alice_id));
-	assert!(!offer.paths().is_empty());
-	for path in offer.paths() {
+	assert_ne!(offer_created.issuer_signing_pubkey(), Some(alice_id));
+	assert!(!offer_created.paths().is_empty());
+	for path in offer_created.paths() {
 		assert!(check_compact_path_introduction_node(&path, bob, alice_id));
 	}
+
+	// Convert offer to tlv_stream, and then reread the stream, to simulate sending of offer.
+	let tlv_stream = offer_created.as_tlv_stream();
+	let mut encoded_offer = Vec::new();
+	tlv_stream.write(&mut encoded_offer).unwrap();
+
+	let offer = Offer::try_from_with_conversion(
+		encoded_offer,
+		&TestCurrencyConversion
+	).unwrap();
 
 	let payment_id = PaymentId([1; 32]);
 	bob.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	// ^ working till here
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);

@@ -35,6 +35,7 @@ use crate::ln::msgs::{
 	self, BaseMessageHandler, MessageSendEvent, OnionMessage, OnionMessageHandler, SocketAddress,
 };
 use crate::ln::onion_utils;
+use crate::offers::parse::CurrencyConversion;
 use crate::routing::gossip::{NetworkGraph, NodeId, ReadOnlyNetworkGraph};
 use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::{InitFeatures, NodeFeatures};
@@ -85,6 +86,10 @@ pub trait AOnionMessenger {
 	type MessageRouter: MessageRouter + ?Sized;
 	/// A type that may be dereferenced to [`Self::MessageRouter`]
 	type MR: Deref<Target = Self::MessageRouter>;
+	/// A type implementing [`CurrencyConversion`]
+	type CurrencyConversion: CurrencyConversion + ?Sized;
+	/// A type that may be dereferenced to [`Self::CurrencyConversion`]
+	type C: Deref<Target = Self::CurrencyConversion>;
 	/// A type implementing [`OffersMessageHandler`]
 	type OffersMessageHandler: OffersMessageHandler + ?Sized;
 	/// A type that may be dereferenced to [`Self::OffersMessageHandler`]
@@ -110,6 +115,7 @@ pub trait AOnionMessenger {
 		Self::L,
 		Self::NL,
 		Self::MR,
+		Self::C,
 		Self::OMH,
 		Self::APH,
 		Self::DRH,
@@ -123,17 +129,19 @@ impl<
 		L: Deref,
 		NL: Deref,
 		MR: Deref,
+		C: Deref,
 		OMH: Deref,
 		APH: Deref,
 		DRH: Deref,
 		CMH: Deref,
-	> AOnionMessenger for OnionMessenger<ES, NS, L, NL, MR, OMH, APH, DRH, CMH>
+	> AOnionMessenger for OnionMessenger<ES, NS, L, NL, MR, C, OMH, APH, DRH, CMH>
 where
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
 	L::Target: Logger,
 	NL::Target: NodeIdLookUp,
 	MR::Target: MessageRouter,
+	C::Target: CurrencyConversion,
 	OMH::Target: OffersMessageHandler,
 	APH::Target: AsyncPaymentsMessageHandler,
 	DRH::Target: DNSResolverMessageHandler,
@@ -149,6 +157,8 @@ where
 	type NL = NL;
 	type MessageRouter = MR::Target;
 	type MR = MR;
+	type CurrencyConversion = C::Target;
+	type C = C;
 	type OffersMessageHandler = OMH::Target;
 	type OMH = OMH;
 	type AsyncPaymentsMessageHandler = APH::Target;
@@ -157,7 +167,8 @@ where
 	type DRH = DRH;
 	type CustomOnionMessageHandler = CMH::Target;
 	type CMH = CMH;
-	fn get_om(&self) -> &OnionMessenger<ES, NS, L, NL, MR, OMH, APH, DRH, CMH> {
+
+	fn get_om(&self) -> &OnionMessenger<ES, NS, L, NL, MR, C, OMH, APH, DRH, CMH> {
 		self
 	}
 }
@@ -289,6 +300,7 @@ pub struct OnionMessenger<
 	L: Deref,
 	NL: Deref,
 	MR: Deref,
+	C: Deref,
 	OMH: Deref,
 	APH: Deref,
 	DRH: Deref,
@@ -299,6 +311,7 @@ pub struct OnionMessenger<
 	L::Target: Logger,
 	NL::Target: NodeIdLookUp,
 	MR::Target: MessageRouter,
+	C::Target: CurrencyConversion,
 	OMH::Target: OffersMessageHandler,
 	APH::Target: AsyncPaymentsMessageHandler,
 	DRH::Target: DNSResolverMessageHandler,
@@ -314,6 +327,7 @@ pub struct OnionMessenger<
 	secp_ctx: Secp256k1<secp256k1::All>,
 	node_id_lookup: NL,
 	message_router: MR,
+	converter: C,
 	offers_handler: OMH,
 	#[allow(unused)]
 	async_payments_handler: APH,
@@ -1136,13 +1150,9 @@ where
 	Ok((first_node_id, message, first_node_addresses))
 }
 
-/// Decode one layer of an incoming [`OnionMessage`].
-///
-/// Returns either the next layer of the onion for forwarding or the decrypted content for the
-/// receiver.
-pub fn peel_onion_message<NS: Deref, L: Deref, CMH: Deref>(
+pub fn peel_onion_message<NS: Deref, L: Deref, CMH: Deref, C: CurrencyConversion>(
 	msg: &OnionMessage, secp_ctx: &Secp256k1<secp256k1::All>, node_signer: NS, logger: L,
-	custom_handler: CMH,
+	custom_handler: CMH, converter: &C,
 ) -> Result<PeeledOnion<<<CMH>::Target as CustomOnionMessageHandler>::CustomMessage>, ()>
 where
 	NS::Target: NodeSigner,
@@ -1177,7 +1187,13 @@ where
 		onion_decode_ss,
 		&msg.onion_routing_packet.hop_data[..],
 		msg.onion_routing_packet.hmac,
-		(control_tlvs_ss, custom_handler.deref(), receiving_context_auth_key, logger.deref()),
+		(
+			control_tlvs_ss,
+			custom_handler.deref(),
+			receiving_context_auth_key,
+			logger.deref(),
+			converter,
+		),
 	);
 
 	// Constructs the next onion message using packet data and blinding logic.
@@ -1229,13 +1245,7 @@ where
 		)) => match (message, context) {
 			(ParsedOnionMessageContents::Offers(msg), Some(MessageContext::Offers(ctx))) => {
 				match ctx {
-					OffersContext::InvoiceRequest { .. } => {
-						// Note: We introduced the `control_tlvs_authenticated` check in LDK v0.2
-						// to simplify and standardize onion message authentication.
-						// To continue supporting offers created before v0.2, we allow
-						// unauthenticated control TLVs for these messages, as they can be
-						// verified using the legacy method.
-					},
+					OffersContext::InvoiceRequest { .. } => {},
 					_ => {
 						if !control_tlvs_authenticated {
 							log_trace!(logger, "Received an unauthenticated offers onion message");
@@ -1304,7 +1314,7 @@ where
 				new_packet_bytes,
 				None,
 			)?;
-			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler)
+			peel_onion_message(&onion_message, secp_ctx, node_signer, logger, custom_handler, converter)
 		},
 		Ok((
 			Payload::Forward(ForwardControlTlvs::Unblinded(ForwardTlvs {
@@ -1368,11 +1378,12 @@ impl<
 		L: Deref,
 		NL: Deref,
 		MR: Deref,
+		C: Deref,
 		OMH: Deref,
 		APH: Deref,
 		DRH: Deref,
 		CMH: Deref,
-	> OnionMessenger<ES, NS, L, NL, MR, OMH, APH, DRH, CMH>
+	> OnionMessenger<ES, NS, L, NL, MR, C, OMH, APH, DRH, CMH>
 where
 	ES::Target: EntropySource,
 	NS::Target: NodeSigner,
@@ -1780,6 +1791,7 @@ where
 			&*self.node_signer,
 			&*self.logger,
 			&*self.custom_handler,
+			&*self.converter
 		)
 	}
 
