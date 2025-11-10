@@ -584,8 +584,16 @@ impl TryFrom<Vec<u8>> for StaticInvoice {
 	type Error = Bolt12ParseError;
 
 	fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+		StaticInvoice::try_from_with_conversion(bytes, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<Vec<u8>, C> for StaticInvoice {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(bytes: Vec<u8>, converter: &C) -> Result<Self, Self::Error> {
 		let parsed_invoice = ParsedMessage::<FullInvoiceTlvStream>::try_from(bytes)?;
-		StaticInvoice::try_from(parsed_invoice)
+		StaticInvoice::try_from_with_conversion(parsed_invoice, converter)
 	}
 }
 
@@ -623,6 +631,14 @@ impl TryFrom<ParsedMessage<FullInvoiceTlvStream>> for StaticInvoice {
 	type Error = Bolt12ParseError;
 
 	fn try_from(invoice: ParsedMessage<FullInvoiceTlvStream>) -> Result<Self, Self::Error> {
+		StaticInvoice::try_from_with_conversion(invoice, &DefaultCurrencyConversion)
+	}
+}
+
+impl<C: CurrencyConversion> TryFromWithConversion<ParsedMessage<FullInvoiceTlvStream>, C> for StaticInvoice {
+	type Error = Bolt12ParseError;
+
+	fn try_from_with_conversion(invoice: ParsedMessage<FullInvoiceTlvStream>, converter: &C) -> Result<Self, Self::Error> {
 		let ParsedMessage { bytes, tlv_stream } = invoice;
 		let (
 			offer_tlv_stream,
@@ -631,12 +647,13 @@ impl TryFrom<ParsedMessage<FullInvoiceTlvStream>> for StaticInvoice {
 			experimental_offer_tlv_stream,
 			experimental_invoice_tlv_stream,
 		) = tlv_stream;
-		let contents = InvoiceContents::try_from((
+
+		let contents = InvoiceContents::try_from_with_conversion((
 			offer_tlv_stream,
 			invoice_tlv_stream,
 			experimental_offer_tlv_stream,
 			experimental_invoice_tlv_stream,
-		))?;
+		), converter)?;
 
 		let signature = match signature {
 			None => {
@@ -646,6 +663,7 @@ impl TryFrom<ParsedMessage<FullInvoiceTlvStream>> for StaticInvoice {
 			},
 			Some(signature) => signature,
 		};
+
 		let tagged_hash = TaggedHash::from_valid_tlv_stream_bytes(SIGNATURE_TAG, &bytes);
 		let pubkey = contents.signing_pubkey;
 		merkle::verify_signature(&signature, &tagged_hash, pubkey)?;
