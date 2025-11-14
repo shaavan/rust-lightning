@@ -3636,6 +3636,29 @@ pub struct ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_paths: &'a [&'a [&'a Node<'b, 'c, 'd>]],
 	pub expected_extra_fees: Vec<u32>,
+	/// A one-off adjustment used only in tests to account for an existing
+	/// fee-handling trade-off in LDK.
+	///
+	/// When the payer is the introduction node of a blinded path, LDK does not
+	/// subtract the forward fee for the `payer -> next_hop` channel
+	/// (see [`BlindedPaymentPath::advance_path_by_one`]). This keeps the fee
+	/// logic simpler at the cost of a small, intentional overpayment.
+	///
+	/// In the simple two-hop case (payer as introduction node → payee),
+	/// this overpayment has historically been avoided by simply not charging
+	/// the payer the forward fee, since the payer knows there is only
+	/// a single hop after them.
+	///
+	/// However, with the introduction of dummy hops in LDK v3.0, even a
+	/// two-node real path (payer as introduction node → payee) may appear as a
+	/// multi-hop blinded path. This makes the existing overpayment surface in
+	/// tests.
+	///
+	/// Until the fee-handling trade-off is revisited, this field allows tests
+	/// to compensate for that expected difference.
+	///
+	/// [`BlindedPaymentPath::advance_path_by_one`]: crate::blinded_path::payment::BlindedPaymentPath::advance_path_by_one
+	pub expected_extra_total_fees_msat: u64,
 	pub expected_min_htlc_overpay: Vec<u32>,
 	pub skip_last: bool,
 	pub payment_preimage: PaymentPreimage,
@@ -3659,6 +3682,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 			origin_node,
 			expected_paths,
 			expected_extra_fees: vec![0; expected_paths.len()],
+			expected_extra_total_fees_msat: 0,
 			expected_min_htlc_overpay: vec![0; expected_paths.len()],
 			skip_last: false,
 			payment_preimage,
@@ -3672,6 +3696,10 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	}
 	pub fn with_expected_extra_fees(mut self, extra_fees: Vec<u32>) -> Self {
 		self.expected_extra_fees = extra_fees;
+		self
+	}
+	pub fn with_expected_extra_total_fees_msat(mut self, extra_total_fees: u64) -> Self {
+		self.expected_extra_total_fees_msat = extra_total_fees;
 		self
 	}
 	pub fn with_expected_min_htlc_overpay(mut self, extra_fees: Vec<u32>) -> Self {
@@ -3698,6 +3726,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 		payment_preimage: our_payment_preimage,
 		allow_1_msat_fee_overpay,
 		custom_tlvs,
+		..
 	} = args;
 	let claim_event = expected_paths[0].last().unwrap().node.get_and_clear_pending_events();
 	assert_eq!(claim_event.len(), 1);
@@ -3934,7 +3963,9 @@ pub fn claim_payment_along_route(
 	let origin_node = args.origin_node;
 	let payment_preimage = args.payment_preimage;
 	let skip_last = args.skip_last;
-	let expected_total_fee_msat = do_claim_payment_along_route(args);
+	let expected_extra_total_fees_msat = args.expected_extra_total_fees_msat;
+	let mut expected_total_fee_msat = do_claim_payment_along_route(args);
+	expected_total_fee_msat += expected_extra_total_fees_msat;
 	if !skip_last {
 		expect_payment_sent!(origin_node, payment_preimage, Some(expected_total_fee_msat))
 	} else {

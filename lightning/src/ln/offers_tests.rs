@@ -1410,7 +1410,41 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Extract PaymentClaimable, verify context, and obtain the payment preimage.
+	let recipient = &alice;
+	let payment_purpose = match get_event!(recipient, Event::PaymentClaimable) {
+		Event::PaymentClaimable { purpose, .. } => purpose,
+		_ => panic!("No Event::PaymentClaimable"),
+	};
+
+	let payment_preimage = payment_purpose
+		.preimage()
+		.expect("No preimage in Event::PaymentClaimable");
+
+	match payment_purpose {
+		PaymentPurpose::Bolt12OfferPayment { payment_context: ctx, .. } => {
+			assert_eq!(PaymentContext::Bolt12Offer(ctx), payment_context);
+		},
+		PaymentPurpose::Bolt12RefundPayment { payment_context: ctx, .. } => {
+			assert_eq!(PaymentContext::Bolt12Refund(ctx), payment_context);
+		},
+		_ => panic!("Unexpected payment purpose: {:?}", payment_purpose),
+	};
+
+	// Build ClaimAlongRouteArgs and compensate for the expected overpayment
+	// caused by the payer being the introduction node of the blinded path with
+	// dummy hops.
+	let expected_paths: &[&[&Node]] = &[&[alice]];
+	let args = ClaimAlongRouteArgs::new(
+		bob,
+		expected_paths,
+		payment_preimage,
+	).with_expected_extra_total_fees_msat(1000);
+
+	// Execute the claim and verify the invoice was fulfilled.
+	let (inv, _events) = claim_payment_along_route(args);
+	assert_eq!(inv, Some(PaidBolt12Invoice::Bolt12Invoice(invoice.clone())));
+
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
