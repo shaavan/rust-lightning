@@ -239,6 +239,22 @@ impl BlindedPaymentPath {
 				self.inner_path.blinded_hops.remove(0);
 				Ok(())
 			},
+			Ok((
+				BlindedPaymentTlvs::Dummy(_),
+				control_tlvs_ss
+			)) => {
+				let next_node_id = node_signer.get_node_id(Recipient::Node)?;
+				let mut new_blinding_point = onion_utils::next_hop_pubkey(
+					secp_ctx,
+					self.inner_path.blinding_point,
+					control_tlvs_ss.as_ref(),
+				)
+				.map_err(|_| ())?;
+				mem::swap(&mut self.inner_path.blinding_point, &mut new_blinding_point);
+				self.inner_path.introduction_node = IntroductionNode::NodeId(next_node_id);
+				self.inner_path.blinded_hops.remove(0);
+				Ok(())
+			},
 			_ => Err(()),
 		}
 	}
@@ -262,7 +278,9 @@ impl BlindedPaymentPath {
 				.map_err(|_| ())?;
 
 		match (&readable, used_aad) {
-			(BlindedPaymentTlvs::Forward(_), false) | (BlindedPaymentTlvs::Receive(_), true) => {
+			(BlindedPaymentTlvs::Forward(_), false)
+				| (BlindedPaymentTlvs::Dummy(_), true)
+				| (BlindedPaymentTlvs::Receive(_), true) => {
 				Ok((readable, control_tlvs_ss))
 			},
 			_ => Err(()),
