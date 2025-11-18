@@ -39,7 +39,9 @@ use crate::ln::peer_handler::IgnoringMessageHandler;
 use crate::ln::types::ChannelId;
 use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{NetworkGraph, NetworkUpdate, P2PGossipSync};
-use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
+use crate::routing::router::{
+	self, PaymentParameters, Route, RouteParameters, DEFAULT_PAYMENT_DUMMY_HOPS,
+};
 use crate::sign::{EntropySource, RandomBytes};
 use crate::types::features::ChannelTypeFeatures;
 use crate::types::features::InitFeatures;
@@ -3548,6 +3550,15 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 			let commitment = &payment_event.commitment_msg;
 			do_commitment_signed_dance(node, prev_node, commitment, false, false);
 			node.node.process_pending_htlc_forwards();
+		}
+
+		if is_last_hop {
+			// At the final hop, the incoming packet contains N dummy-hop layers
+			// before the real HTLC. Each call to `process_pending_htlc_forwards`
+			// strips exactly one dummy layer, so we call it N times.
+			for _ in 0..dummy_hop_override.unwrap_or(DEFAULT_PAYMENT_DUMMY_HOPS) {
+				node.node.process_pending_htlc_forwards();
+			}
 		}
 
 		if is_last_hop && clear_recipient_events {
