@@ -1432,7 +1432,20 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// When the payer is the introduction node of a blinded path, LDK doesn't
+	// subtract the forward fee for the `payer -> next_hop` channel (see
+	// `BlindedPaymentPath::advance_path_by_one`). This keeps fee logic simple,
+	// at the cost of a small, intentional overpayment.
+	//
+	// In the old two-hop case (payer as introduction node → payee), this never
+	// surfaced because the payer simply wasn’t charged the forward fee.
+	//
+	// With dummy hops in LDK v0.3, even a real two-node path can appear as a
+	// longer blinded route, so the overpayment shows up in tests.
+	//
+	// Until the fee-handling trade-off is revisited, we pass an expected extra
+	// fee here so tests can compensate for it.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(1000));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -2447,9 +2460,9 @@ fn rejects_keysend_to_non_static_invoice_path() {
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash });
 	do_pass_along_path(args);
 	let mut updates = get_htlc_update_msgs(&nodes[1], &nodes[0].node.get_our_node_id());
-	nodes[0].node.handle_update_fail_htlc(nodes[1].node.get_our_node_id(), &updates.update_fail_htlcs[0]);
+	nodes[0].node.handle_update_fail_malformed_htlc(nodes[1].node.get_our_node_id(), &updates.update_fail_malformed_htlcs[0]);
 	do_commitment_signed_dance(&nodes[0], &nodes[1], &updates.commitment_signed, false, false);
-	expect_payment_failed_conditions(&nodes[0], payment_hash, true, PaymentFailedConditions::new());
+	expect_payment_failed_conditions(&nodes[0], payment_hash, false, PaymentFailedConditions::new());
 }
 
 #[test]
