@@ -13,8 +13,7 @@ use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
 use lightning_invoice::Bolt11Invoice;
 
 use crate::blinded_path::payment::{
-	BlindedPaymentPath, ForwardTlvs, PaymentConstraints, PaymentForwardNode, PaymentRelay,
-	ReceiveTlvs,
+	BlindedPaymentPath, DummyTlvs, ForwardTlvs, PaymentConstraints, PaymentForwardNode, PaymentRelay, ReceiveTlvs
 };
 use crate::blinded_path::{BlindedHop, Direction, IntroductionNode};
 use crate::crypto::chacha20::ChaCha20;
@@ -73,6 +72,9 @@ pub struct DefaultRouter<
 	scorer: S,
 	score_params: SP,
 }
+
+/// The number of dummy hops included in [`BlindedPaymentPath`]s created by [`DefaultRouter`].
+pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 3;
 
 impl<
 		G: Deref<Target = NetworkGraph<L>>,
@@ -198,9 +200,17 @@ where
 				})
 			})
 			.map(|forward_node| {
-				BlindedPaymentPath::new(
-					&[forward_node], recipient, local_node_receive_key, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA,
-					&*self.entropy_source, secp_ctx
+				// To ensure dummy hops use sensible relay and constraint values, and do not
+				// introduce artificial barriers to payment forwarding, we reuse the forward
+				// node's relay parameters and the receive TLVs' payment constraints.
+				let dummy_tlvs = DummyTlvs {
+					payment_relay: forward_node.tlvs.payment_relay,
+					payment_constraints: tlvs.payment_constraints,
+				};
+
+				BlindedPaymentPath::new_with_dummy_hops(
+					&[forward_node], recipient, DEFAULT_PAYMENT_DUMMY_HOPS, dummy_tlvs, local_node_receive_key, tlvs.clone(), u64::MAX,
+					MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source, secp_ctx
 				)
 			})
 			.take(MAX_PAYMENT_PATHS)
@@ -209,10 +219,26 @@ where
 		match paths {
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
+				// If there are no forwarding nodes other than the receiver itself, we fall back
+				// to fixed, arbitrary relay parameters for dummy hops.
+				//
+				// This is a weak privacy heuristic: an observer familiar with LDK internals may
+				// correlate path fees against these fixed values.
+				//
+				// TODO: Derive dummy relay parameters in a more robust and privacy-preserving way.
+				let dummy_tlvs = DummyTlvs {
+					payment_relay: PaymentRelay {
+						cltv_expiry_delta: 144,
+						fee_proportional_millionths: 500,
+						fee_base_msat: 100,
+					},
+					payment_constraints: tlvs.payment_constraints,
+				};
+
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
-					BlindedPaymentPath::new(
-						&[], recipient, local_node_receive_key, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source,
-						secp_ctx
+					BlindedPaymentPath::new_with_dummy_hops(
+						&[], recipient, DEFAULT_PAYMENT_DUMMY_HOPS, dummy_tlvs, local_node_receive_key, tlvs, u64::MAX,
+						MIN_FINAL_CLTV_EXPIRY_DELTA, &*self.entropy_source, secp_ctx
 					).map(|path| vec![path])
 				} else {
 					Err(())

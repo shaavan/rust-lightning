@@ -476,7 +476,7 @@ enum BlindedPaymentTlvsRef<'a> {
 /// Parameters for relaying over a given [`BlindedHop`].
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaymentRelay {
 	/// Number of blocks subtracted from an incoming HTLC's `cltv_expiry` for this [`BlindedHop`].
 	pub cltv_expiry_delta: u16,
@@ -490,7 +490,7 @@ pub struct PaymentRelay {
 /// Constraints for relaying over a given [`BlindedHop`].
 ///
 /// [`BlindedHop`]: crate::blinded_path::BlindedHop
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PaymentConstraints {
 	/// The maximum total CLTV that is acceptable when relaying a payment over this [`BlindedHop`].
 	pub max_cltv_expiry: u32,
