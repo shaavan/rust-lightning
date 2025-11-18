@@ -39,7 +39,9 @@ use crate::ln::peer_handler::IgnoringMessageHandler;
 use crate::ln::types::ChannelId;
 use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{NetworkGraph, NetworkUpdate, P2PGossipSync};
-use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
+use crate::routing::router::{
+	self, PaymentParameters, Route, RouteParameters, DEFAULT_PAYMENT_DUMMY_HOPS,
+};
 use crate::sign::{EntropySource, RandomBytes};
 use crate::types::features::ChannelTypeFeatures;
 use crate::types::features::InitFeatures;
@@ -3673,6 +3675,8 @@ pub fn pass_along_path<'a, 'b, 'c>(
 ) -> Option<Event> {
 	let mut args =
 		PassAlongPathArgs::new(origin_node, expected_path, recv_value, our_payment_hash, ev);
+
+	args = args.with_dummy_hops(DEFAULT_PAYMENT_DUMMY_HOPS);
 
 	if !payment_claimable_expected {
 		args = args.without_claimable_event();
