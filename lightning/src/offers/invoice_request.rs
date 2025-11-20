@@ -1487,8 +1487,6 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			Some(metadata) => PayerContents(Metadata::Bytes(metadata)),
 		};
 
-		// let (recurrence_optional, recurrence_compulsory) = (offer_tlv_stream.recurrence_optional, offer_tlv_stream.recurrence_compulsory);
-
 		let offer = OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?;
 
 		if !offer.supports_chain(chain.unwrap_or_else(|| offer.implied_chain())) {
@@ -1513,27 +1511,95 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			return Err(Bolt12SemanticError::UnexpectedPaths);
 		}
 
-		if offer.recurrence_fields().is_none() {
-			if recurrence_counter.is_some() || recurrence_start.is_some() || recurrence_cancel.is_some() {
+		let offer_recurrence = offer.recurrence_fields();
+		let offer_base = offer_recurrence.and_then(|f| f.recurrence_base);
+
+		match (offer_recurrence, offer_base, recurrence_counter, recurrence_start, recurrence_cancel) {
+			// Offer without recurrence → No recurrence fields should be in IR
+			(None, None, None, None, None) => { /* OK */ },
+			// ------------------------------------------------------------
+			// Recurrence OPTIONAL (no basetime)
+			// ------------------------------------------------------------
+			// 1. No fields → treat as normal single payment. Supports backward compatibility.
+			// Spec Suggestion:
+			//
+			// Currently the reader MUST reject any invoice_request that omits
+			// `invreq_recurrence_counter` when the offer contains recurrence_optional
+			// or recurrence_compulsory.
+			// However, recurrence_optional is explicitly intended to preserve
+			// compatibility with payers that do not implement recurrence. Such payers
+			// should be able to make a single, non-recurring payment without setting
+			// any recurrence fields.
+			// Therefore, for recurrence_optional, it should be valid to omit all
+			// recurrence-related fields (counter, start, cancel), and the invoice
+			// request should be treated as a normal single payment.
+			(Some(_), None, None, None, None) => { /* OK */ },
+			// 2. Only counter → payer supports recurrence; starting at counter
+			(Some(_), None, Some(_), None, None) => { /* OK */ },
+			// 3. counter > 0 → allowed cancellation
+			(Some(_), None, Some(c), None, Some(())) if c > 0 => { /* OK */ },
+			// INVALID optional cases:
+			(Some(_), None, _, Some(_), _) => {
+				// recurrence_start MUST NOT appear without basetime
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			(Some(_), None, Some(c), None, Some(())) if c == 0 => {
+				// cannot cancel first request
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			(Some(_), None, _, _, _) => {
+				// All other recurrence optional combinations invalid
+        		return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// ------------------------------------------------------------
+    		// Recurrence COMPULSORY (with basetime)
+    		// ------------------------------------------------------------
+
+			// 1. First request: counter=0, start present, cancel absent
+			(Some(_), Some(_), Some(0), Some(_), None) => { /* OK */ },
+			// 2. Later periods: counter>0, start present, cancel MAY be present
+			(Some(_), Some(_), Some(c), Some(_), _cancel) if c > 0 => {/* OK */},
+
+			// INVALID compulsory cases ------------------------------------
+			// Missing counter or start
+			(Some(_), Some(_), None,    _,      _) |
+			(Some(_), Some(_), _,       None,   _) => {
 				return Err(Bolt12SemanticError::InvalidMetadata);
-			}
-		} else {
-			// That means it's recurrence optional
-			if offer.recurrence_fields().unwrap().recurrence_base.is_none() {
-				if recurrence_start.is_some() {
-					return Err(Bolt12SemanticError::InvalidMetadata);
-				}
-			}
-			// That means it's recurrence compulsory
-			else {
-				if recurrence_counter.is_none() || recurrence_start.is_none() {
-					return Err(Bolt12SemanticError::InvalidMetadata);
-				}
+			},
+			// Cancel on first request (counter=0)
+			(Some(_), Some(_), Some(c), Some(_), Some(())) if c == 0 => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// Any other recurrence compulsory combination is invalid
+			(Some(_), Some(_), _, _, _) => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			},
+			// Any other combination is invalid
+			(_, _, _, _, _) => {
+				return Err(Bolt12SemanticError::InvalidMetadata);
 			}
 		}
 
-		if recurrence_counter == Some(0) && recurrence_cancel.is_some() {
-			return Err(Bolt12SemanticError::InvalidMetadata);
+		// Limit, and Paywindow checks.
+		if let Some(fields) = &offer_recurrence {
+			if let Some(limit) = fields.recurrence_limit {
+				// Only enforce limit when recurrence is actually in use.
+				if let Some(counter) = recurrence_counter {
+					let offset = recurrence_start.unwrap_or(0);
+					let period_index = counter + offset;
+
+					if period_index > limit.0 {
+						return Err(Bolt12SemanticError::InvalidMetadata);
+					}
+				}
+			}
+			if let Some(_paywindow) = fields.recurrence_paywindow {
+				// TODO: implement once we compute:
+				// let period_start_time = ...
+				//
+				// if now < period_start_time - paywindow.seconds_before { ... }
+				// if now >= period_start_time + paywindow.seconds_after { ... }
+			}
 		}
 
 		Ok(InvoiceRequestContents {
