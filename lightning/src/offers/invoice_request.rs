@@ -1693,7 +1693,7 @@ pub struct InvoiceRequestFields {
     ///   `n` matches the invoice request's `invreq_recurrence_counter`.
     ///
     /// This is consumed by the payee when the payment is actually claimed,
-    /// allowing the recurrence state to advance (`next_payable_index += 1`).
+    /// allowing the recurrence state to advance (`next_payable_counter += 1`).
     pub recurrence_counter: Option<u32>,
 }
 
