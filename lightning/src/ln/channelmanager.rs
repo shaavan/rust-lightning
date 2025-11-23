@@ -3979,6 +3979,8 @@ where
 			router,
 			flow,
 
+			active_recurrence_sessions: Mutex::new(new_hash_map()),
+
 			best_block: RwLock::new(params.best_block),
 
 			outbound_scid_aliases: Mutex::new(new_hash_set()),
@@ -17172,6 +17174,7 @@ where
 		let mut inbound_payment_id_secret = None;
 		let mut peer_storage_dir: Option<Vec<(PublicKey, Vec<u8>)>> = None;
 		let mut async_receive_offer_cache: AsyncReceiveOfferCache = AsyncReceiveOfferCache::new();
+		let mut active_recurrence_sessions = Some(new_hash_map());
 		read_tlv_fields!(reader, {
 			(1, pending_outbound_payments_no_retry, option),
 			(2, pending_intercepted_htlcs, option),
@@ -17190,6 +17193,7 @@ where
 			(17, in_flight_monitor_updates, option),
 			(19, peer_storage_dir, optional_vec),
 			(21, async_receive_offer_cache, (default_value, async_receive_offer_cache)),
+			(23, active_recurrence_sessions, option),
 		});
 		let mut decode_update_add_htlcs = decode_update_add_htlcs.unwrap_or_else(|| new_hash_map());
 		let peer_storage_dir: Vec<(PublicKey, Vec<u8>)> = peer_storage_dir.unwrap_or_else(Vec::new);
@@ -18081,6 +18085,8 @@ where
 			tx_broadcaster: args.tx_broadcaster,
 			router: args.router,
 			flow,
+
+			active_recurrence_sessions: Mutex::new(active_recurrence_sessions.unwrap()),
 
 			best_block: RwLock::new(best_block),
 
