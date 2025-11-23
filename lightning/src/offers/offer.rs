@@ -869,6 +869,12 @@ pub struct RecurrenceData {
 	pub recurrence_basetime: u64,
 }
 
+impl_writeable_tlv_based!(RecurrenceData, {
+	(1, invoice_request_start, option),
+	(3, next_payable_index, required),
+	(5, recurrence_basetime, required),
+});
+
 /// Represents the recurrence-related fields in an Offer.
 ///
 /// Design note:
