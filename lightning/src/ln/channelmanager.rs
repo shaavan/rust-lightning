@@ -95,7 +95,7 @@ use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferFromHrn, RecurrenceFields};
+use crate::offers::offer::{Offer, OfferFromHrn, RecurrenceData, RecurrenceFields};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::static_invoice::StaticInvoice;
@@ -2670,6 +2670,20 @@ pub struct ChannelManager<
 	pub(super) flow: OffersMessageFlow<MR, L>,
 	#[cfg(not(test))]
 	flow: OffersMessageFlow<MR, L>,
+
+	/// Tracks all active recurrence sessions for this node.
+	///
+	/// Each entry is keyed by the payer’s `payer_signing_pubkey` from the
+	/// initial `invoice_request`. The associated `RecurrenceData` stores
+	/// everything the payee needs to validate incoming `invoice_request`s
+	/// and generate invoices for the appropriate recurrence period.
+	///
+	/// This is used by the payee to:
+	/// - verify the correctness of each incoming `invoice_request`
+	///   (period offset, counter, basetime, etc.)
+	/// - ensure continuity across periods
+	/// - maintain recurrence state until cancellation or completion.
+	current_recurrence_tracker: Mutex<HashMap<PublicKey, RecurrenceData>>,
 
 	/// See `ChannelManager` struct-level documentation for lock order requirements.
 	#[cfg(any(test, feature = "_test_utils"))]
