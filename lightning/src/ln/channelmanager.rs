@@ -15199,6 +15199,131 @@ where
 	}
 }
 
+/// A simple implementation block, for introducing recurrence helper.
+impl<
+		M: Deref,
+		T: Deref,
+		ES: Deref,
+		NS: Deref,
+		SP: Deref,
+		F: Deref,
+		R: Deref,
+		MR: Deref,
+		L: Deref,
+	> ChannelManager<M, T, ES, NS, SP, F, R, MR, L>
+where
+	M::Target: chain::Watch<<SP::Target as SignerProvider>::EcdsaSigner>,
+	T::Target: BroadcasterInterface,
+	ES::Target: EntropySource,
+	NS::Target: NodeSigner,
+	SP::Target: SignerProvider,
+	F::Target: FeeEstimator,
+	R::Target: Router,
+	MR::Target: MessageRouter,
+	L::Target: Logger,
+{
+	pub fn do_recurrence_handling(
+		&self,
+		verified_invoice_request: InvoiceRequestVerifiedFromOffer,
+	) {
+		let invoice_request = verified_invoice_request.inner();
+		let payer_id = invoice_request.payer_signing_pubkey();
+		let recurrence_fields = invoice_request.recurrence_fields();
+		let recurrence_base = recurrence_fields.and_then(|f| f.recurrence_base);
+		let recurrence_paywindow = recurrence_fields.and_then(|f| f.recurrence_paywindow);
+		let recurrence_counter = invoice_request.recurrence_counter();
+		let recurrence_start = invoice_request.recurrence_start();
+		let recurrence_cancel = invoice_request.recurrence_cancel();
+
+		let mut sessions = self.active_recurrence_sessions.lock().unwrap();
+		let existing = sessions.get(&payer_id);
+
+		// ---------------------------
+		// 1. Classify IR type
+		// ---------------------------
+		enum IRType {
+			OneOff,
+			First,
+			Successive,
+			Cancel,
+		}
+
+		let ir_type = match (recurrence_counter, recurrence_cancel) {
+			(None, None) => IRType::OneOff,
+			(Some(0), None) => IRType::First,
+			(Some(c), None) if c > 0 => IRType::Successive,
+			(Some(c), Some(())) if c > 0 => IRType::Cancel,
+			_ => unreachable!(
+				"All illegal combinations already rejected in parsing"
+			),
+		};
+
+		// ---------------------------
+		// 2. Payee-action logic
+		// ---------------------------
+		match ir_type {
+			IRType::OneOff => {
+				// MUST NOT be recurrence session present
+				if existing.is_some() {
+					// <error out — someone trying to reuse recurrence session improperly>
+				}
+			}
+
+			IRType::First => {
+				// First request MUST NOT have an existing session
+				if existing.is_some() {
+					// <error out — double-start>
+				}
+
+				let recurrence_data = RecurrenceData {
+					invoice_request_start: recurrence_start,
+					next_payable_index: 0,
+					// We first set recurrence_basetime equal to recurrence_base here.
+					// If the recurrence base is None we will be overriding this value later,
+					// based on the invoice_created_at time of first invoice.
+					recurrence_basetime: recurrence_base,
+				};
+
+				// TODO:
+				// - Validate start offset
+				// - Initialize RecurrenceData
+				// - Insert into sessions
+			}
+
+			IRType::Successive => {
+				// MUST have an existing session
+				let data = match existing {
+					None => {
+						// <error out — payer jumped into mid-series>
+					}
+					Some(d) => d,
+				};
+
+				// TODO:
+				// - Validate counter == data.next_payable_index
+				// - Validate start offset matches original
+				// - Validate basetime matches
+				// - Validate paywindow timing
+			}
+
+			IRType::Cancel => {
+				// MUST have session
+				let data = match existing {
+					None => {
+						// <error — cancellation of non-existent recurrence>
+					}
+					Some(d) => d,
+				};
+
+				// TODO:
+				// - Mark cancellation state
+				// - DO NOT create an invoice
+				// - Probably remove from sessions
+			}
+		}
+	}
+}
+
 impl<
 		M: Deref,
 		T: Deref,
@@ -15277,6 +15402,27 @@ where
 					},
 					Err(_) => return None,
 				};
+
+				let inv_req = invoice_request.inner();
+
+				// Recurrence checks
+				if let Some(recurrence_fields) = inv_req.recurrence_fields() {
+					let payer_id = inv_req.payer_signing_pubkey();
+					let sessions = self.active_recurrence_sessions.lock().unwrap();
+					
+					// We first categorise the invoice request based on it's type.
+					let recurrence_counter = inv_req.recurrence_counter();
+					let recurrence_cancel = inv_req.recurrence_cancel();
+
+					match (recurrence_counter, recurrence_cancel) {
+						// This represents case where the payer, didn't support recurrence
+						// but we set recurrence optional so we allow payer to pay one-off
+						(None, None) => {
+							// For this case we simply ensure we don't already have an active_recurrence_session
+							// for this payer_id
+						}
+					}
+				}
 
 				let get_payment_info = |amount_msats, relative_expiry| {
 					self.create_inbound_payment(
