@@ -926,6 +926,42 @@ impl_writeable_tlv_based!(InboundRecurrenceSessionData, {
 	(8, next_invoice_request_window, required),
 });
 
+/// Contains all the information and state required to maintain an outbound
+/// recurrence sesssion flow.
+pub struct OutboundRecurrenceSessionData {
+	/// The offer corresponding to which this recurrence is.
+	///
+	/// We need to store the entire offer, because we need it for the creation
+	/// of successive invoice request (for reference, invoice request contains
+	/// it's own offer.)
+	///
+	/// Since we are storing the entire offer, here I opt for not storing the
+	/// Offer' recurrence fields separately, since we can access them directly
+	/// from offer's callers.
+	pub offer: Offer,
+	/// The recurrence period.
+	pub recurrence: Recurrence,
+	/// The recurrence start we set with the primary invoice request we sent.
+	pub recurrence_start: Option<u32>,
+	/// The next payable counter of period for the payer.
+	pub next_recurrence_counter: u32,
+	/// The basetime of the first invoice of the recurrence.
+	/// If the offer doesn' define an offer_basetime, this will be set equal
+	/// to first invoice's invoice_recurrence_basetime, ones we receive it.
+	pub invoice_recurrence_basetime: Option<u64>,
+	/// Tracker that keeps track of when's the recurrence should be triggered (in UNIX).
+	pub next_trigger_time: Option<u64>,
+}
+
+impl_writeable_tlv_based!(OutboundRecurrenceSessionData, {
+	(0, offer, required),
+	(2, recurrence, required),
+	(4, recurrence_start, option),
+	(6, next_recurrence_counter, required),
+	(8, invoice_recurrence_basetime, required),
+	(10, next_trigger_time, required)
+});
+
 /// Represents the recurrence-related fields in an Offer.
 ///
 /// Design note:
