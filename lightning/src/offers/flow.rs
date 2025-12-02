@@ -236,6 +236,43 @@ where
 			self.hrn_resolver.new_best_block(_height, updated_time);
 		}
 	}
+
+	/// Based on the current time, basetime, and period. This function allows
+	/// finding the correct recurrence start to be set in the primary invoice request
+	/// of the recurrent offer.
+	pub fn calculate_recurrence_start(&self, recurrence_fields: RecurrenceFields) -> Result<Option<u32>, ()> {
+		let basetime = match recurrence_fields.recurrence_base {
+			Some(base) => base.basetime,
+			None => return Ok(None)
+		};
+
+		let current_time = self.duration_since_epoch().as_secs();
+		let period = recurrence_fields.recurrence.period_length_secs().expect("Should be Some");
+
+		if current_time < basetime {
+			return Err(())
+		}
+
+		// Now if there is paywindow we ensure that if current_time is within paywindow
+		let elapsed = current_time - basetime;
+
+		if let Some(window) = recurrence_fields.recurrence_paywindow {
+			if elapsed % period > window.seconds_after.into() {
+				return Err(())
+			}
+
+			// It could also be that we are trying to prepay for offer before the period start.
+			// How to check that? n+1 period - elapsed_time should be less that window.seconds_before
+		}
+
+		// First find the current recurrence start.
+		let recurrence_start = {
+			(elapsed / period) as u32
+		};
+
+		
+	}
+
 }
 
 /// The maximum size of a received [`StaticInvoice`] before we'll fail verification in
@@ -851,6 +888,21 @@ where
 		let builder: InvoiceRequestBuilder<secp256k1::All> =
 			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
+
+		// I want to ensure that this method is only called with the primary invoice request
+		// and not for successive invoice request creation. And if I can't ensure, I want to
+		// document the function purpose and usage, and make sure recurrence fields in invoice
+		// request are overridable post builder creation.
+
+		if let Some(fields) = offer.recurrence_fields() {
+			let recurrence_start = fields.recurrence_base.map(|base| {
+				// If there is some basetime we have to set the correct recurrence start.
+				let basetime = base.basetime;
+				let period = fields.recurrence.period_length_secs().expect("Period must be valid, and present.");
+
+				self.calculate_recurrence_start(period, basetime);
+			});
+		}
 
 		Ok(builder)
 	}

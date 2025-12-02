@@ -183,6 +183,7 @@ macro_rules! invoice_request_builder_methods { (
 	#[cfg_attr(c_bindings, allow(dead_code))]
 	fn create_contents(offer: &Offer, metadata: Metadata) -> InvoiceRequestContentsWithoutPayerSigningPubkey {
 		let offer = offer.contents.clone();
+
 		InvoiceRequestContentsWithoutPayerSigningPubkey {
 			payer: PayerContents(metadata), offer, chain: None, amount_msats: None,
 			features: InvoiceRequestFeatures::empty(), quantity: None, payer_note: None,
