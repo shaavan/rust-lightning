@@ -13111,6 +13111,14 @@ where
 		&self, offer: &Offer, amount_msats: Option<u64>, payment_id: PaymentId,
 		optional_params: OptionalOfferPaymentParams,
 	) -> Result<(), Bolt12SemanticError> {
+		if offer.recurrence_fields().is_some() {
+			debug_assert!(
+				false,
+				"Offer contains recurrence. Use pay_for_offer_with_recurrence instead"
+			);
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
 		let create_pending_payment_fn = |retryable_invoice_request: RetryableInvoiceRequest| {
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
@@ -13130,6 +13138,37 @@ where
 			optional_params.payer_note,
 			payment_id,
 			None,
+			None,
+			create_pending_payment_fn,
+		)
+	}
+
+	/// Similar to [`pay_for_offer`] but used for sending primary invoice request
+	/// for recurrence offer, setting up active outbound recurrence session.
+	pub fn pay_for_offer_with_recurrence(
+		&self, offer: &Offer, amount_msats: Option<u64>, payment_id: PaymentId,
+		optional_params: OptionalOfferPaymentParams, recurrence_start: Option<u32>,
+	) -> Result<(), Bolt12SemanticError> {
+		let create_pending_payment_fn = |retryable_invoice_request: RetryableInvoiceRequest| {
+			self.pending_outbound_payments
+				.add_new_awaiting_invoice(
+					payment_id,
+					StaleExpiration::TimerTicks(1),
+					optional_params.retry_strategy,
+					optional_params.route_params_config,
+					Some(retryable_invoice_request),
+				)
+				.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)
+		};
+
+		self.pay_for_offer_intern(
+			offer,
+			if offer.expects_quantity() { Some(1) } else { None },
+			amount_msats,
+			optional_params.payer_note,
+			payment_id,
+			None,
+			recurrence_start,
 			create_pending_payment_fn,
 		)
 	}
@@ -13140,6 +13179,14 @@ where
 		&self, offer: &OfferFromHrn, amount_msats: u64, payment_id: PaymentId,
 		optional_params: OptionalOfferPaymentParams,
 	) -> Result<(), Bolt12SemanticError> {
+		if offer.offer.recurrence_fields().is_some() {
+			debug_assert!(
+				false,
+				"Offer contains recurrence. Use pay_for_offer_with_recurrence instead"
+			);
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
 		let create_pending_payment_fn = |retryable_invoice_request: RetryableInvoiceRequest| {
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
@@ -13159,6 +13206,7 @@ where
 			optional_params.payer_note,
 			payment_id,
 			Some(offer.hrn),
+			None,
 			create_pending_payment_fn,
 		)
 	}
@@ -13182,6 +13230,14 @@ where
 		&self, offer: &Offer, amount_msats: Option<u64>, payment_id: PaymentId,
 		optional_params: OptionalOfferPaymentParams, quantity: u64,
 	) -> Result<(), Bolt12SemanticError> {
+		if offer.recurrence_fields().is_some() {
+			debug_assert!(
+				false,
+				"Offer contains recurrence. Use pay_for_offer_with_recurrence instead"
+			);
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
 		let create_pending_payment_fn = |retryable_invoice_request: RetryableInvoiceRequest| {
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
@@ -13201,6 +13257,7 @@ where
 			optional_params.payer_note,
 			payment_id,
 			None,
+			None,
 			create_pending_payment_fn,
 		)
 	}
@@ -13209,10 +13266,55 @@ where
 	fn pay_for_offer_intern<CPP: FnOnce(RetryableInvoiceRequest) -> Result<(), Bolt12SemanticError>>(
 		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
 		payer_note: Option<String>, payment_id: PaymentId,
-		human_readable_name: Option<HumanReadableName>, create_pending_payment: CPP,
+		human_readable_name: Option<HumanReadableName>,
+		recurrence_start: Option<u32>, create_pending_payment: CPP,
 	) -> Result<(), Bolt12SemanticError> {
 		let entropy = &*self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
+
+		// If the offer specifies recurrence, prepare the initial recurrence session.
+		let recurrence_data = if let Some(fields) = offer.recurrence_fields() {
+			let recurrence_counter = 0;
+			let recurrence_basetime = fields.recurrence_base;
+
+			// Validate user-supplied recurrence_start against the offer's recurrence requirements.
+			match (recurrence_basetime, recurrence_start) {
+				// Offer defines a recurrence_base → caller must provide a recurrence_start.
+				(Some(_), None) => {
+					debug_assert!(false, "Offer defines recurrence_base but no recurrence_start was provided");
+					return Err(Bolt12SemanticError::InvalidRecurrence)
+				}
+				// Offer is not recurrent → caller must *not* provide recurrence_start.
+				(None, Some(_)) => {
+					debug_assert!(false, "recurrence_start was provided but the offer is not recurrent");
+					return Err(Bolt12SemanticError::InvalidRecurrence)
+				}
+				_ => {}
+			}
+
+			// Compute the base timestamp and the next trigger time for the recurrence session.
+			let (invoice_recurrence_basetime, next_trigger_time) =
+				if let Some(base) = recurrence_basetime {
+					let basetime = base.basetime;
+					let period_number = recurrence_start.unwrap_or(0);
+					let next_trigger = fields.recurrence.start_time(basetime, period_number);
+
+					(Some(basetime), Some(next_trigger))
+				} else {
+					(None, None)
+				};
+
+			Some(OutboundRecurrenceSessionData {
+				offer: offer.clone(),
+				recurrence: fields.recurrence,
+				recurrence_start,
+				next_recurrence_counter: recurrence_counter,
+				invoice_recurrence_basetime,
+				next_trigger_time,
+			})
+		} else {
+			None
+		};
 
 		let builder = self.flow.create_invoice_request_builder(
 			offer, nonce, payment_id,
@@ -13235,8 +13337,26 @@ where
 			Some(hrn) => builder.sourced_from_human_readable_name(hrn),
 		};
 
+		let builder = match &recurrence_data {
+			None => builder,
+			Some(_) => builder.recurrence_counter(0)
+		};
+
+		let builder = match recurrence_start {
+			None => builder,
+			Some(start) => builder.recurrence_start(start)
+		};
+
 		let invoice_request = builder.build_and_sign()?;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		// If recurrence is enabled, register the initial outbound recurrence session.
+		// Since this is the first invoice request in the sequence, the payer_signing_pubkey
+		// is guaranteed to be unique and can serve as the session identifier.
+		if let Some(data) = recurrence_data {
+			let mut sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
+			sessions.insert(invoice_request.payer_signing_pubkey(), data);
+		}
 
 		self.flow.enqueue_invoice_request(
 			invoice_request.clone(), payment_id, nonce,
@@ -15941,7 +16061,8 @@ where
 				}
 				if let Ok((amt_msats, payer_note)) = self.pending_outbound_payments.params_for_payment_awaiting_offer(payment_id) {
 					let offer_pay_res =
-						self.pay_for_offer_intern(&offer, None, Some(amt_msats), payer_note, payment_id, Some(name),
+						self.pay_for_offer_intern(&offer, None, Some(amt_msats), payer_note, payment_id,
+							Some(name), None,
 							|retryable_invoice_request| {
 								self.pending_outbound_payments
 									.received_offer(payment_id, Some(retryable_invoice_request))
