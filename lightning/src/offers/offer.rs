@@ -936,9 +936,11 @@ pub struct OutboundRecurrenceSessionData {
 	/// The next payable counter of period for the payer.
 	pub next_recurrence_counter: u32,
 	/// The basetime of the first invoice of the recurrence.
-	pub invoice_recurrence_basetime: u64,
+	/// If the offer doesn' define an offer_basetime, this will be set equal
+	/// to first invoice's invoice_recurrence_basetime, ones we receive it.
+	pub invoice_recurrence_basetime: Option<u64>,
 	/// Tracker that keeps track of when's the recurrence should be triggered (in UNIX).
-	pub next_trigger_time: u64,
+	pub next_trigger_time: Option<u64>,
 }
 
 impl_writeable_tlv_based!(OutboundRecurrenceSessionData, {
