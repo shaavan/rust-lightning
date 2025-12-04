@@ -12883,7 +12883,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, route_params_config, None,
+				payment_id, vec![], expiration, retry_strategy, route_params_config, None,
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -12927,7 +12927,7 @@ macro_rules! create_refund_builder { ($self: ident, $builder: ty) => {
 		let expiration = StaleExpiration::AbsoluteTimeout(absolute_expiry);
 		$self.pending_outbound_payments
 			.add_new_awaiting_invoice(
-				payment_id, expiration, retry_strategy, route_params_config, None,
+				payment_id, vec![], expiration, retry_strategy, route_params_config, None,
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)?;
 
@@ -13049,6 +13049,7 @@ where
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
 					payment_id,
+					vec![],
 					StaleExpiration::TimerTicks(1),
 					optional_params.retry_strategy,
 					optional_params.route_params_config,
@@ -13078,6 +13079,7 @@ where
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
 					payment_id,
+					vec![],
 					StaleExpiration::TimerTicks(1),
 					optional_params.retry_strategy,
 					optional_params.route_params_config,
@@ -13120,6 +13122,7 @@ where
 			self.pending_outbound_payments
 				.add_new_awaiting_invoice(
 					payment_id,
+					vec![],
 					StaleExpiration::TimerTicks(1),
 					optional_params.retry_strategy,
 					optional_params.route_params_config,
