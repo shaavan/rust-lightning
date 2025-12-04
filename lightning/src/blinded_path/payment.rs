@@ -689,29 +689,9 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 		.chain((0..dummy_count).map(|_| BlindedPaymentTlvsRef::Dummy))
 		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
 
-	let path: Vec<_> = pks
-		.zip(
-			tlvs.map(|tlv| BlindedPathWithPadding {
-				tlvs: tlv,
-				round_off: PAYMENT_PADDING_ROUND_OFF,
-			}),
-		)
-		.collect();
-
-	// Debug invariant: all non-final hops must have identical serialized size.
-	#[cfg(debug_assertions)]
-	if let Some((_, first)) = path.first() {
-		if path.len() > 2 {
-			let expected = first.serialized_length();
-
-			for (_, hop) in path.iter().skip(1).take(path.len() - 2) {
-				debug_assert!(
-					hop.serialized_length() == expected,
-					"All intermediate blinded hops must have identical serialized size"
-				);
-			}
-		}
-	}
+	let path = pks.zip(
+		tlvs.map(|tlv| BlindedPathWithPadding { tlvs: tlv, round_off: PAYMENT_PADDING_ROUND_OFF }),
+	);
 
 	utils::construct_blinded_hops(secp_ctx, path.into_iter(), session_priv)
 }

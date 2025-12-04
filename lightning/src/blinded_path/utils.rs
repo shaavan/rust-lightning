@@ -133,19 +133,57 @@ pub(crate) fn construct_keys_for_onion_message<'a, T, I, F>(
 	}
 }
 
-fn construct_keys_for_blinded_path<'a, T, I, F, H>(
+fn construct_keys_for_blinded_path<'a, T, I, F, W>(
 	secp_ctx: &Secp256k1<T>, unblinded_path: I, session_priv: &SecretKey, mut callback: F,
 ) where
 	T: secp256k1::Signing + secp256k1::Verification,
-	H: Borrow<PublicKey>,
-	I: Iterator<Item = H>,
-	F: FnMut(PublicKey, SharedSecret, PublicKey, [u8; 32], Option<H>, Option<Vec<u8>>),
+	I: Iterator<Item = PublicKeyWithTlvs<W>>,
+	W: Writeable,
+	F: FnMut(PublicKey, SharedSecret, PublicKey, [u8; 32], Option<PublicKeyWithTlvs<W>>, Option<Vec<u8>>),
 {
 	build_keys_helper!(session_priv, secp_ctx, callback);
 
-	for pk in unblinded_path {
-		build_keys_in_loop!(pk, false, None);
-	}
+    let mut path = unblinded_path.peekable();
+	// Debug only state to keep track of expected non-final hop size.
+    #[cfg(debug_assertions)]
+    let mut expected_len: Option<usize> = None;
+
+	while let Some(pk) = path.next() {
+        let is_intermediate_hop = path.peek().is_some();
+
+        // Debug invariant: all non-final hops must have identical
+		// serialized size for padded blinded path.
+        #[cfg(debug_assertions)]
+        {
+            if is_intermediate_hop {
+                // You’ll need some way to get this length; see notes below.
+                let len = pk.tlvs.serialized_length();
+
+                if let Some(exp) = expected_len {
+                    debug_assert!(
+                        len == exp,
+                        "All intermediate blinded hops must have identical serialized size"
+                    );
+                } else {
+                    expected_len = Some(len);
+                }
+
+				match expected_len {
+					// This is the first hop. Use it to find the expected length
+					None => expected_len = Some(len),
+					// Other Intermediate hop. Confirm if the length matches
+					Some(exp) => {
+						debug_assert!(
+							len == exp,
+							"All intermediate blinded hops must have identical serialized size"
+						);
+					}
+				}
+            }
+        }
+
+        build_keys_in_loop!(pk, false, None);
+    }
 }
 
 struct PublicKeyWithTlvs<W: Writeable> {
