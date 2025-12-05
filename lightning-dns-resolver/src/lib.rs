@@ -380,7 +380,7 @@ mod test {
 		nodes: &[Node<'a, 'b, 'c>], resolver_messenger: &impl AOnionMessenger,
 		resolver_id: PublicKey, payer_id: PublicKey, payee_id: PublicKey, offer: Offer,
 		name: HumanReadableName, payment_id: PaymentId, payer_note: Option<String>,
-		resolvers: Vec<Destination>,
+		custom_tlvs: Vec<(u64, Vec<u8>)>, resolvers: Vec<Destination>,
 	) {
 		// Override contents to offer provided
 		let proof_override = &nodes[0].node.testing_dnssec_proof_offer_resolution_override;
@@ -391,7 +391,7 @@ mod test {
 		#[allow(deprecated)]
 		nodes[0]
 			.node
-			.pay_for_offer_from_human_readable_name(name, amt, payment_id, opts, resolvers)
+			.pay_for_offer_from_human_readable_name(name, amt, payment_id, custom_tlvs, opts, resolvers)
 			.unwrap();
 
 		let query = nodes[0].onion_messenger.next_onion_message_for_peer(resolver_id).unwrap();
@@ -499,6 +499,7 @@ mod test {
 			name.clone(),
 			PaymentId([42; 32]),
 			None,
+			vec![],
 			resolvers.clone(),
 		)
 		.await;
@@ -510,11 +511,12 @@ mod test {
 			resolver_id,
 			payer_id,
 			payee_id,
-			bs_offer,
-			name,
+			bs_offer.clone(),
+			name.clone(),
 			PaymentId([21; 32]),
 			Some("foo".into()),
-			resolvers,
+			vec![],
+			resolvers.clone(),
 		)
 		.await;
 	}
