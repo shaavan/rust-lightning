@@ -710,7 +710,14 @@ mod test {
 		let retry = Retry::Attempts(0);
 		nodes[0]
 			.node
-			.pay_for_bolt11_invoice(&invoice, PaymentId([42; 32]), None, Default::default(), retry)
+			.pay_for_bolt11_invoice(
+				&invoice,
+				PaymentId([42; 32]),
+				None,
+				vec![],
+				Default::default(),
+				retry,
+			)
 			.unwrap();
 		check_added_monitors(&nodes[0], 1);
 

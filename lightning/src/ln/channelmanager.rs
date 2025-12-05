@@ -2272,8 +2272,11 @@ where
 /// # let channel_manager = channel_manager.get_cm();
 /// # let payment_id = PaymentId([42; 32]);
 /// # let payment_hash = PaymentHash((*invoice.payment_hash()).to_byte_array());
+/// # let custom_tlvs = vec![
+/// #     (343493u64, b"hello".to_vec()),
+/// # ];
 /// match channel_manager.pay_for_bolt11_invoice(
-///     invoice, payment_id, None, route_params_config, retry
+///     invoice, payment_id, None, custom_tlvs, route_params_config, retry
 /// ) {
 ///     Ok(()) => println!("Sending payment with hash {}", payment_hash),
 ///     Err(e) => println!("Failed sending payment with hash {}: {:?}", payment_hash, e),
@@ -5542,7 +5545,8 @@ where
 	/// To use default settings, call the function with [`RouteParametersConfig::default`].
 	pub fn pay_for_bolt11_invoice(
 		&self, invoice: &Bolt11Invoice, payment_id: PaymentId, amount_msats: Option<u64>,
-		route_params_config: RouteParametersConfig, retry_strategy: Retry,
+		custom_tlvs: Vec<(u64, Vec<u8>)>, route_params_config: RouteParametersConfig,
+		retry_strategy: Retry,
 	) -> Result<(), Bolt11PaymentError> {
 		let best_block_height = self.best_block.read().unwrap().height;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
@@ -5550,6 +5554,7 @@ where
 			invoice,
 			payment_id,
 			amount_msats,
+			custom_tlvs,
 			route_params_config,
 			retry_strategy,
 			&self.router,
