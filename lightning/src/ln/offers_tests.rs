@@ -166,6 +166,12 @@ fn check_compact_path_introduction_node<'a, 'b, 'c>(
 fn route_bolt12_payment<'a, 'b, 'c>(
 	node: &Node<'a, 'b, 'c>, path: &[&Node<'a, 'b, 'c>], invoice: &Bolt12Invoice
 ) {
+	route_bolt12_payment_with_custom_tlvs(node, path, invoice, Vec::new());
+}
+
+fn route_bolt12_payment_with_custom_tlvs<'a, 'b, 'c>(
+	node: &Node<'a, 'b, 'c>, path: &[&Node<'a, 'b, 'c>], invoice: &Bolt12Invoice, custom_tlvs: Vec<(u64, Vec<u8>)>
+) {
 	// Monitor added when handling the invoice onion message.
 	check_added_monitors(node, 1);
 
@@ -178,7 +184,8 @@ fn route_bolt12_payment<'a, 'b, 'c>(
 	let amount_msats = invoice.amount_msats();
 	let payment_hash = invoice.payment_hash();
 	let args = PassAlongPathArgs::new(node, path, amount_msats, payment_hash, ev)
-		.without_clearing_recipient_events();
+		.without_clearing_recipient_events()
+		.with_custom_tlvs(custom_tlvs);
 	do_pass_along_path(args);
 }
 
@@ -1331,6 +1338,128 @@ fn pays_bolt12_invoice_asynchronously() {
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
 	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
+
+	assert_eq!(
+		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		Err(Bolt12PaymentError::DuplicateInvoice),
+	);
+
+	for _ in 0..=IDEMPOTENCY_TIMEOUT_TICKS {
+		bob.node.timer_tick_occurred();
+	}
+
+	assert_eq!(
+		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		Err(Bolt12PaymentError::UnexpectedInvoice),
+	);
+}
+
+/// Checks that a deferred invoice can be paid asynchronously from an Event::InvoiceReceived.
+#[test]
+fn pays_bolt12_invoice_asynchronously_with_custom_tlvs() {
+	let mut manually_pay_cfg = test_default_channel_config();
+	manually_pay_cfg.manually_handle_bolt12_invoices = true;
+
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, Some(manually_pay_cfg)]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let alice_id = alice.node.get_our_node_id();
+	let bob_id = bob.node.get_our_node_id();
+
+	let offer = alice.node
+		.create_offer_builder().unwrap()
+		.amount_msats(10_000_000)
+		.build().unwrap();
+
+	const CUSTOM_TLV_TYPE: u64 = 65537;
+	let custom_tlvs = vec![(CUSTOM_TLV_TYPE, vec![42; 42])];
+	let payment_id = PaymentId([1; 32]);
+
+	bob.node
+		.pay_for_offer(&offer, None, payment_id, custom_tlvs.clone(), Default::default())
+		.unwrap();
+	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
+
+	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
+	let expected_payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
+		offer_id: offer.id(),
+		invoice_request: InvoiceRequestFields {
+			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
+			quantity: None,
+			payer_note_truncated: None,
+			human_readable_name: None,
+		},
+	});
+
+	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
+	bob.onion_messenger.handle_onion_message(alice_id, &onion_message);
+
+	// Re-process the same onion message to ensure idempotency —
+	// we should not generate a duplicate `InvoiceReceived` event.
+	bob.onion_messenger.handle_onion_message(alice_id, &onion_message);
+
+	let mut events = bob.node.get_and_clear_pending_events();
+	assert_eq!(events.len(), 1);
+
+	let (invoice, context) = match events.pop().unwrap() {
+		Event::InvoiceReceived { payment_id: actual, invoice, context, .. } => {
+			assert_eq!(actual, payment_id);
+			(invoice, context)
+		},
+		_ => panic!("No Event::InvoiceReceived"),
+	};
+
+	assert_eq!(invoice.amount_msats(), 10_000_000);
+	assert_ne!(invoice.signing_pubkey(), alice_id);
+	assert!(!invoice.payment_paths().is_empty());
+	for path in invoice.payment_paths() {
+		assert_eq!(path.introduction_node(), &IntroductionNode::NodeId(alice_id));
+	}
+
+	assert!(bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()).is_ok());
+	assert_eq!(
+		bob.node.send_payment_for_bolt12_invoice(&invoice, context.as_ref()),
+		Err(Bolt12PaymentError::DuplicateInvoice),
+	);
+
+	route_bolt12_payment_with_custom_tlvs(bob, &[alice], &invoice, custom_tlvs.clone());
+	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
+
+	let purpose = match get_event!(&alice, Event::PaymentClaimable) {
+		Event::PaymentClaimable { purpose, .. } => purpose,
+		_ => panic!("No Event::PaymentClaimable"),
+	};
+	let payment_preimage = purpose.preimage().expect("No preimage in Event::PaymentClaimable");
+
+	match purpose {
+		PaymentPurpose::Bolt12OfferPayment { payment_context, .. } => {
+			assert_eq!(PaymentContext::Bolt12Offer(payment_context), expected_payment_context);
+		},
+		_ => panic!("Unexpected payment purpose: {:?}", purpose),
+	}
+
+	let route = &[&[alice] as &[&Node]];
+
+	let claim_payment_args =
+		ClaimAlongRouteArgs::new(bob, route, payment_preimage)
+			.with_custom_tlvs(custom_tlvs);
+
+	if let Some(inv) = claim_payment_along_route(claim_payment_args).0 {
+		assert_eq!(inv, PaidBolt12Invoice::Bolt12Invoice(invoice.clone()));
+	} else {
+		panic!("Expected PaidBolt12Invoice::Bolt12Invoice");
+	}
+
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 
 	assert_eq!(

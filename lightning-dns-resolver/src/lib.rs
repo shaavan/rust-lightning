@@ -391,7 +391,14 @@ mod test {
 		#[allow(deprecated)]
 		nodes[0]
 			.node
-			.pay_for_offer_from_human_readable_name(name, amt, payment_id, custom_tlvs, opts, resolvers)
+			.pay_for_offer_from_human_readable_name(
+				name,
+				amt,
+				payment_id,
+				custom_tlvs,
+				opts,
+				resolvers,
+			)
 			.unwrap();
 
 		let query = nodes[0].onion_messenger.next_onion_message_for_peer(resolver_id).unwrap();
@@ -517,6 +524,22 @@ mod test {
 			Some("foo".into()),
 			vec![],
 			resolvers.clone(),
+		)
+		.await;
+
+		// Pay offer with custom_tlvs
+		pay_offer_flow(
+			&nodes,
+			&resolver_messenger,
+			resolver_id,
+			payer_id,
+			payee_id,
+			bs_offer,
+			name,
+			PaymentId([11; 32]),
+			None,
+			vec![(65537, vec![42; 42])],
+			resolvers,
 		)
 		.await;
 	}
