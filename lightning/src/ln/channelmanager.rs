@@ -13379,7 +13379,7 @@ where
 					let hmac = Hmac::from_engine(seed);
 					let privkey = SecretKey::from_slice(hmac.as_byte_array()).unwrap();
 					Keypair::from_secret_key(secp_ctx, &privkey)
-				};	
+				};
 
 				{
 					let data = OutboundRecurrenceSessionData {
@@ -15851,10 +15851,73 @@ where
 					Ok(payment_id) => payment_id,
 					Err(()) => return None,
 				};
-
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				// Recurrence Handling
+				{
+					let mut sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
+
+					let recurrence_fields = invoice.recurrence_fields();
+					let recurrence_counter = invoice.recurrence_counter();
+					let invoice_recurrence_basetime = invoice.invoice_recurrence_basetime();
+					let existing_session = sessions
+						.values_mut()
+						.find(|session| session.payer_signing_pubkey == invoice.payer_signing_pubkey());
+
+					match (recurrence_fields, recurrence_counter, invoice_recurrence_basetime, existing_session) {
+						// Non-recurrent invoice: no recurrence metadata and no session state.
+						(None, None, None, None) => {},
+						// Primary recurrence invoice (counter = 0).
+						// A session must already exist (created when the invoice request was sent).
+						(Some(fields), Some(counter), Some(invoice_basetime), Some(data)) if counter == 0 => {
+							match data.invoice_recurrence_basetime {
+								// Offer did not define a basetime: use the invoice's basetime to initialize the session.
+								None => {
+									data.invoice_recurrence_basetime = Some(invoice_basetime);
+
+									let period_number = data.recurrence_start
+										.unwrap_or(0)
+										.saturating_add(data.next_recurrence_counter);
+
+									// Compute the next period's trigger time.
+									let trigger_time = invoice_basetime + fields.recurrence.period_length_secs() * period_number as u64;
+
+									data.next_trigger_time = Some(trigger_time);
+								}
+
+								// Offer defined a basetime: the invoice’s basetime must match exactly.
+								Some(stored_basetime) => {
+									if stored_basetime != invoice_basetime {
+										return None;
+									}
+								}
+							}
+						},
+						// Successive recurrence invoice (counter > 0).
+						// The session must be present and already initialized with a basetime.
+						(Some(_fields), Some(counter), Some(invoice_basetime), Some(data)) if counter > 0 => {
+							match data.invoice_recurrence_basetime {
+								// This state should not occur: basetime must have been set by the primary invoice.
+								None => {
+									debug_assert!(false,
+										"Missing basetime in session for a successive recurrence invoice");
+									return None;
+								}
+
+								// All successive invoices must match the established basetime.
+								Some(stored_basetime) => {
+									if stored_basetime != invoice_basetime {
+										return None;
+									}
+								}
+							}
+						},
+						// Any other combination of recurrence metadata or session state is invalid.
+						_ => return None,
+					}
+				}
 
 				if self.config.read().unwrap().manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
