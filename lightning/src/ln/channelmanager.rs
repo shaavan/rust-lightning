@@ -13243,6 +13243,51 @@ where
 		create_pending_payment_fn(retryable_invoice_request)
 	}
 
+	pub fn cancel_recurrence(&self, invreq_id: PublicKey) -> Result<(), Bolt12SemanticError> {
+		let mut sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
+
+		let data = match sessions.get(&invreq_id) {
+			None => return Err(Bolt12SemanticError::InvalidRecurrence),
+			Some(data) => data
+		};
+
+		let entropy = &*self.entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+		let offer = &data.offer;
+
+		// Create a Dummy Payment ID, we don't accept a response back
+		let payment_id = PaymentId([1; 32]);
+
+		let builder = self.flow.create_invoice_request_builder(
+			&offer, nonce, payment_id,
+		)?;
+
+		// Spec commentary: Spec is not clear about when sending cancel invoice request
+		// do we need to set the appropriate recurrence_counter, and recurrence_start.
+		// We decide to be conservative here, by still setting them appropriately.
+		let builder = builder.recurrence_counter(data.next_recurrence_counter);
+
+		let builder = match data.recurrence_start {
+			None => builder,
+			Some(start) => builder.recurrence_start(start)
+		};
+
+		let builder = builder.recurrence_cancel();
+
+		let invoice_request = builder.build_and_sign()?;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		self.flow.enqueue_invoice_request(
+			invoice_request.clone(), payment_id, nonce,
+			self.get_peers_for_blinded_path()
+		)?;
+
+		// Ones we enqueue the invoice request, we remove the data from sessions
+		sessions.remove(&invreq_id);
+
+		Ok(())
+	}
+
 	/// Pays for an [`Offer`] which was built by resolving a human readable name. It is otherwise
 	/// identical to [`Self::pay_for_offer`].
 	pub fn pay_for_offer_from_hrn(
