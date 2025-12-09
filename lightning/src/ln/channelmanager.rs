@@ -15707,10 +15707,27 @@ where
 					Ok(payment_id) => payment_id,
 					Err(()) => return None,
 				};
-
 				let logger = WithContext::from(
 					&self.logger, None, None, Some(invoice.payment_hash()),
 				);
+
+				let sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
+
+				// Recurrence Handling
+				let recurrence_fields = invoice.recurrence_fields();
+				let recurrence_counter = invoice.recurrence_counter();
+				let existing_session = sessions.get(&invoice.payer_signing_pubkey());
+
+				match (recurrence_fields, recurrence_counter, existing_session) {
+					// There's no recurrence.
+					(None, None, None) => {},
+					// This is the first invoice, corresponding to primary invoice request.
+					(Some(_), Some(c), None) if c == 0 => {
+						let data = OutboundRecurrenceSessionData {
+							offer: invoice.o
+						};
+					}
+				}
 
 				if self.config.read().unwrap().manually_handle_bolt12_invoices {
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
