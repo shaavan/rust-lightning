@@ -703,6 +703,11 @@ impl Recurrence {
 
 		(self.period as u64).checked_mul(factor).expect("recurrence period length should not overflow.")
 	}
+
+	/// For a give period number, gives it start time in UNIX
+	pub fn start_time(&self, basetime: u64, period_number: u32) -> u64 {
+		basetime + (period_number as u64).saturating_mul(self.period_length_secs())
+	}
 }
 
 impl Writeable for Recurrence {
