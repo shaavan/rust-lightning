@@ -13159,6 +13159,76 @@ where
 		)
 	}
 
+	/// Same as [`pay_for_offer`], but instead pay for active recurrence sessions
+	pub fn pay_for_recurrence(
+		&self, invreq_id: PublicKey, amount_msats: Option<u64>, payment_id: PaymentId,
+		optional_params: OptionalOfferPaymentParams,
+	) -> Result<(), Bolt12SemanticError> {
+		let sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
+
+		let data = match sessions.get(&invreq_id) {
+			None => return Err(Bolt12SemanticError::InvalidRecurrence),
+			Some(data) => data
+		};
+
+		let create_pending_payment_fn = |retryable_invoice_request: RetryableInvoiceRequest| {
+			self.pending_outbound_payments
+				.add_new_awaiting_invoice(
+					payment_id,
+					StaleExpiration::TimerTicks(1),
+					optional_params.retry_strategy,
+					optional_params.route_params_config,
+					Some(retryable_invoice_request),
+				)
+				.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)
+		};
+
+		let entropy = &*self.entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+		let offer = &data.offer;
+		let quantity = if offer.expects_quantity() { Some(1) } else { None };
+
+		let builder = self.flow.create_invoice_request_builder(
+			&offer, nonce, payment_id,
+		)?;
+
+		let builder = match quantity {
+			None => builder,
+			Some(quantity) => builder.quantity(quantity)?,
+		};
+		let builder = match amount_msats {
+			None => builder,
+			Some(amount_msats) => builder.amount_msats(amount_msats)?,
+		};
+		let builder = match optional_params.payer_note {
+			None => builder,
+			Some(payer_note) => builder.payer_note(payer_note),
+		};
+
+		let builder = builder.recurrence_counter(data.next_recurrence_counter);
+
+		let builder = match data.recurrence_start {
+			None => builder,
+			Some(start) => builder.recurrence_start(start)
+		};
+
+		let invoice_request = builder.build_and_sign()?;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		self.flow.enqueue_invoice_request(
+			invoice_request.clone(), payment_id, nonce,
+			self.get_peers_for_blinded_path()
+		)?;
+
+		let retryable_invoice_request = RetryableInvoiceRequest {
+			invoice_request: invoice_request.clone(),
+			nonce,
+			needs_retry: true,
+		};
+
+		create_pending_payment_fn(retryable_invoice_request)
+	}
+
 	/// Pays for an [`Offer`] which was built by resolving a human readable name. It is otherwise
 	/// identical to [`Self::pay_for_offer`].
 	pub fn pay_for_offer_from_hrn(
