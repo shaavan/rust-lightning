@@ -76,12 +76,14 @@ pub(crate) enum PendingOutboundPayment {
 		/// send up-front, which we track here and enforce once we receive the offer.
 		amount_msats: u64,
 		payer_note: Option<String>,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	AwaitingInvoice {
 		expiration: StaleExpiration,
 		retry_strategy: Retry,
 		route_params_config: RouteParametersConfig,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	// Represents the state after the invoice has been received, transitioning from the corresponding
 	// `AwaitingInvoice` state.
@@ -93,6 +95,7 @@ pub(crate) enum PendingOutboundPayment {
 		// race conditions where this field might be missing upon reload. It may be required
 		// for future retries.
 		route_params_config: RouteParametersConfig,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	// This state applies when we are paying an often-offline recipient and another node on the
 	// network served us a static invoice on the recipient's behalf in response to our invoice
@@ -110,6 +113,7 @@ pub(crate) enum PendingOutboundPayment {
 		//
 		// Defaults to creation time + [`ASYNC_PAYMENT_TIMEOUT_RELATIVE_EXPIRY`].
 		expiry_time: Duration,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	Retryable {
 		retry_strategy: Option<Retry>,
@@ -986,7 +990,7 @@ where
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
 
-		let (payment_hash, retry_strategy, params_config, _) = self
+		let (payment_hash, retry_strategy, params_config, custom_tlvs, _) = self
 			.mark_invoice_received_and_get_details(invoice, payment_id)?;
 
 		if invoice.invoice_features().requires_unknown_bits_from(&features) {
@@ -1004,10 +1008,16 @@ where
 			route_params.max_total_routing_fee_msat = Some(max_fee_msat);
 		}
 		let invoice = PaidBolt12Invoice::Bolt12Invoice(invoice.clone());
+
+		let recipient_onion = RecipientOnionFields::spontaneous_empty()
+			.with_custom_tlvs(custom_tlvs)
+			.map_err(|_| Bolt12PaymentError::SendingFailed(RetryableSendFailure::InvalidCustomTlvs))?;
+
 		self.send_payment_for_bolt12_invoice_internal(
-			payment_id, payment_hash, None, None, invoice, route_params, retry_strategy, false, router,
-			first_hops, inflight_htlcs, entropy_source, node_signer, node_id_lookup, secp_ctx,
-			best_block_height, pending_events, send_payment_along_path
+			payment_id, payment_hash, None, None, invoice, recipient_onion,
+			route_params, retry_strategy, false, router, first_hops, inflight_htlcs,
+			entropy_source, node_signer, node_id_lookup, secp_ctx, best_block_height, pending_events,
+			send_payment_along_path
 		)
 	}
 
@@ -1017,7 +1027,7 @@ where
 	>(
 		&self, payment_id: PaymentId, payment_hash: PaymentHash,
 		keysend_preimage: Option<PaymentPreimage>, invoice_request: Option<&InvoiceRequest>,
-		bolt12_invoice: PaidBolt12Invoice,
+		bolt12_invoice: PaidBolt12Invoice, recipient_onion: RecipientOnionFields,
 		mut route_params: RouteParameters, retry_strategy: Retry, hold_htlcs_at_next_hop: bool, router: &R,
 		first_hops: Vec<ChannelDetails>, inflight_htlcs: IH, entropy_source: &ES, node_signer: &NS,
 		node_id_lookup: &NL, secp_ctx: &Secp256k1<secp256k1::All>, best_block_height: u32,
@@ -1050,11 +1060,6 @@ where
 			}
 		}
 
-		let recipient_onion = RecipientOnionFields {
-			payment_secret: None,
-			payment_metadata: None,
-			custom_tlvs: vec![],
-		};
 		let route = match self.find_initial_route(
 			payment_id, payment_hash, &recipient_onion, keysend_preimage, invoice_request,
 			&mut route_params, router, &first_hops, &inflight_htlcs, node_signer, best_block_height,
@@ -1150,6 +1155,7 @@ where
 					retry_strategy,
 					retryable_invoice_request,
 					route_params_config,
+					custom_tlvs,
 					..
 				} => {
 					let invreq = &retryable_invoice_request
@@ -1210,6 +1216,8 @@ where
 					let absolute_expiry =
 						duration_since_epoch.saturating_add(ASYNC_PAYMENT_TIMEOUT_RELATIVE_EXPIRY);
 
+					let custom = core::mem::take(custom_tlvs);
+
 					*entry.into_mut() = PendingOutboundPayment::StaticInvoiceReceived {
 						payment_hash,
 						keysend_preimage,
@@ -1221,6 +1229,7 @@ where
 							.invoice_request,
 						static_invoice: invoice.clone(),
 						expiry_time: absolute_expiry,
+						custom_tlvs: custom,
 					};
 					return Ok(());
 				},
@@ -1259,6 +1268,7 @@ where
 			mut retry_strategy,
 			invoice_request,
 			invoice,
+			custom_tlvs,
 		) = match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
 				PendingOutboundPayment::StaticInvoiceReceived {
@@ -1268,6 +1278,7 @@ where
 					keysend_preimage,
 					invoice_request,
 					static_invoice,
+					custom_tlvs,
 					..
 				} => (
 					*payment_hash,
@@ -1276,6 +1287,7 @@ where
 					*retry_strategy,
 					invoice_request.clone(),
 					static_invoice.clone(),
+					custom_tlvs.clone(),
 				),
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
 			},
@@ -1289,6 +1301,11 @@ where
 			retry_strategy = Retry::Attempts(0);
 		}
 
+		let recipient_onion =
+			RecipientOnionFields::spontaneous_empty().with_custom_tlvs(custom_tlvs).map_err(
+				|_| Bolt12PaymentError::SendingFailed(RetryableSendFailure::InvalidCustomTlvs),
+			)?;
+
 		let invoice = PaidBolt12Invoice::StaticInvoice(invoice);
 		self.send_payment_for_bolt12_invoice_internal(
 			payment_id,
@@ -1296,6 +1313,7 @@ where
 			Some(keysend_preimage),
 			Some(&invoice_request),
 			invoice,
+			recipient_onion,
 			route_params,
 			retry_strategy,
 			hold_htlcs_at_next_hop,
@@ -1945,7 +1963,8 @@ where
 
 	#[cfg(feature = "dnssec")]
 	pub(super) fn add_new_awaiting_offer(
-		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
+		&self, payment_id: PaymentId, custom_tlvs: Vec<(u64, Vec<u8>)>,
+		expiration: StaleExpiration, retry_strategy: Retry,
 		route_params_config: RouteParametersConfig, amount_msats: u64, payer_note: Option<String>,
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
@@ -1958,6 +1977,7 @@ where
 					route_params_config,
 					amount_msats,
 					payer_note,
+					custom_tlvs,
 				});
 
 				Ok(())
@@ -1983,17 +2003,24 @@ where
 		&self, payment_id: PaymentId, retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()> {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
-			hash_map::Entry::Occupied(entry) => match entry.get() {
+			hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
 				PendingOutboundPayment::AwaitingOffer {
-					expiration, retry_strategy, route_params_config, ..
+					expiration,
+					retry_strategy,
+					route_params_config,
+					custom_tlvs,
+					..
 				} => {
-					let mut new_val = PendingOutboundPayment::AwaitingInvoice {
+					let custom = core::mem::take(custom_tlvs);
+
+					*entry.get_mut() = PendingOutboundPayment::AwaitingInvoice {
 						expiration: *expiration,
 						retry_strategy: *retry_strategy,
 						route_params_config: *route_params_config,
 						retryable_invoice_request,
+						custom_tlvs: custom,
 					};
-					core::mem::swap(&mut new_val, entry.into_mut());
+
 					Ok(())
 				},
 				_ => Err(()),
@@ -2003,7 +2030,8 @@ where
 	}
 
 	pub(super) fn add_new_awaiting_invoice(
-		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
+		&self, payment_id: PaymentId, custom_tlvs: Vec<(u64, Vec<u8>)>,
+		expiration: StaleExpiration, retry_strategy: Retry,
 		route_params_config: RouteParametersConfig,
 		retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()> {
@@ -2019,6 +2047,7 @@ where
 					retry_strategy,
 					route_params_config,
 					retryable_invoice_request,
+					custom_tlvs,
 				});
 
 				Ok(())
@@ -2031,7 +2060,7 @@ where
 		&self, invoice: &Bolt12Invoice, payment_id: PaymentId
 	) -> Result<(), Bolt12PaymentError> {
 		self.mark_invoice_received_and_get_details(invoice, payment_id)
-			.and_then(|(_, _, _, is_newly_marked)| {
+			.and_then(|(_, _, _, _, is_newly_marked)| {
 				is_newly_marked
 					.then_some(())
 					.ok_or(Bolt12PaymentError::DuplicateInvoice)
@@ -2040,32 +2069,34 @@ where
 
 	#[rustfmt::skip]
 	fn mark_invoice_received_and_get_details(
-		&self, invoice: &Bolt12Invoice, payment_id: PaymentId
-	) -> Result<(PaymentHash, Retry, RouteParametersConfig, bool), Bolt12PaymentError> {
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<(PaymentHash, Retry, RouteParametersConfig, Vec<(u64, Vec<u8>)>, bool), Bolt12PaymentError> {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
-			hash_map::Entry::Occupied(entry) => match entry.get() {
+			hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
 				PendingOutboundPayment::AwaitingInvoice {
-					retry_strategy: retry, route_params_config, ..
+					retry_strategy: retry, route_params_config, custom_tlvs, ..
 				} => {
 					let payment_hash = invoice.payment_hash();
 					let retry = *retry;
 					let config = *route_params_config;
-					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
+					let custom = core::mem::take(custom_tlvs);
+					*entry.get_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
 						retry_strategy: retry,
 						route_params_config: config,
+						custom_tlvs: custom.clone(),
 					};
 
-					Ok((payment_hash, retry, config, true))
+					Ok((payment_hash, retry, config, custom, true))
 				},
 				// When manual invoice handling is enabled, the corresponding `PendingOutboundPayment` entry
 				// is already updated at the time the invoice is received. This ensures that `InvoiceReceived`
 				// event generation remains idempotent, even if the same invoice is received again before the
 				// event is handled by the user.
 				PendingOutboundPayment::InvoiceReceived {
-					retry_strategy, route_params_config, ..
+					retry_strategy, route_params_config, custom_tlvs, ..
 				} => {
-					Ok((invoice.payment_hash(), *retry_strategy, *route_params_config, false))
+					Ok((invoice.payment_hash(), *retry_strategy, *route_params_config, custom_tlvs.clone(), false))
 				},
 				_ => Err(Bolt12PaymentError::DuplicateInvoice),
 			},
@@ -2757,6 +2788,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 				|fee_msat| RouteParametersConfig::default().with_max_total_routing_fee_msat(fee_msat)
 			)
 		))),
+		(9, custom_tlvs, optional_vec),
 	},
 	(7, InvoiceReceived) => {
 		(0, payment_hash, required),
@@ -2773,6 +2805,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 				|fee_msat| RouteParametersConfig::default().with_max_total_routing_fee_msat(fee_msat)
 			)
 		))),
+		(7, custom_tlvs, optional_vec),
 	},
 	// Added in 0.1. Prior versions will drop these outbounds on downgrade, which is safe because no
 	// HTLCs are in-flight.
@@ -2782,6 +2815,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		(4, retry_strategy, required),
 		(6, route_params, required),
 		(8, invoice_request, required),
+		(9, custom_tlvs, optional_vec),
 		(10, static_invoice, required),
 		// Added in 0.2. Prior versions would have this TLV type defaulted to 0, which is safe because
 		// the type is not used.
@@ -2806,6 +2840,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		))),
 		(6, amount_msats, required),
 		(7, payer_note, option),
+		(9, custom_tlvs, optional_vec),
 	},
 );
 
@@ -3053,7 +3088,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3083,14 +3118,14 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_err()
 		);
 	}
@@ -3108,7 +3143,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3138,14 +3173,14 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_err()
 		);
 	}
@@ -3162,7 +3197,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3201,7 +3236,7 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
+				payment_id, vec![], expiration, Retry::Attempts(0), RouteParametersConfig::default(), None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3267,7 +3302,7 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0),
+				payment_id, vec![], expiration, Retry::Attempts(0),
 				route_params_config, None,
 			).is_ok()
 		);
@@ -3370,7 +3405,7 @@ mod tests {
 
 		assert!(
 			outbound_payments.add_new_awaiting_invoice(
-				payment_id, expiration, Retry::Attempts(0), route_params_config, None,
+				payment_id, vec![], expiration, Retry::Attempts(0), route_params_config, None,
 			).is_ok()
 		);
 		assert!(outbound_payments.has_pending_payments());
@@ -3441,6 +3476,7 @@ mod tests {
 			invoice_request: dummy_invoice_request(),
 			static_invoice: dummy_static_invoice(),
 			expiry_time: Duration::from_secs(absolute_expiry + 2),
+			custom_tlvs: vec![],
 		};
 		outbounds.insert(payment_id, outbound);
 		core::mem::drop(outbounds);
@@ -3492,6 +3528,7 @@ mod tests {
 			invoice_request: dummy_invoice_request(),
 			static_invoice: dummy_static_invoice(),
 			expiry_time: now(),
+			custom_tlvs: vec![],
 		};
 		outbounds.insert(payment_id, outbound);
 		core::mem::drop(outbounds);
