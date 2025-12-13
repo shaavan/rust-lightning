@@ -76,6 +76,7 @@ pub(crate) enum PendingOutboundPayment {
 		/// send up-front, which we track here and enforce once we receive the offer.
 		amount_msats: u64,
 		payer_note: Option<String>,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	AwaitingInvoice {
 		expiration: StaleExpiration,
@@ -112,6 +113,7 @@ pub(crate) enum PendingOutboundPayment {
 		//
 		// Defaults to creation time + [`ASYNC_PAYMENT_TIMEOUT_RELATIVE_EXPIRY`].
 		expiry_time: Duration,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	},
 	Retryable {
 		retry_strategy: Option<Retry>,
@@ -1153,6 +1155,7 @@ where
 					retry_strategy,
 					retryable_invoice_request,
 					route_params_config,
+					custom_tlvs,
 					..
 				} => {
 					let invreq = &retryable_invoice_request
@@ -1213,6 +1216,8 @@ where
 					let absolute_expiry =
 						duration_since_epoch.saturating_add(ASYNC_PAYMENT_TIMEOUT_RELATIVE_EXPIRY);
 
+					let custom = core::mem::take(custom_tlvs);
+
 					*entry.into_mut() = PendingOutboundPayment::StaticInvoiceReceived {
 						payment_hash,
 						keysend_preimage,
@@ -1224,6 +1229,7 @@ where
 							.invoice_request,
 						static_invoice: invoice.clone(),
 						expiry_time: absolute_expiry,
+						custom_tlvs: custom,
 					};
 					return Ok(());
 				},
@@ -1262,6 +1268,7 @@ where
 			mut retry_strategy,
 			invoice_request,
 			invoice,
+			custom_tlvs,
 		) = match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
 			hash_map::Entry::Occupied(entry) => match entry.get() {
 				PendingOutboundPayment::StaticInvoiceReceived {
@@ -1271,6 +1278,7 @@ where
 					keysend_preimage,
 					invoice_request,
 					static_invoice,
+					custom_tlvs,
 					..
 				} => (
 					*payment_hash,
@@ -1279,6 +1287,7 @@ where
 					*retry_strategy,
 					invoice_request.clone(),
 					static_invoice.clone(),
+					custom_tlvs.clone(),
 				),
 				_ => return Err(Bolt12PaymentError::DuplicateInvoice),
 			},
@@ -1292,7 +1301,9 @@ where
 			retry_strategy = Retry::Attempts(0);
 		}
 
-		let recipient_onion = RecipientOnionFields::spontaneous_empty();
+		let recipient_onion = RecipientOnionFields::spontaneous_empty()
+			.with_custom_tlvs(custom_tlvs)
+			.map_err(|_| Bolt12PaymentError::SendingFailed(RetryableSendFailure::InvalidCustomTlvs))?;
 
 		let invoice = PaidBolt12Invoice::StaticInvoice(invoice);
 		self.send_payment_for_bolt12_invoice_internal(
@@ -1953,6 +1964,7 @@ where
 	pub(super) fn add_new_awaiting_offer(
 		&self, payment_id: PaymentId, expiration: StaleExpiration, retry_strategy: Retry,
 		route_params_config: RouteParametersConfig, amount_msats: u64, payer_note: Option<String>,
+		custom_tlvs: Vec<(u64, Vec<u8>)>,
 	) -> Result<(), ()> {
 		let mut pending_outbounds = self.pending_outbound_payments.lock().unwrap();
 		match pending_outbounds.entry(payment_id) {
@@ -1964,6 +1976,7 @@ where
 					route_params_config,
 					amount_msats,
 					payer_note,
+					custom_tlvs
 				});
 
 				Ok(())
@@ -1986,22 +1999,27 @@ where
 	#[cfg(feature = "dnssec")]
 	#[rustfmt::skip]
 	pub(super) fn received_offer(
-		&self, payment_id: PaymentId, custom_tlvs: Vec<(u64, Vec<u8>)>,
-		retryable_invoice_request: Option<RetryableInvoiceRequest>,
+		&self, payment_id: PaymentId, retryable_invoice_request: Option<RetryableInvoiceRequest>,
 	) -> Result<(), ()> {
 		match self.pending_outbound_payments.lock().unwrap().entry(payment_id) {
-			hash_map::Entry::Occupied(entry) => match entry.get() {
+			hash_map::Entry::Occupied(mut entry) => match entry.get_mut() {
 				PendingOutboundPayment::AwaitingOffer {
-					expiration, retry_strategy, route_params_config, ..
+					expiration,
+					retry_strategy,
+					route_params_config,
+					custom_tlvs,
+					..
 				} => {
-					let mut new_val = PendingOutboundPayment::AwaitingInvoice {
+					let custom = core::mem::take(custom_tlvs);
+
+					*entry.get_mut() = PendingOutboundPayment::AwaitingInvoice {
 						expiration: *expiration,
 						retry_strategy: *retry_strategy,
 						route_params_config: *route_params_config,
 						retryable_invoice_request,
-						custom_tlvs,
+						custom_tlvs: custom,
 					};
-					core::mem::swap(&mut new_val, entry.into_mut());
+
 					Ok(())
 				},
 				_ => Err(()),
@@ -2796,6 +2814,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		(4, retry_strategy, required),
 		(6, route_params, required),
 		(8, invoice_request, required),
+		(9, custom_tlvs, optional_vec),
 		(10, static_invoice, required),
 		// Added in 0.2. Prior versions would have this TLV type defaulted to 0, which is safe because
 		// the type is not used.
@@ -2820,6 +2839,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 		))),
 		(6, amount_msats, required),
 		(7, payer_note, option),
+		(9, custom_tlvs, optional_vec),
 	},
 );
 
@@ -3455,6 +3475,7 @@ mod tests {
 			invoice_request: dummy_invoice_request(),
 			static_invoice: dummy_static_invoice(),
 			expiry_time: Duration::from_secs(absolute_expiry + 2),
+			custom_tlvs: vec![],
 		};
 		outbounds.insert(payment_id, outbound);
 		core::mem::drop(outbounds);
@@ -3506,6 +3527,7 @@ mod tests {
 			invoice_request: dummy_invoice_request(),
 			static_invoice: dummy_static_invoice(),
 			expiry_time: now(),
+			custom_tlvs: vec![],
 		};
 		outbounds.insert(payment_id, outbound);
 		core::mem::drop(outbounds);
