@@ -126,6 +126,38 @@ pub struct InvoiceRequestBuilder<'a, 'b, T: secp256k1::Signing> {
 	secp_ctx: Option<&'b Secp256k1<T>>,
 }
 
+/// Builds an unsigned [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow using
+/// an explicitly provided payer signing pubkey.
+///
+/// See [module-level documentation] for usage.
+///
+/// This advanced builder is intended for stateful payer flows, such as recurrence, that must
+/// reuse the same payer identity across related requests. Reusing a payer signing pubkey harms
+/// sender privacy, so prefer [`Offer::request_invoice`] whenever possible.
+///
+/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
+///
+/// [module-level documentation]: self
+pub struct InvoiceRequestWithExplicitPayerSigningPubkeyBuilder<'a, 'b, T: secp256k1::Signing> {
+	offer: &'a Offer,
+	invoice_request: InvoiceRequestContentsWithoutPayerSigningPubkey,
+	payer_signing_pubkey: Option<PublicKey>,
+	secp_ctx: Option<&'b Secp256k1<T>>,
+}
+
+/// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
+///
+/// See [module-level documentation] for usage.
+///
+/// [module-level documentation]: self
+#[cfg(c_bindings)]
+pub struct InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b> {
+	offer: &'a Offer,
+	invoice_request: InvoiceRequestContentsWithoutPayerSigningPubkey,
+	payer_signing_pubkey: Option<PublicKey>,
+	secp_ctx: Option<&'b Secp256k1<secp256k1::All>>,
+}
+
 /// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
 ///
 /// See [module-level documentation] for usage.
@@ -140,9 +172,7 @@ pub struct InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
 }
 
 macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
-	(
-	$self: ident, $self_type: ty, $secp_context: ty
-) => {
+	($self: ident, $self_type: ty, $secp_context: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn deriving_signing_pubkey(
 			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce,
@@ -174,6 +204,34 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 				})
 				.unwrap();
 			Ok(invoice_request)
+		}
+	};
+}
+
+macro_rules! invoice_request_explicit_payer_signing_pubkey_builder_methods {
+	($self: ident, $self_type: ty, $secp_context: ty) => {
+		/// Builds an unsigned [`InvoiceRequest`] after checking for valid semantics. It can be signed
+		/// by [`UnsignedInvoiceRequest::sign`].
+		pub fn build($self: $self_type) -> Result<UnsignedInvoiceRequest, Bolt12SemanticError> {
+			let (unsigned_invoice_request, keys, _) = $self.build_with_checks()?;
+			debug_assert!(keys.is_none());
+			Ok(unsigned_invoice_request)
+		}
+
+		#[cfg_attr(c_bindings, allow(dead_code))]
+		pub(super) fn explicit_signing_pubkey(
+			offer: &'a Offer, payer_signing_pubkey: PublicKey, expanded_key: &ExpandedKey,
+			nonce: Nonce, secp_ctx: &'b Secp256k1<$secp_context>, payment_id: PaymentId,
+		) -> Self {
+			let payment_id = Some(payment_id);
+			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
+			let metadata = Metadata::Derived(derivation_material);
+			Self {
+				offer,
+				invoice_request: Self::create_contents(offer, metadata),
+				payer_signing_pubkey: Some(payer_signing_pubkey),
+				secp_ctx: Some(secp_ctx),
+			}
 		}
 	};
 }
@@ -465,6 +523,23 @@ impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestBuilder<'a, 'b, T> {
 	invoice_request_builder_test_methods!(self, Self, Self, self, mut);
 }
 
+impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestWithExplicitPayerSigningPubkeyBuilder<'a, 'b, T> {
+	invoice_request_explicit_payer_signing_pubkey_builder_methods!(self, Self, T);
+	invoice_request_builder_methods!(self, Self, Self, self, T, mut);
+}
+
+#[cfg(all(c_bindings, not(test)))]
+impl<'a, 'b> InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b> {
+	invoice_request_explicit_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
+	invoice_request_builder_methods!(self, &mut Self, (), (), secp256k1::All);
+}
+
+#[cfg(all(c_bindings, test))]
+impl<'a, 'b> InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b> {
+	invoice_request_explicit_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
+	invoice_request_builder_methods!(self, &mut Self, &mut Self, self, secp256k1::All);
+}
+
 #[cfg(all(c_bindings, not(test)))]
 impl<'a, 'b> InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
 	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
@@ -476,6 +551,24 @@ impl<'a, 'b> InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
 	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
 	invoice_request_builder_methods!(self, &mut Self, &mut Self, self, secp256k1::All);
 	invoice_request_builder_test_methods!(self, &mut Self, &mut Self, self);
+}
+
+#[cfg(c_bindings)]
+impl<'a, 'b> From<InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b>>
+	for InvoiceRequestWithExplicitPayerSigningPubkeyBuilder<'a, 'b, secp256k1::All>
+{
+	fn from(
+		builder: InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b>,
+	) -> Self {
+		let InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings {
+			offer,
+			invoice_request,
+			payer_signing_pubkey,
+			secp_ctx,
+		} = builder;
+
+		Self { offer, invoice_request, payer_signing_pubkey, secp_ctx }
+	}
 }
 
 #[cfg(c_bindings)]
