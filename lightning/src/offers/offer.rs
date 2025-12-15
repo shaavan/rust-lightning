@@ -1168,6 +1168,56 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 		}
 		Ok(builder)
 	}
+
+	/// Creates an [`InvoiceRequestBuilder`] for the offer using an explicitly provided
+	/// payer signing pubkey.
+	///
+	/// This allows callers to bypass derived signing keys when they want full control
+	/// over the signing identity used for the invoice request.
+	///
+	/// Errors if the offer contains unknown required features.
+	pub fn request_invoice_with_explicit_signing_pubkey<
+		'a, 'b,
+		#[cfg(not(c_bindings))]
+		T: secp256k1::Signing
+	>(
+		&'a $self,
+		payer_signing_pubkey: PublicKey,
+		expanded_key: &ExpandedKey,
+		nonce: Nonce,
+		#[cfg(not(c_bindings))]
+		secp_ctx: &'b Secp256k1<T>,
+		#[cfg(c_bindings)]
+		secp_ctx: &'b Secp256k1<secp256k1::All>,
+		payment_id: PaymentId,
+	) -> Result<$builder, Bolt12SemanticError> {
+		if $offer.offer_features().requires_unknown_bits() {
+			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
+		}
+
+		let mut builder =
+			<$builder>::explicit_signing_pubkey(
+				&$offer,
+				payer_signing_pubkey,
+				expanded_key,
+				nonce,
+				secp_ctx,
+				payment_id,
+			);
+
+		if let Some(hrn) = $hrn {
+			#[cfg(c_bindings)]
+			{
+				builder.sourced_from_human_readable_name(hrn);
+			}
+			#[cfg(not(c_bindings))]
+			{
+				builder = builder.sourced_from_human_readable_name(hrn);
+			}
+		}
+
+		Ok(builder)
+	}
 } }
 
 #[cfg(not(c_bindings))]

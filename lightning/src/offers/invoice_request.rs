@@ -138,7 +138,7 @@ pub struct InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
 	secp_ctx: Option<&'b Secp256k1<secp256k1::All>>,
 }
 
-macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
+macro_rules! invoice_request_building_methods {
 	(
 	$self: ident, $self_type: ty, $secp_context: ty
 ) => {
@@ -154,6 +154,26 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 				offer,
 				invoice_request: Self::create_contents(offer, metadata),
 				payer_signing_pubkey: None,
+				secp_ctx: Some(secp_ctx),
+			}
+		}
+
+		#[cfg_attr(c_bindings, allow(dead_code))]
+		pub(super) fn explicit_signing_pubkey(
+			offer: &'a Offer,
+			payer_signing_pubkey: PublicKey,
+			expanded_key: &ExpandedKey,
+			nonce: Nonce,
+			secp_ctx: &'b Secp256k1<$secp_context>,
+			payment_id: PaymentId,
+		) -> Self {
+			let payment_id = Some(payment_id);
+			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
+			let metadata = Metadata::Derived(derivation_material);
+			Self {
+				offer,
+				invoice_request: Self::create_contents(offer, metadata),
+				payer_signing_pubkey: Some(payer_signing_pubkey),
 				secp_ctx: Some(secp_ctx),
 			}
 		}
@@ -427,7 +447,7 @@ macro_rules! invoice_request_builder_test_methods { (
 } }
 
 impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestBuilder<'a, 'b, T> {
-	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, Self, T);
+	invoice_request_building_methods!(self, Self, T);
 	invoice_request_builder_methods!(self, Self, Self, self, T, mut);
 
 	#[cfg(test)]
@@ -436,13 +456,13 @@ impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestBuilder<'a, 'b, T> {
 
 #[cfg(all(c_bindings, not(test)))]
 impl<'a, 'b> InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
-	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
+	invoice_request_building_methods!(self, &mut Self, secp256k1::All);
 	invoice_request_builder_methods!(self, &mut Self, (), (), secp256k1::All);
 }
 
 #[cfg(all(c_bindings, test))]
 impl<'a, 'b> InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b> {
-	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, &mut Self, secp256k1::All);
+	invoice_request_building_methods!(self, &mut Self, secp256k1::All);
 	invoice_request_builder_methods!(self, &mut Self, &mut Self, self, secp256k1::All);
 	invoice_request_builder_test_methods!(self, &mut Self, &mut Self, self);
 }
