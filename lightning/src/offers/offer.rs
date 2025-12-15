@@ -106,6 +106,10 @@ use core::time::Duration;
 use crate::offers::invoice_request::InvoiceRequestBuilder;
 #[cfg(c_bindings)]
 use crate::offers::invoice_request::InvoiceRequestWithDerivedPayerSigningPubkeyBuilder;
+#[cfg(not(c_bindings))]
+use crate::offers::invoice_request::InvoiceRequestWithExplicitPayerSigningPubkeyBuilder;
+#[cfg(c_bindings)]
+use crate::offers::invoice_request::InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings;
 
 #[allow(unused_imports)]
 use crate::prelude::*;
@@ -1158,7 +1162,8 @@ impl Offer {
 	}
 }
 
-macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: expr, $builder: ty, $hrn: expr) => {
+macro_rules! request_invoice_any_signing_pubkey {
+	($self: ident, $offer: expr, $derived_builder: ty, $explicit_builder: ty, $hrn: expr) => {
 	/// Creates an [`InvoiceRequestBuilder`] for the offer, which
 	/// - derives the [`InvoiceRequest::payer_signing_pubkey`] such that a different key can be used
 	///   for each request in order to protect the sender's privacy,
@@ -1186,12 +1191,68 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 		#[cfg(c_bindings)]
 		secp_ctx: &'b Secp256k1<secp256k1::All>,
 		payment_id: PaymentId
-	) -> Result<$builder, Bolt12SemanticError> {
+	) -> Result<$derived_builder, Bolt12SemanticError> {
+			if $offer.offer_features().requires_unknown_bits() {
+				return Err(Bolt12SemanticError::UnknownRequiredFeatures);
+			}
+
+			let mut builder = <$derived_builder>::deriving_signing_pubkey(
+				&$offer, expanded_key, nonce, secp_ctx, payment_id
+			);
+			if let Some(hrn) = $hrn {
+				#[cfg(c_bindings)]
+				{
+					builder.sourced_from_human_readable_name(hrn);
+			}
+			#[cfg(not(c_bindings))]
+			{
+				builder = builder.sourced_from_human_readable_name(hrn);
+			}
+		}
+		Ok(builder)
+	}
+
+	/// Creates an [`InvoiceRequestBuilder`] for the offer using an explicitly provided
+	/// payer signing pubkey.
+	///
+	/// This advanced constructor is intended for stateful payer flows, such as recurrence, that
+	/// must reuse the same payer identity across related requests. Reusing a payer signing pubkey
+	/// harms sender privacy, so prefer [`Self::request_invoice`] whenever possible.
+	///
+	/// The returned builder only exposes
+	/// [`InvoiceRequestWithExplicitPayerSigningPubkeyBuilder::build`], requiring the caller to sign
+	/// the resulting [`UnsignedInvoiceRequest`] with the private key corresponding to
+	/// `payer_signing_pubkey`.
+	///
+	/// Errors if the offer contains unknown required features.
+	pub fn request_invoice_with_explicit_signing_pubkey<
+		'a, 'b,
+		#[cfg(not(c_bindings))]
+		T: secp256k1::Signing
+	>(
+		&'a $self,
+		payer_signing_pubkey: PublicKey,
+		expanded_key: &ExpandedKey,
+		nonce: Nonce,
+		#[cfg(not(c_bindings))]
+		secp_ctx: &'b Secp256k1<T>,
+		#[cfg(c_bindings)]
+		secp_ctx: &'b Secp256k1<secp256k1::All>,
+		payment_id: PaymentId,
+	) -> Result<$explicit_builder, Bolt12SemanticError> {
 		if $offer.offer_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id);
+		let mut builder = <$explicit_builder>::explicit_signing_pubkey(
+			&$offer,
+			payer_signing_pubkey,
+			expanded_key,
+			nonce,
+			secp_ctx,
+			payment_id,
+		);
+
 		if let Some(hrn) = $hrn {
 			#[cfg(c_bindings)]
 			{
@@ -1202,41 +1263,51 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 				builder = builder.sourced_from_human_readable_name(hrn);
 			}
 		}
+
 		Ok(builder)
 	}
-} }
+	} }
 
 #[cfg(not(c_bindings))]
 impl Offer {
-	request_invoice_derived_signing_pubkey!(self, self, InvoiceRequestBuilder<'a, 'b, T>, None);
+	request_invoice_any_signing_pubkey!(
+		self,
+		self,
+		InvoiceRequestBuilder<'a, 'b, T>,
+		InvoiceRequestWithExplicitPayerSigningPubkeyBuilder<'a, 'b, T>,
+		None
+	);
 }
 
 #[cfg(not(c_bindings))]
 impl OfferFromHrn {
-	request_invoice_derived_signing_pubkey!(
+	request_invoice_any_signing_pubkey!(
 		self,
 		self.offer,
 		InvoiceRequestBuilder<'a, 'b, T>,
+		InvoiceRequestWithExplicitPayerSigningPubkeyBuilder<'a, 'b, T>,
 		Some(self.hrn)
 	);
 }
 
 #[cfg(c_bindings)]
 impl Offer {
-	request_invoice_derived_signing_pubkey!(
+	request_invoice_any_signing_pubkey!(
 		self,
 		self,
 		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b>,
+		InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b>,
 		None
 	);
 }
 
 #[cfg(c_bindings)]
 impl OfferFromHrn {
-	request_invoice_derived_signing_pubkey!(
+	request_invoice_any_signing_pubkey!(
 		self,
 		self.offer,
 		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b>,
+		InvoiceRequestWithExplicitPayerSigningPubkeyBuilderForBindings<'a, 'b>,
 		Some(self.hrn)
 	);
 }
