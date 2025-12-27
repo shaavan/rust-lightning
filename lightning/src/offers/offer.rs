@@ -920,7 +920,7 @@ pub struct OutboundRecurrenceSessionData {
 	///    implementor, or
 	/// 2. A stateless derivation scheme where the original signing keys can be
 	///    deterministically rebuilt from stable recurrence inputs.
-	keys: Keypair,
+	pub keys: Keypair,
 	/// The offer corresponding to which this recurrence is.
 	///
 	/// We need to store the entire offer, because we need it for the creation
