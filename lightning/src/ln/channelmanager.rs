@@ -16265,6 +16265,8 @@ where
 						// the payment without touching any recurrence session state.
 						// ------------------------------------------------------------------
 						(None, None, None) => {
+							// Intentionally lock the sessions here, just to reproduce lock order error.
+							let sessions = self.active_outbound_recurrence_sessions.lock().unwrap();
 							self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id)
 						}
 						// ------------------------------------------------------------------
