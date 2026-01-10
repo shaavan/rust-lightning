@@ -224,7 +224,7 @@ impl BlindedPaymentPath {
 					let node_id = node_id_lookup.next_node_id(short_channel_id).ok_or(())?;
 					(node_id, ss)
 				},
-				(BlindedPaymentTlvs::Dummy, ss) => {
+				(BlindedPaymentTlvs::Dummy(_), ss) => {
 					let node_id = node_signer.get_node_id(Recipient::Node)?;
 					(node_id, ss)
 				},
@@ -265,7 +265,7 @@ impl BlindedPaymentPath {
 
 		match (&readable, used_aad) {
 			(BlindedPaymentTlvs::Forward(_), false)
-			| (BlindedPaymentTlvs::Dummy, true)
+			| (BlindedPaymentTlvs::Dummy(_), true)
 			| (BlindedPaymentTlvs::Receive(_), true) => Ok((readable, control_tlvs_ss)),
 			_ => Err(()),
 		}
@@ -358,6 +358,24 @@ pub struct TrampolineForwardTlvs {
 	pub next_blinding_override: Option<PublicKey>,
 }
 
+/// TLVs carried by a dummy hop within a blinded payment path.
+///
+/// Dummy hops do not correspond to real forwarding decisions, but are processed
+/// identically to real hops at the protocol level. The TLVs contained here define
+/// the relay requirements and constraints that must be satisfied for the payment
+/// to continue through this hop.
+///
+/// By enforcing realistic relay semantics on dummy hops, the payment path remains
+/// indistinguishable from a fully real route with respect to fees, CLTV deltas, and
+/// validation behavior.
+pub struct DummyTlvs {
+	/// Relay requirements (fees and CLTV delta) that must be satisfied when
+	/// processing this dummy hop.
+	pub payment_relay: PaymentRelay,
+	/// Constraints that apply to the payment when relaying over this dummy hop.
+	pub payment_constraints: PaymentConstraints,
+}
+
 /// Data to construct a [`BlindedHop`] for receiving a payment. This payload is custom to LDK and
 /// may not be valid if received by another lightning implementation.
 #[derive(Clone, Debug)]
@@ -377,7 +395,7 @@ pub(crate) enum BlindedPaymentTlvs {
 	/// This blinded payment data is for a forwarding node.
 	Forward(ForwardTlvs),
 	/// This blinded payment data is dummy and is to be peeled by receiving node.
-	Dummy,
+	Dummy(DummyTlvs),
 	/// This blinded payment data is for the receiving node.
 	Receive(ReceiveTlvs),
 }
@@ -396,7 +414,7 @@ pub(crate) enum BlindedTrampolineTlvs {
 #[derive(Clone)]
 enum BlindedPaymentTlvsRef<'a> {
 	Forward(&'a ForwardTlvs),
-	Dummy,
+	Dummy(&'a DummyTlvs),
 	Receive(&'a ReceiveTlvs),
 }
 
@@ -546,6 +564,17 @@ impl Writeable for TrampolineForwardTlvs {
 	}
 }
 
+impl Writeable for DummyTlvs {
+	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
+		encode_tlv_stream!(w, {
+			(10, self.payment_relay, required),
+			(12, self.payment_constraints, required),
+			(65539, (), required),
+		});
+		Ok(())
+	}
+}
+
 // Note: The `authentication` TLV field was removed in LDK v0.3 following
 // the introduction of `ReceiveAuthKey`-based authentication for inbound
 // `BlindedPaymentPaths`s. Because we do not support receiving to those
@@ -566,11 +595,7 @@ impl<'a> Writeable for BlindedPaymentTlvsRef<'a> {
 	fn write<W: Writer>(&self, w: &mut W) -> Result<(), io::Error> {
 		match self {
 			Self::Forward(tlvs) => tlvs.write(w)?,
-			Self::Dummy => {
-				encode_tlv_stream!(w, {
-					(65539, (), required),
-				})
-			},
+			Self::Dummy(tlvs) => tlvs.write(w)?,
 			Self::Receive(tlvs) => tlvs.write(w)?,
 		}
 		Ok(())
@@ -587,7 +612,7 @@ impl Readable for BlindedPaymentTlvs {
 			(2, scid, option),
 			(8, next_blinding_override, option),
 			(10, payment_relay, option),
-			(12, payment_constraints, option),
+			(12, payment_constraints, required),
 			(14, features, (option, encoding: (BlindedHopFeatures, WithoutLength))),
 			(65536, payment_secret, option),
 			(65537, payment_context, option),
@@ -598,7 +623,6 @@ impl Readable for BlindedPaymentTlvs {
 			scid,
 			next_blinding_override,
 			payment_relay,
-			payment_constraints,
 			features,
 			payment_secret,
 			payment_context,
@@ -608,7 +632,6 @@ impl Readable for BlindedPaymentTlvs {
 				Some(short_channel_id),
 				next_override,
 				Some(relay),
-				Some(constraints),
 				features,
 				None,
 				None,
@@ -616,18 +639,23 @@ impl Readable for BlindedPaymentTlvs {
 			) => Ok(BlindedPaymentTlvs::Forward(ForwardTlvs {
 				short_channel_id,
 				payment_relay: relay,
-				payment_constraints: constraints,
+				payment_constraints: payment_constraints.0.unwrap(),
 				next_blinding_override: next_override,
 				features: features.unwrap_or_else(BlindedHopFeatures::empty),
 			})),
-			(None, None, None, Some(constraints), None, Some(secret), Some(context), None) => {
+			(None, None, None, None, Some(secret), Some(context), None) => {
 				Ok(BlindedPaymentTlvs::Receive(ReceiveTlvs {
 					payment_secret: secret,
-					payment_constraints: constraints,
+					payment_constraints: payment_constraints.0.unwrap(),
 					payment_context: context,
 				}))
 			},
-			(None, None, None, None, None, None, None, Some(())) => Ok(BlindedPaymentTlvs::Dummy),
+			(None, None, Some(relay), None, None, None, Some(())) => {
+				Ok(BlindedPaymentTlvs::Dummy(DummyTlvs {
+					payment_relay: relay,
+					payment_constraints: payment_constraints.0.unwrap(),
+				}))
+			}
 			_ => return Err(DecodeError::InvalidValue),
 		}
 	}
@@ -679,6 +707,18 @@ pub(super) fn blinded_hops<T: secp256k1::Signing + secp256k1::Verification>(
 	local_node_receive_key: ReceiveAuthKey,
 ) -> Vec<BlindedHop> {
 	let dummy_count = core::cmp::min(dummy_hop_count, MAX_DUMMY_HOPS_COUNT);
+
+	// Todo: Allow user to pass their own DummyTlvs.
+	//
+	// Till then, to create reasonable payment_relay and payment contraints values,
+	// we do a simple trick here.
+	// We match the dummy hops payment relay values to the last intermediate hops, forward tlv's value,
+	// and match the payment constraints to the receive tlvs.
+	// This allows us to create reasonable dummy tlv values, without worrying about the nuances
+	let dummy_tlvs = DummyTlvs {
+		payment_relay: 
+	};
+
 	let pks = intermediate_nodes
 		.iter()
 		.map(|node| (node.node_id, None))
