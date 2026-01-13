@@ -10,6 +10,7 @@
 //! A bunch of useful utilities for building networks of nodes and exchanging messages between
 //! nodes for functional tests.
 
+use crate::blinded_path::payment::PaymentRelay;
 use crate::chain::channelmonitor::ChannelMonitor;
 use crate::chain::transaction::OutPoint;
 use crate::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Listen, Watch};
@@ -3772,6 +3773,7 @@ pub fn do_claim_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 pub struct ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_paths: &'a [&'a [&'a Node<'b, 'c, 'd>]],
+	pub expected_dummy_hops_fees: Option<(usize, PaymentRelay)>,
 	pub expected_extra_fees: Vec<u32>,
 	/// A one-off adjustment used only in tests to account for an existing
 	/// fee-handling trade-off in LDK.
@@ -3818,6 +3820,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node,
 			expected_paths,
+			expected_dummy_hops_fees: None,
 			expected_extra_fees: vec![0; expected_paths.len()],
 			expected_extra_total_fees_msat: 0,
 			expected_min_htlc_overpay: vec![0; expected_paths.len()],
@@ -3829,6 +3832,10 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	}
 	pub fn skip_last(mut self, skip_last: bool) -> Self {
 		self.skip_last = skip_last;
+		self
+	}
+	pub fn with_expected_dummy_hops_fees(mut self, expected_dummy_hops_fees: (usize, PaymentRelay)) -> Self {
+		self.expected_dummy_hops_fees = Some(expected_dummy_hops_fees);
 		self
 	}
 	pub fn with_expected_extra_fees(mut self, extra_fees: Vec<u32>) -> Self {
@@ -3965,6 +3972,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 	let ClaimAlongRouteArgs {
 		origin_node,
 		expected_paths,
+		expected_dummy_hops_fees,
 		expected_extra_fees,
 		expected_min_htlc_overpay,
 		skip_last,
@@ -4069,6 +4077,23 @@ pub fn pass_claimed_payment_along_route_from_ev(
 				next_msgs = new_next_msgs;
 			}};
 		}
+
+		// Before beginning the update fulfill dance, for the intermediate nodes, we need to
+		// account for dummy hops if they are present. If they are present, they are not
+		// free to use, and hence the actual_fee and inturn fwd_amt_msat will increase.
+		if let Some((usize, payment_relay)) = expected_dummy_hops_fees {
+			for _ in 0..usize {
+				let dummy_fee = {
+					let (base_fee, prop_fee) = {
+						(payment_relay.fee_base_msat as u64, payment_relay.fee_proportional_millionths as u64)
+					};
+					(fwd_amt_msat * prop_fee / 1_000_000) + base_fee
+				};
+				expected_total_fee_msat += dummy_fee;
+				fwd_amt_msat += dummy_fee;
+			}
+		}
+
 
 		let mut prev_node = expected_route.last().unwrap();
 		for (idx, node) in expected_route.iter().rev().enumerate().skip(1) {

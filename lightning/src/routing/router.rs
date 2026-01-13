@@ -76,6 +76,21 @@ pub struct DefaultRouter<
 /// The number of dummy hops included in [`BlindedPaymentPath`]s created by [`DefaultRouter`].
 pub const DEFAULT_PAYMENT_DUMMY_HOPS: usize = 3;
 
+// If there are no forwarding nodes other than the receiver itself, we fall back
+// to fixed, arbitrary relay parameters for dummy hops.
+//
+// This is a weak privacy heuristic: an observer familiar with LDK internals may
+// correlate path fees against these fixed values.
+//
+// TODO: Derive dummy relay parameters in a more robust and privacy-preserving way.
+pub const DEFAULT_PAYMENT_DUMMY_HOPS_RELAY_VALUES: PaymentRelay = PaymentRelay {
+	cltv_expiry_delta: 144,
+	fee_proportional_millionths: 500,
+	fee_base_msat: 100,
+};
+
+
+
 impl<
 		G: Deref<Target = NetworkGraph<L>>,
 		L: Deref,
@@ -227,11 +242,7 @@ where
 				//
 				// TODO: Derive dummy relay parameters in a more robust and privacy-preserving way.
 				let dummy_tlvs = DummyTlvs {
-					payment_relay: PaymentRelay {
-						cltv_expiry_delta: 144,
-						fee_proportional_millionths: 500,
-						fee_base_msat: 100,
-					},
+					payment_relay: DEFAULT_PAYMENT_DUMMY_HOPS_RELAY_VALUES,
 					payment_constraints: tlvs.payment_constraints,
 				};
 

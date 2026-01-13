@@ -47,7 +47,7 @@ use bitcoin::secp256k1::{PublicKey, Secp256k1};
 use core::time::Duration;
 use crate::blinded_path::IntroductionNode;
 use crate::blinded_path::message::BlindedMessagePath;
-use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentContext};
+use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentContext, PaymentRelay};
 use crate::blinded_path::message::OffersContext;
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{Bolt12PaymentError, PaymentId, RecentPaymentDetails, RecipientOnionFields, Retry, self};
@@ -63,7 +63,7 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, PADDED_PATH_LENGTH};
 use crate::onion_message::offers::OffersMessage;
 use crate::routing::gossip::{NodeAlias, NodeId};
-use crate::routing::router::{PaymentParameters, RouteParameters, RouteParametersConfig};
+use crate::routing::router::{DEFAULT_PAYMENT_DUMMY_HOPS, DEFAULT_PAYMENT_DUMMY_HOPS_RELAY_VALUES, PaymentParameters, RouteParameters, RouteParametersConfig};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::Writeable;
 
@@ -191,12 +191,13 @@ fn claim_bolt12_payment<'a, 'b, 'c>(
 		expected_payment_context,
 		invoice,
 		None,
+		None,
 	)
 }
 
 fn claim_bolt12_payment_with_extra_fees<'a, 'b, 'c>(
 	node: &Node<'a, 'b, 'c>, path: &[&Node<'a, 'b, 'c>], expected_payment_context: PaymentContext, invoice: &Bolt12Invoice,
-	expected_extra_fees_msat: Option<u64>,
+	expected_dummy_hops_fees: Option<(usize, PaymentRelay)>, expected_extra_fees_msat: Option<u64>,
 ) {
 	let recipient = path.last().expect("Empty path?");
 	let payment_purpose = match get_event!(recipient, Event::PaymentClaimable) {
@@ -223,6 +224,10 @@ fn claim_bolt12_payment_with_extra_fees<'a, 'b, 'c>(
 		&expected_paths,
 		payment_preimage,
 	);
+
+	if let Some(dummy_hops_fees) = expected_dummy_hops_fees {
+		args = args.with_expected_dummy_hops_fees(dummy_hops_fees);
+	}
 
 	if let Some(extra) = expected_extra_fees_msat {
 		args = args.with_expected_extra_total_fees_msat(extra);
@@ -735,7 +740,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	route_bolt12_payment(david, &[charlie, bob, alice], &invoice);
 	expect_recent_payment!(david, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(david, &[charlie, bob, alice], payment_context, &invoice);
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some((DEFAULT_PAYMENT_DUMMY_HOPS, DEFAULT_PAYMENT_DUMMY_HOPS_RELAY_VALUES)), None);
 	expect_recent_payment!(david, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -884,7 +889,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some((DEFAULT_PAYMENT_DUMMY_HOPS, DEFAULT_PAYMENT_DUMMY_HOPS_RELAY_VALUES)), None);
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -1445,7 +1450,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	//
 	// Until the fee-handling trade-off is revisited, we pass an expected extra
 	// fee here so tests can compensate for it.
-	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(1000));
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, None, Some(1000));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
