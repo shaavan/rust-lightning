@@ -40,7 +40,8 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer, VerifiedInvoiceRequest,
+	CurrencyConversion, DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestBuilder,
+	InvoiceRequestVerifiedFromOffer, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
@@ -91,6 +92,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	converter: DefaultCurrencyConversion,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -131,6 +134,8 @@ where
 
 			secp_ctx,
 			message_router,
+
+			converter: DefaultCurrencyConversion,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -835,10 +840,18 @@ where
 		let payment_context =
 			PaymentContext::AsyncBolt12Offer(AsyncBolt12OfferContext { offer_nonce });
 
-		let amount_msat = offer.amount().and_then(|amount| match amount {
-			Amount::Bitcoin { amount_msats } => Some(amount_msats),
-			Amount::Currency { .. } => None,
-		});
+		let amount_msat = match offer.amount() {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+			Some(Amount::Currency { iso4217_code: code, amount }) => {
+				let conversion_factor = self
+					.converter
+					.msats_per_minor_unit(code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+
+				Some(amount * conversion_factor)
+			},
+		};
 
 		let created_at = self.duration_since_epoch();
 
@@ -971,8 +984,44 @@ where
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let offer_amount = match invoice_request.amount() {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+			Some(Amount::Currency { iso4217_code: code, amount }) => {
+				let conversion_factor = self
+					.converter
+					.msats_per_minor_unit(code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+
+				Some(amount * conversion_factor)
+			},
+		};
+
+		let amount_msats = match (invoice_request.amount_msats(), offer_amount) {
+			// Case 1: The InvoiceRequest specifies an explicit amount AND the Offer
+			// specifies a required minimum. The request amount is valid only if it
+			// is >= the minimum required msats.
+			(Some(ir_amount), Some(min_msats)) if ir_amount >= min_msats => Ok(ir_amount),
+
+			// Case 1b: The InvoiceRequest specifies an explicit amount, but it is
+			// *below* the minimum required by the Offer. This is semantically invalid.
+			(Some(_), Some(_)) => Err(Bolt12SemanticError::InsufficientAmount),
+
+			// Case 2: The InvoiceRequest specifies an explicit amount, and the Offer
+			// does *not* specify any minimum (donation Offer). In this case, any
+			// InvoiceRequest amount is acceptable.
+			(Some(ir_amount), None) => Ok(ir_amount),
+
+			// Case 3: The InvoiceRequest does not specify an amount, but the Offer
+			// does specify a required minimum. We must use the Offer-implied amount
+			// as the Invoice's amount.
+			(None, Some(min_msats)) => Ok(min_msats),
+
+			// Case 4: Neither the InvoiceRequest nor the Offer specify any amount.
+			// With no explicit or implied amount available, we cannot construct a
+			// valid Invoice amount.
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1031,8 +1080,44 @@ where
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let offer_amount = match invoice_request.amount() {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+			Some(Amount::Currency { iso4217_code: code, amount }) => {
+				let conversion_factor = self
+					.converter
+					.msats_per_minor_unit(code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+
+				Some(amount * conversion_factor)
+			},
+		};
+
+		let amount_msats = match (invoice_request.amount_msats(), offer_amount) {
+			// Case 1: The InvoiceRequest specifies an explicit amount AND the Offer
+			// specifies a required minimum. The request amount is valid only if it
+			// is >= the minimum required msats.
+			(Some(ir_amount), Some(min_msats)) if ir_amount >= min_msats => Ok(ir_amount),
+
+			// Case 1b: The InvoiceRequest specifies an explicit amount, but it is
+			// *below* the minimum required by the Offer. This is semantically invalid.
+			(Some(_), Some(_)) => Err(Bolt12SemanticError::InsufficientAmount),
+
+			// Case 2: The InvoiceRequest specifies an explicit amount, and the Offer
+			// does *not* specify any minimum (donation Offer). In this case, any
+			// InvoiceRequest amount is acceptable.
+			(Some(ir_amount), None) => Ok(ir_amount),
+
+			// Case 3: The InvoiceRequest does not specify an amount, but the Offer
+			// does specify a required minimum. We must use the Offer-implied amount
+			// as the Invoice's amount.
+			(None, Some(min_msats)) => Ok(min_msats),
+
+			// Case 4: Neither the InvoiceRequest nor the Offer specify any amount.
+			// With no explicit or implied amount available, we cannot construct a
+			// valid Invoice amount.
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
