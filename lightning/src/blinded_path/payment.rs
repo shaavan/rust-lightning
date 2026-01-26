@@ -406,15 +406,27 @@ pub struct DummyTlvs {
 	pub payment_constraints: PaymentConstraints,
 }
 
-impl Default for DummyTlvs {
-	fn default() -> Self {
-		let payment_relay =
-			PaymentRelay { cltv_expiry_delta: 0, fee_proportional_millionths: 0, fee_base_msat: 0 };
-
-		let payment_constraints =
-			PaymentConstraints { max_cltv_expiry: u32::MAX, htlc_minimum_msat: 0 };
-
-		Self { payment_relay, payment_constraints }
+impl DummyTlvs {
+	/// On Default values:
+	/// These currently match one-to-one with the default ForwardTlvs values set by DefaultRouter
+	/// in test.
+	/// TODO: Figure out the reason behind these values.
+	///
+	/// Zero FPM: This is set to 0, to avoid off-by-bit test failures.
+	///
+	/// TODO: Encode it formally.
+	pub(crate) fn default() -> Self {
+		Self {
+			payment_relay: PaymentRelay {
+				cltv_expiry_delta: 80,
+				fee_proportional_millionths: 0,
+				fee_base_msat: 1000,
+			},
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 2099,
+				htlc_minimum_msat: 1000,
+			},
+		}
 	}
 }
 
