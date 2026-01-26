@@ -3780,6 +3780,7 @@ pub fn do_claim_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 pub struct ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_paths: &'a [&'a [&'a Node<'b, 'c, 'd>]],
+	pub dummy_tlvs: Vec<DummyTlvs>,
 	pub expected_extra_fees: Vec<u32>,
 	/// A one-off adjustment used only in tests to account for an existing
 	/// fee-handling trade-off in LDK.
@@ -3826,6 +3827,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 		Self {
 			origin_node,
 			expected_paths,
+			dummy_tlvs: vec![],
 			expected_extra_fees: vec![0; expected_paths.len()],
 			expected_extra_total_fees_msat: 0,
 			expected_min_htlc_overpay: vec![0; expected_paths.len()],
@@ -3857,6 +3859,10 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	}
 	pub fn with_custom_tlvs(mut self, custom_tlvs: Vec<(u64, Vec<u8>)>) -> Self {
 		self.custom_tlvs = custom_tlvs;
+		self
+	}
+	pub fn with_dummy_tlvs(mut self, dummy_tlvs: &[DummyTlvs]) -> Self {
+		self.dummy_tlvs = dummy_tlvs.to_vec();
 		self
 	}
 }
@@ -3973,6 +3979,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 	let ClaimAlongRouteArgs {
 		origin_node,
 		expected_paths,
+		dummy_tlvs,
 		expected_extra_fees,
 		expected_min_htlc_overpay,
 		skip_last,
@@ -3987,6 +3994,24 @@ pub fn pass_claimed_payment_along_route_from_ev(
 	for (i, (expected_route, (path_msgs, next_hop))) in
 		expected_paths.iter().zip(per_path_msgs.drain(..)).enumerate()
 	{
+		// Since we traverse the route in reverse (from recipient back to sender),
+		// we must first incorporate the fees charged by dummy hops. Each dummy hop
+		// fee increases the forward amount that upstream hops would have had to send,
+		// so we accumulate these before processing real forwarding nodes.
+		for tlvs in &dummy_tlvs {
+			let fees = {
+				let (base_fee, prop_fee) = (
+					tlvs.payment_relay.fee_base_msat as u64,
+					tlvs.payment_relay.fee_proportional_millionths as u64,
+				);
+
+				(fwd_amt_msat * prop_fee / 1_000_000) + base_fee
+			};
+
+			expected_total_fee_msat += fees;
+			fwd_amt_msat += fees;
+		}
+
 		let mut next_msgs = Some(path_msgs);
 		let mut expected_next_node = next_hop;
 
