@@ -683,7 +683,7 @@ where
 			) {
 				Ok((amt, cltv)) => (amt, cltv),
 				Err(()) => {
-					return encode_relay_error("Underflow calculating outbound amount or cltv value for blinded forward",
+					return encode_relay_error("Underflow calculating outbound amount or cltv value for dummy hop",
 						LocalHTLCFailureReason::InvalidOnionBlinding, shared_secret.secret_bytes(), None, &[0; 32]);
 				}
 			};
