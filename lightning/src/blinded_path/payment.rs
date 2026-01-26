@@ -408,13 +408,17 @@ pub struct DummyTlvs {
 
 impl Default for DummyTlvs {
 	fn default() -> Self {
-		let payment_relay =
-			PaymentRelay { cltv_expiry_delta: 0, fee_proportional_millionths: 0, fee_base_msat: 0 };
-
-		let payment_constraints =
-			PaymentConstraints { max_cltv_expiry: u32::MAX, htlc_minimum_msat: 0 };
-
-		Self { payment_relay, payment_constraints }
+		Self {
+			payment_relay: PaymentRelay {
+				cltv_expiry_delta: 144,
+				fee_proportional_millionths: 500,
+				fee_base_msat: 100,
+			},
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1_000_000,
+				htlc_minimum_msat: 100,
+			},
+		}
 	}
 }
 
