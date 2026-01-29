@@ -410,13 +410,13 @@ impl Default for DummyTlvs {
 	fn default() -> Self {
 		Self {
 			payment_relay: PaymentRelay {
-				cltv_expiry_delta: 200,
-				fee_proportional_millionths: 200,
-				fee_base_msat: 200,
+				cltv_expiry_delta: 80,
+				fee_proportional_millionths: 0,
+				fee_base_msat: 1000,
 			},
 			payment_constraints: PaymentConstraints {
-				max_cltv_expiry: 1_000_000,
-				htlc_minimum_msat: 100,
+				max_cltv_expiry: 2099,
+				htlc_minimum_msat: 1000,
 			},
 		}
 	}
