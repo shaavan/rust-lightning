@@ -3991,25 +3991,25 @@ pub fn pass_claimed_payment_along_route_from_ev(
 	let mut fwd_amt_msat = each_htlc_claim_amt_msat;
 	let mut expected_total_fee_msat = 0;
 
-	// Before finding the fees from actual nodes, since we are going in reverse order
-	// we have to first account for dummy hops fees.
-	for tlvs in dummy_tlvs {
-		let fees = {
-			let (base_fee, prop_fee) = (
-				tlvs.payment_relay.fee_base_msat as u64,
-				tlvs.payment_relay.fee_proportional_millionths as u64,
-			);
-
-			(fwd_amt_msat * prop_fee / 1_000_000) + base_fee
-		};
-
-		expected_total_fee_msat += fees;
-		fwd_amt_msat += fees;
-	}
-
 	for (i, (expected_route, (path_msgs, next_hop))) in
 		expected_paths.iter().zip(per_path_msgs.drain(..)).enumerate()
 	{
+		// Before finding the fees from actual nodes, since we are going in reverse order
+		// we have to first account for dummy hops fees.
+		for tlvs in &dummy_tlvs {
+			let fees = {
+				let (base_fee, prop_fee) = (
+					tlvs.payment_relay.fee_base_msat as u64,
+					tlvs.payment_relay.fee_proportional_millionths as u64,
+				);
+
+				(fwd_amt_msat * prop_fee / 1_000_000) + base_fee
+			};
+
+			expected_total_fee_msat += fees;
+			fwd_amt_msat += fees;
+		}
+
 		let mut next_msgs = Some(path_msgs);
 		let mut expected_next_node = next_hop;
 
