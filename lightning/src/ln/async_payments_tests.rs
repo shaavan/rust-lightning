@@ -990,7 +990,7 @@ fn ignore_duplicate_invoice() {
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let (res, _) =
-		claim_payment_along_route(ClaimAlongRouteArgs::new(sender, route, keysend_preimage));
+		claim_payment_along_route(ClaimAlongRouteArgs::new(sender, route, keysend_preimage).with_dummy_tlvs(&dummy_tlvs));
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice.clone())));
 
 	// After paying the static invoice, check that regular invoice received from async recipient is ignored.
