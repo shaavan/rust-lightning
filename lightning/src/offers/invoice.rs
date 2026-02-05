@@ -396,14 +396,45 @@ macro_rules! invoice_builder_methods {
 		pub(crate) fn amount_msats(
 			invoice_request: &InvoiceRequest,
 		) -> Result<u64, Bolt12SemanticError> {
-			match invoice_request.contents.inner.amount_msats() {
-				Some(amount_msats) => Ok(amount_msats),
-				None => match invoice_request.contents.inner.offer.amount() {
-					Some(Amount::Bitcoin { amount_msats }) => amount_msats
-						.checked_mul(invoice_request.quantity().unwrap_or(1))
-						.ok_or(Bolt12SemanticError::InvalidAmount),
-					Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
-					None => Err(Bolt12SemanticError::MissingAmount),
+			let invoice_request_msats = invoice_request.amount_msats();
+			let interpreted_msats = invoice_request.interpreted_amount();
+
+			match (invoice_request_msats, interpreted_msats) {
+				// The payer specified an amount and the offer defines a minimum.
+				// Enforce that the requested amount satisfies the minimum.
+				(Some(ir_msats), Some(minimum)) => {
+					if ir_msats < minimum {
+						Err(Bolt12SemanticError::InsufficientAmount)
+					} else {
+						Ok(ir_msats)
+					}
+				},
+
+				// The payer specified an amount and the offer does not define one
+				// (e.g., donation-style offer).
+				(Some(requested), None) => Ok(requested),
+
+				// The payer did not specify an amount but the offer defines one.
+				// Use the offer-implied amount.
+				(None, Some(interpreted)) => Ok(interpreted),
+
+				// Neither the payer nor the offer defines an amount.
+				(None, None) => {
+					match invoice_request.amount() {
+						None => Err(Bolt12SemanticError::MissingAmount),
+
+						Some(Amount::Currency { .. }) => {
+							Err(Bolt12SemanticError::UnsupportedCurrency)
+						},
+
+						Some(Amount::Bitcoin { .. }) => {
+							debug_assert!(
+								false,
+								"Bitcoin amounts should have populated interpreted_amount during parsing"
+							);
+							Err(Bolt12SemanticError::UnexpectedAmount)
+						},
+					}
 				},
 			}
 		}
