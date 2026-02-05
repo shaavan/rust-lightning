@@ -82,6 +82,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::invoice_request::CurrencyConversion;
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
@@ -101,6 +102,7 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU64;
 use core::str::FromStr;
 use core::time::Duration;
+use std::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice_request::InvoiceRequestBuilder;
@@ -240,6 +242,7 @@ macro_rules! offer_explicit_metadata_builder_methods {
 					chains: None,
 					metadata: None,
 					amount: None,
+					interpreted_amount: None,
 					description: None,
 					features: OfferFeatures::empty(),
 					absolute_expiry: None,
@@ -294,6 +297,7 @@ macro_rules! offer_derived_metadata_builder_methods {
 					chains: None,
 					metadata: Some(metadata),
 					amount: None,
+					interpreted_amount: None,
 					description: None,
 					features: OfferFeatures::empty(),
 					absolute_expiry: None,
@@ -625,6 +629,15 @@ pub(super) struct OfferContents {
 	chains: Option<Vec<ChainHash>>,
 	metadata: Option<Metadata>,
 	amount: Option<Amount>,
+	// Represents the offer amount in it's interpreted form.
+	// if the amount is in bitcoin, it matches the original amount.
+	// if the Amount is in currency, it interprets that into msat.
+	// This is a local field and is not serialised.
+	// The purpose of this is to provide the currency interpretation
+	// user can rely on.
+	// If user wants to support currency. They must call self.interpret_amount()
+	// before initiating a response.
+	interpreted_amount: Option<u64>,
 	description: Option<String>,
 	features: OfferFeatures,
 	absolute_expiry: Option<Duration>,
@@ -657,6 +670,11 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	/// The minimum amount required for a successful payment of a single item.
 	pub fn amount(&$self) -> Option<$crate::offers::offer::Amount> {
 		$contents.amount()
+	}
+
+	/// The offer's interpreted amount.
+	pub fn interpreted_amount(&$self) -> Option<u64> {
+		$contents.interpreted_amount()
 	}
 
 	/// A complete description of the purpose of the payment. Intended to be displayed to the user
@@ -896,6 +914,28 @@ impl OfferContents {
 		self.amount
 	}
 
+	pub fn interpret_amount<CC: Deref>(&mut self, currency_conversion: CC) -> Result<(), ()>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		let new_amount = match self.amount {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+			Some(Amount::Currency { iso4217_code, amount }) => {
+				let unit_conversion = currency_conversion.msats_per_minor_unit(iso4217_code)?;
+				Some(amount.saturating_mul(unit_conversion))
+			},
+		};
+
+		self.interpreted_amount = new_amount;
+
+		Ok(())
+	}
+
+	pub fn interpreted_amount(&self) -> Option<u64> {
+		self.interpreted_amount
+	}
+
 	pub fn description(&self) -> Option<PrintableString<'_>> {
 		self.description.as_ref().map(|description| PrintableString(description))
 	}
@@ -936,7 +976,13 @@ impl OfferContents {
 		let offer_amount_msats = match self.amount {
 			None => 0,
 			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			Some(Amount::Currency { .. }) => {
+				if let Some(interpreted_amount) = self.interpreted_amount {
+					interpreted_amount
+				} else {
+					return Err(Bolt12SemanticError::UnsupportedCurrency);
+				}
+			},
 		};
 
 		if !self.expects_quantity() || quantity.is_some() {
@@ -1304,17 +1350,21 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 
 		let metadata = metadata.map(|metadata| Metadata::Bytes(metadata));
 
-		let amount = match (currency, amount) {
-			(None, None) => None,
+		let (amount, interpreted_amount) = match (currency, amount) {
+			(None, None) => (None, None),
 			(None, Some(amount_msats)) if amount_msats > MAX_VALUE_MSAT => {
 				return Err(Bolt12SemanticError::InvalidAmount);
 			},
-			(None, Some(amount_msats)) => Some(Amount::Bitcoin { amount_msats }),
+			(None, Some(amount_msats)) => {
+				(Some(Amount::Bitcoin { amount_msats }), Some(amount_msats))
+			},
 			(Some(_), None) => return Err(Bolt12SemanticError::MissingAmount),
 			(Some(currency_bytes), Some(amount)) => {
 				let iso4217_code = CurrencyCode::new(currency_bytes)
 					.map_err(|_| Bolt12SemanticError::InvalidCurrencyCode)?;
-				Some(Amount::Currency { iso4217_code, amount })
+				// In case of currency, we don't have access to currency conversion
+				// to interpret amount here. We will leave this to user to do in their code.
+				(Some(Amount::Currency { iso4217_code, amount }), None)
 			},
 		};
 
@@ -1345,6 +1395,7 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			chains,
 			metadata,
 			amount,
+			interpreted_amount,
 			description,
 			features,
 			absolute_expiry,
@@ -1419,6 +1470,7 @@ mod tests {
 		assert!(offer.supports_chain(ChainHash::using_genesis_block(Network::Bitcoin)));
 		assert_eq!(offer.metadata(), None);
 		assert_eq!(offer.amount(), None);
+		assert_eq!(offer.interpreted_amount(), None);
 		assert_eq!(offer.description(), None);
 		assert_eq!(offer.offer_features(), &OfferFeatures::empty());
 		assert_eq!(offer.absolute_expiry(), None);
