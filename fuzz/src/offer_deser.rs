@@ -51,11 +51,23 @@ fn build_request(offer: &Offer) -> Result<InvoiceRequest, Bolt12SemanticError> {
 
 	let mut builder = offer.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)?;
 
-	builder = match offer.amount() {
-		None => builder.amount_msats(1000).unwrap(),
-		Some(Amount::Bitcoin { amount_msats }) => builder.amount_msats(amount_msats + 1)?,
-		Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+	// Resolve the amount to request:
+	// Prefer the interpreted amount when present. Otherwise derive it from the
+	// offer’s declared amount, defaulting for amountless offers and rejecting
+	// unsupported currencies.
+	let amount_msats = if let Some(amount) = offer.interpreted_amount() {
+		amount
+	} else {
+		match offer.amount() {
+			None => 1000,
+			Some(Amount::Bitcoin { amount_msats }) => amount_msats + 1,
+			Some(Amount::Currency { .. }) => {
+				return Err(Bolt12SemanticError::UnsupportedCurrency);
+			}
+		}
 	};
+
+	builder = builder.amount_msats(amount_msats)?;
 
 	builder = match offer.supported_quantity() {
 		Quantity::Bounded(n) => builder.quantity(n.get()).unwrap(),
