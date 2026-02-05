@@ -393,20 +393,20 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats(
-			invoice_request: &InvoiceRequest,
-		) -> Result<u64, Bolt12SemanticError> {
-			match invoice_request.contents.inner.amount_msats() {
-				Some(amount_msats) => Ok(amount_msats),
-				None => match invoice_request.contents.inner.offer.amount() {
-					Some(Amount::Bitcoin { amount_msats }) => amount_msats
-						.checked_mul(invoice_request.quantity().unwrap_or(1))
-						.ok_or(Bolt12SemanticError::InvalidAmount),
-					Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
-					None => Err(Bolt12SemanticError::MissingAmount),
-				},
-			}
-		}
+		// pub(crate) fn amount_msats(
+		// 	invoice_request: &InvoiceRequest,
+		// ) -> Result<u64, Bolt12SemanticError> {
+		// 	match invoice_request.contents.inner.amount_msats() {
+		// 		Some(amount_msats) => Ok(amount_msats),
+		// 		None => match invoice_request.contents.inner.offer.amount() {
+		// 			Some(Amount::Bitcoin { amount_msats }) => amount_msats
+		// 				.checked_mul(invoice_request.quantity().unwrap_or(1))
+		// 				.ok_or(Bolt12SemanticError::InvalidAmount),
+		// 			Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
+		// 			None => Err(Bolt12SemanticError::MissingAmount),
+		// 		},
+		// 	}
+		// }
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		fn fields(
@@ -479,6 +479,45 @@ impl<'a, S: SigningPubkeyStrategy> InvoiceBuilder<'a, S> {
 	invoice_builder_methods_test!(self, Self, Self, self, mut);
 	#[cfg(test)]
 	invoice_builder_methods_test_common!(self, Self, self.invoice.fields_mut(), Self, self, mut);
+}
+
+impl<'a, S: SigningPubkeyStrategy> InvoiceBuilder<'a, S> {
+	pub(crate) fn amount_msats(
+		invoice_request: &InvoiceRequest,
+	) -> Result<u64, Bolt12SemanticError> {
+		let invoice_request_amount = invoice_request.amount_msats();
+		let interpreted_amount = invoice_request.interpreted_amount();
+
+		match (invoice_request_amount, interpreted_amount) {
+			// Case 1: The InvoiceRequest specifies an explicit amount AND the Offer
+			// specifies a required minimum. The request amount is valid only if it
+			// is >= the minimum required msats.
+			(Some(amount_msats), Some(intp_amount)) => {
+				if amount_msats < intp_amount {
+					Err(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					Ok(amount_msats)
+				}
+			},
+			// Case 2: The InvoiceRequest specifies an explicit amount, and the Offer
+			// does *not* specify any minimum (donation Offer). In this case, any
+			// InvoiceRequest amount is acceptable.
+			(Some(ir_amount), None) => Ok(ir_amount),
+
+			// Case 3: The InvoiceRequest does not specify an amount, but the Offer
+			// does specify a required minimum. We must use the Offer-implied amount
+			// as the Invoice's amount.
+			(None, Some(intp_amount)) => Ok(intp_amount),
+
+			// Case 4: Neither the InvoiceRequest nor the Offer specify any interpreted amount.
+			// In this case we are bound to rely on the raw Offer amount data.
+			(None, None) => match invoice_request.amount() {
+				None => Err(Bolt12SemanticError::MissingAmount),
+				Some(Amount::Bitcoin { amount_msats }) => Ok(amount_msats),
+				Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
+			},
+		}
+	}
 }
 
 #[cfg(all(c_bindings, not(test)))]
