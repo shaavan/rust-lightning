@@ -956,6 +956,8 @@ where
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
@@ -1015,6 +1017,8 @@ where
 	///
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
+	///
+	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
 	///
 	/// # Errors
 	///

@@ -93,7 +93,9 @@ use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
 use crate::offers::flow::{HeldHtlcReplyPath, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
+use crate::offers::invoice_request::{
+	DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestVerifiedFromOffer,
+};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
@@ -15317,7 +15319,11 @@ where
 				};
 
 				let (result, context) = match invoice_request {
-					InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
+					InvoiceRequestVerifiedFromOffer::DerivedKeys(mut request) => {
+						if let Err(_) = request.interpret_amount(&DefaultCurrencyConversion) {
+							return None
+						}
+
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
@@ -15341,7 +15347,11 @@ where
 							},
 						}
 					},
-					InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => {
+					InvoiceRequestVerifiedFromOffer::ExplicitKeys(mut request) => {
+						if let Err(_) = request.interpret_amount(&DefaultCurrencyConversion) {
+							return None
+						}
+
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
@@ -15410,11 +15420,14 @@ where
 				let res = self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
 			},
-			OffersMessage::StaticInvoice(invoice) => {
+			OffersMessage::StaticInvoice(mut invoice) => {
 				let payment_id = match context {
 					Some(OffersContext::OutboundPayment { payment_id, .. }) => payment_id,
 					_ => return None
 				};
+				if let Err(_) = invoice.interpret_amount(&DefaultCurrencyConversion) {
+					return None
+				}
 				let res = self.initiate_async_payment(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, self.logger);
 			},

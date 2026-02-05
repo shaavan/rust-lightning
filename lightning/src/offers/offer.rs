@@ -1733,8 +1733,11 @@ mod tests {
 	#[test]
 	fn builds_offer_with_amount() {
 		let bitcoin_amount = Amount::Bitcoin { amount_msats: 1000 };
-		let currency_amount =
-			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10, interpreted_amount: None };
+		let currency_amount = Amount::Currency {
+			iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+			amount: 10,
+			interpreted_amount: None,
+		};
 
 		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).build().unwrap();
 		let tlv_stream = offer.as_tlv_stream();

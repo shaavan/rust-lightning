@@ -22,7 +22,7 @@ use crate::offers::invoice::{
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{CurrencyConversion, InvoiceRequest};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -41,6 +41,7 @@ use bitcoin::address::Address;
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 use core::time::Duration;
 
 #[cfg(feature = "std")]
@@ -388,6 +389,7 @@ where
 }
 
 impl StaticInvoice {
+	offer_resolution_methods!(self, self.contents.offer);
 	invoice_accessors_common!(self, self.contents, StaticInvoice);
 	invoice_accessors_signing_pubkey!(self, self.contents, StaticInvoice);
 	invoice_accessors!(self, self.contents);
