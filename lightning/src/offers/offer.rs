@@ -672,7 +672,7 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 		$contents.amount()
 	}
 
-	/// The minimum amount required for a successful payment of a single item.
+	/// The offer's interpreted amount.
 	pub fn interpreted_amount(&$self) -> Option<u64> {
 		$contents.interpreted_amount()
 	}
@@ -1350,17 +1350,19 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 
 		let metadata = metadata.map(|metadata| Metadata::Bytes(metadata));
 
-		let amount = match (currency, amount) {
-			(None, None) => None,
+		let (amount, interpreted_amount) = match (currency, amount) {
+			(None, None) => (None, None),
 			(None, Some(amount_msats)) if amount_msats > MAX_VALUE_MSAT => {
 				return Err(Bolt12SemanticError::InvalidAmount);
 			},
-			(None, Some(amount_msats)) => Some(Amount::Bitcoin { amount_msats }),
+			(None, Some(amount_msats)) => (Some(Amount::Bitcoin { amount_msats }), Some(amount_msats)),
 			(Some(_), None) => return Err(Bolt12SemanticError::MissingAmount),
 			(Some(currency_bytes), Some(amount)) => {
 				let iso4217_code = CurrencyCode::new(currency_bytes)
 					.map_err(|_| Bolt12SemanticError::InvalidCurrencyCode)?;
-				Some(Amount::Currency { iso4217_code, amount })
+				// In case of currency, we don't have access to currency conversion
+				// to interpret amount here. We will leave this to user to do in their code.
+				(Some(Amount::Currency { iso4217_code, amount }), None)
 			},
 		};
 
@@ -1391,7 +1393,7 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			chains,
 			metadata,
 			amount,
-			interpreted_amount: None,
+			interpreted_amount,
 			description,
 			features,
 			absolute_expiry,
