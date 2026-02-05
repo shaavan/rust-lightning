@@ -65,6 +65,7 @@
 //! # }
 //! ```
 
+use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -1108,6 +1109,7 @@ macro_rules! fields_accessor {
 
 impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
+	offer_resolution_methods!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
 
@@ -1127,7 +1129,9 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 
 impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
+	offer_resolution_methods!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
+
 	fields_accessor!(self, self.inner.contents);
 
 	#[cfg(not(c_bindings))]
@@ -2135,6 +2139,7 @@ mod tests {
 			.amount(Amount::Currency {
 				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
 				amount: 10,
+				interpreted_amount: None,
 			})
 			.build_unchecked()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2513,6 +2518,7 @@ mod tests {
 			.amount(Amount::Currency {
 				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
 				amount: 1000,
+				interpreted_amount: None,
 			})
 			.build_unchecked()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)

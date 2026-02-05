@@ -82,6 +82,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::invoice_request::CurrencyConversion;
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
@@ -101,6 +102,7 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU64;
 use core::str::FromStr;
 use core::time::Duration;
+use std::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice_request::InvoiceRequestBuilder;
@@ -659,6 +661,11 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 		$contents.amount()
 	}
 
+	/// The offer's interpreted amount.
+	pub fn offer_amount_msats(&$self) -> Result<Option<u64>, Bolt12SemanticError> {
+		$contents.offer_amount_msats()
+	}
+
 	/// A complete description of the purpose of the payment. Intended to be displayed to the user
 	/// but with the caveat that it has not been verified in any way.
 	pub fn description(&$self) -> Option<$crate::types::string::PrintableString<'_>> {
@@ -710,8 +717,31 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	}
 } }
 
+macro_rules! offer_resolution_methods { ($self: ident, $contents: expr) => {
+	/// Interprets a currency-denominated offer amount into millisatoshi using the
+	/// provided [`CurrencyConversion`] implementation.
+	///
+	/// This method is only relevant when the originating [`Offer`] specifies its
+	/// amount using [`Amount::Currency`]. In such cases, the currency amount must
+	/// be converted into millisatoshi before invoice construction or payment
+	/// resolution.
+	///
+	/// The interpreted value is stored locally and is not part of the serialized
+	/// BOLT 12 representation.
+	///
+	/// Callers that support currency-denominated offers are expected to invoke
+	/// this method prior to resolving or responding to the offer.
+	pub fn interpret_amount<CC: Deref>(&mut $self, currency_conversion: CC) -> Result<(), ()>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		$contents.interpret_amount(currency_conversion)
+	}
+} }
+
 impl Offer {
 	offer_accessors!(self, self.contents);
+	offer_resolution_methods!(self, self.contents);
 
 	/// Returns the id of the offer.
 	pub fn id(&self) -> OfferId {
@@ -896,6 +926,36 @@ impl OfferContents {
 		self.amount
 	}
 
+	pub fn interpret_amount<CC: Deref>(&mut self, currency_conversion: CC) -> Result<(), ()>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		if let Some(Amount::Currency { iso4217_code, amount, interpreted_amount }) =
+			&mut self.amount
+		{
+			let unit_conversion = currency_conversion.msats_per_minor_unit(*iso4217_code)?;
+			*interpreted_amount = Some(amount.saturating_mul(unit_conversion));
+		}
+
+		Ok(())
+	}
+
+	/// Returns the offer amount in mats.
+	///
+	/// Note:
+	///
+	/// If the original offer amount is in Currency, user have to first [`Self::interpret_amount`]
+	/// otherwise the function returns an Unsupported Currency Error.
+	pub fn offer_amount_msats(&self) -> Result<Option<u64>, Bolt12SemanticError> {
+		match self.amount {
+			None => Ok(None),
+			Some(Amount::Bitcoin { amount_msats }) => Ok(Some(amount_msats)),
+			Some(Amount::Currency { interpreted_amount, .. }) => {
+				interpreted_amount.ok_or(Bolt12SemanticError::UnsupportedCurrency).map(Some)
+			},
+		}
+	}
+
 	pub fn description(&self) -> Option<PrintableString<'_>> {
 		self.description.as_ref().map(|description| PrintableString(description))
 	}
@@ -933,11 +993,7 @@ impl OfferContents {
 	pub(super) fn check_amount_msats_for_quantity(
 		&self, amount_msats: Option<u64>, quantity: Option<u64>,
 	) -> Result<(), Bolt12SemanticError> {
-		let offer_amount_msats = match self.amount {
-			None => 0,
-			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
-		};
+		let offer_amount_msats = self.offer_amount_msats()?.unwrap_or(0);
 
 		if !self.expects_quantity() || quantity.is_some() {
 			let expected_amount_msats = offer_amount_msats
@@ -1047,7 +1103,7 @@ impl OfferContents {
 		let (currency, amount) = match &self.amount {
 			None => (None, None),
 			Some(Amount::Bitcoin { amount_msats }) => (None, Some(*amount_msats)),
-			Some(Amount::Currency { iso4217_code, amount }) => {
+			Some(Amount::Currency { iso4217_code, amount, interpreted_amount: _ }) => {
 				(Some(iso4217_code.as_bytes()), Some(*amount))
 			},
 		};
@@ -1122,6 +1178,16 @@ pub enum Amount {
 		iso4217_code: CurrencyCode,
 		/// The amount in the currency unit adjusted by the ISO 4217 exponent (e.g., USD cents).
 		amount: u64,
+		/// The locally interpreted value of this currency amount in millisatoshi.
+		///
+		/// This field is not serialized and is not part of the BOLT 12 encoding.
+		/// It is populated via local currency conversion logic and represents
+		/// the node's view of the equivalent bitcoin amount.
+		///
+		/// Nodes supporting currency-denominated offers must explicitly
+		/// interpret the amount prior to invoice construction or payment
+		/// handling.
+		interpreted_amount: Option<u64>,
 	},
 }
 
@@ -1314,7 +1380,9 @@ impl TryFrom<FullOfferTlvStream> for OfferContents {
 			(Some(currency_bytes), Some(amount)) => {
 				let iso4217_code = CurrencyCode::new(currency_bytes)
 					.map_err(|_| Bolt12SemanticError::InvalidCurrencyCode)?;
-				Some(Amount::Currency { iso4217_code, amount })
+				// In case of currency, we don't have access to currency conversion
+				// to interpret amount here. We will leave this to user to do in their code.
+				Some(Amount::Currency { iso4217_code, amount, interpreted_amount: None })
 			},
 		};
 
@@ -1419,6 +1487,7 @@ mod tests {
 		assert!(offer.supports_chain(ChainHash::using_genesis_block(Network::Bitcoin)));
 		assert_eq!(offer.metadata(), None);
 		assert_eq!(offer.amount(), None);
+		assert_eq!(offer.offer_amount_msats(), Ok(None));
 		assert_eq!(offer.description(), None);
 		assert_eq!(offer.offer_features(), &OfferFeatures::empty());
 		assert_eq!(offer.absolute_expiry(), None);
@@ -1665,7 +1734,7 @@ mod tests {
 	fn builds_offer_with_amount() {
 		let bitcoin_amount = Amount::Bitcoin { amount_msats: 1000 };
 		let currency_amount =
-			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 };
+			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10, interpreted_amount: None };
 
 		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).build().unwrap();
 		let tlv_stream = offer.as_tlv_stream();
