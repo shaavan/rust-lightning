@@ -22,7 +22,7 @@ use crate::offers::invoice::{
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{CurrencyConversion, InvoiceRequest};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -42,6 +42,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
 use core::time::Duration;
+use std::ops::Deref;
 
 #[cfg(feature = "std")]
 use crate::offers::invoice::is_expired;
@@ -497,6 +498,17 @@ impl InvoiceContents {
 
 	fn amount(&self) -> Option<Amount> {
 		self.offer.amount()
+	}
+
+	pub fn interpreted_amount(&self) -> Option<u64> {
+		self.offer.interpreted_amount()
+	}
+
+	pub fn interpret_amount<CC: Deref>(&mut self, currency_conversion: CC) -> Result<(), ()>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		self.offer.interpret_amount(currency_conversion)
 	}
 
 	fn offer_features(&self) -> &OfferFeatures {
