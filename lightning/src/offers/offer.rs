@@ -410,7 +410,7 @@ macro_rules! offer_builder_methods { (
 					return Err(Bolt12SemanticError::InvalidAmount);
 				}
 			},
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			Some(Amount::Currency { .. }) => {},
 			None => {},
 		}
 
