@@ -93,7 +93,7 @@ use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
 use crate::offers::flow::{HeldHtlcReplyPath, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
+use crate::offers::invoice_request::{DefaultCurrencyConversion, InvoiceRequest, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
@@ -5657,14 +5657,14 @@ where
 		self.flow.enqueue_static_invoice(invoice, responder)
 	}
 
-	fn initiate_async_payment(
+	fn initiate_async_payment_(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId,
 	) -> Result<(), Bolt12PaymentError> {
 		let mut res = Ok(());
 		PersistenceNotifierGuard::optionally_notify(self, || {
 			let best_block_height = self.best_block.read().unwrap().height;
 			let features = self.bolt12_invoice_features();
-			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
+			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received_(
 				invoice,
 				payment_id,
 				features,
@@ -13147,7 +13147,7 @@ where
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
-		let builder = self.flow.create_invoice_builder_from_refund(
+		let builder = self.flow.create_invoice_builder_from_refund_(
 			&self.router,
 			entropy,
 			refund,
@@ -15318,7 +15318,9 @@ where
 
 				let (result, context) = match invoice_request {
 					InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
+						request.interpret_amount(&DefaultCurrencyConversion);
+
+						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys_(
 							&self.router,
 							&request,
 							self.list_usable_channels(),
@@ -15342,7 +15344,9 @@ where
 						}
 					},
 					InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => {
-						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
+						request.interpret_amount(&DefaultCurrencyConversion);
+
+						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys_(
 							&self.router,
 							&request,
 							self.list_usable_channels(),
@@ -15415,7 +15419,8 @@ where
 					Some(OffersContext::OutboundPayment { payment_id, .. }) => payment_id,
 					_ => return None
 				};
-				let res = self.initiate_async_payment(&invoice, payment_id);
+				invoice.interpret_amount(&DefaultCurrencyConversion);
+				let res = self.initiate_async_payment_(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, self.logger);
 			},
 			OffersMessage::InvoiceError(invoice_error) => {

@@ -892,7 +892,7 @@ where
 	/// blinded path can be constructed.
 	///
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
-	pub fn create_invoice_builder_from_refund<'a, ES: Deref, R: Deref, F>(
+	pub fn create_invoice_builder_from_refund_<'a, ES: Deref, R: Deref, F>(
 		&'a self, router: &R, entropy_source: ES, refund: &'a Refund,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
@@ -926,7 +926,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = refund.respond_using_derived_keys(
+		let builder = refund.respond_using_derived_keys_(
 			payment_paths,
 			payment_hash,
 			expanded_key,
