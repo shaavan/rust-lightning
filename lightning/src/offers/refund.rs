@@ -635,7 +635,7 @@ macro_rules! respond_with_derived_signing_pubkey_methods { ($self: ident, $build
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 
-		$self.respond_using_derived_keys_no_std_(
+		$self.respond_using_derived_keys_no_std(
 			payment_paths, payment_hash, created_at, expanded_key, entropy_source
 		)
 	}
@@ -648,7 +648,7 @@ macro_rules! respond_with_derived_signing_pubkey_methods { ($self: ident, $build
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn respond_using_derived_keys_no_std_<ES: Deref>(
+	pub fn respond_using_derived_keys_no_std<ES: Deref>(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration, expanded_key: &ExpandedKey, entropy_source: ES
 	) -> Result<$builder, Bolt12SemanticError>

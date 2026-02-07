@@ -359,6 +359,7 @@ mod tests {
 			.amount(Amount::Currency {
 				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
 				amount: 100,
+				interpreted_amount: None,
 			})
 			.build_unchecked()
 			// Override the payer metadata and signing pubkey to match the test vectors

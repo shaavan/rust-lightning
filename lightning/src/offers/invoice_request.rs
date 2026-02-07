@@ -852,7 +852,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 
 	#[cfg(test)]
 	#[allow(dead_code)]
-	pub(super) fn respond_with_no_std_using_signing_pubkey_(
+	pub(super) fn respond_with_no_std_using_signing_pubkey(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration, signing_pubkey: PublicKey
 	) -> Result<$builder, Bolt12SemanticError> {
@@ -1038,7 +1038,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 
-		$self.respond_using_derived_keys_no_std_(payment_paths, payment_hash, created_at)
+		$self.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at)
 	}
 
 	/// Creates an [`InvoiceBuilder`] for the request using the given required fields and that uses
@@ -1050,7 +1050,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn respond_using_derived_keys_no_std_(
+	pub fn respond_using_derived_keys_no_std(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError> {
