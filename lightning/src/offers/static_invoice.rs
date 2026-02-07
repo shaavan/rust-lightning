@@ -9,7 +9,6 @@
 
 //! Data structures and encoding for static BOLT 12 invoices.
 
-use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -42,6 +41,7 @@ use bitcoin::address::Address;
 use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 use core::time::Duration;
 
 #[cfg(feature = "std")]
