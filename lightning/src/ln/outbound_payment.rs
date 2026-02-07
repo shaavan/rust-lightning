@@ -1115,7 +1115,7 @@ where
 		Ok(())
 	}
 
-	pub(super) fn static_invoice_received_<ES: Deref>(
+	pub(super) fn static_invoice_received<ES: Deref>(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId, features: Bolt12InvoiceFeatures,
 		best_block_height: u32, duration_since_epoch: Duration, entropy_source: ES,
 		pending_events: &Mutex<VecDeque<(events::Event, Option<EventCompletionAction>)>>,

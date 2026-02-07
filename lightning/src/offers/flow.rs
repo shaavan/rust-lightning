@@ -892,7 +892,7 @@ where
 	/// blinded path can be constructed.
 	///
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
-	pub fn create_invoice_builder_from_refund_<'a, ES: Deref, R: Deref, F>(
+	pub fn create_invoice_builder_from_refund<'a, ES: Deref, R: Deref, F>(
 		&'a self, router: &R, entropy_source: ES, refund: &'a Refund,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<InvoiceBuilder<'a, DerivedSigningPubkey>, Bolt12SemanticError>
@@ -926,7 +926,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = refund.respond_using_derived_keys_(
+		let builder = refund.respond_using_derived_keys(
 			payment_paths,
 			payment_hash,
 			expanded_key,
@@ -963,7 +963,7 @@ where
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_with_keys_<'a, R: Deref, F>(
+	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, R: Deref, F>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
@@ -995,7 +995,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys_(payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
@@ -1025,7 +1025,7 @@ where
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_without_keys_<'a, R: Deref, F>(
+	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, R: Deref, F>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>

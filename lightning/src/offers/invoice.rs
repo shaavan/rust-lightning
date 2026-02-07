@@ -313,7 +313,7 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
-		pub(super) fn for_offer_using_keys_(
+		pub(super) fn for_offer_using_keys(
 			invoice_request: &'a InvoiceRequest, payment_paths: Vec<BlindedPaymentPath>,
 			created_at: Duration, payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {

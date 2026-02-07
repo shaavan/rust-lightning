@@ -799,8 +799,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// Creates an [`InvoiceBuilder`] for the request with the given required fields and using the
 	/// [`Duration`] since [`std::time::SystemTime::UNIX_EPOCH`] as the creation time.
 	///
-	/// See [`InvoiceRequest::respond_with_no_std`] for further details on [`Amount::Currency`] suport,
-	/// and where the aforementioned creation time is used for the `created_at` parameter.
+	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
 	///
 	/// [`Duration`]: core::time::Duration
 	#[cfg(feature = "std")]
@@ -1031,7 +1030,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
-	pub fn respond_using_derived_keys_(
+	pub fn respond_using_derived_keys(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError> {
 		let created_at = std::time::SystemTime::now()
@@ -1065,7 +1064,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			None => return Err(Bolt12SemanticError::MissingIssuerSigningPubkey),
 		}
 
-		<$builder>::for_offer_using_keys_(
+		<$builder>::for_offer_using_keys(
 			&$self.inner, payment_paths, created_at, payment_hash, keys
 		)
 	}

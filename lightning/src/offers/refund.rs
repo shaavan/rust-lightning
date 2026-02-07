@@ -624,7 +624,7 @@ macro_rules! respond_with_derived_signing_pubkey_methods { ($self: ident, $build
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
-	pub fn respond_using_derived_keys_<ES: Deref>(
+	pub fn respond_using_derived_keys<ES: Deref>(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		expanded_key: &ExpandedKey, entropy_source: ES
 	) -> Result<$builder, Bolt12SemanticError>

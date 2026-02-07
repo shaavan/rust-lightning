@@ -5657,14 +5657,14 @@ where
 		self.flow.enqueue_static_invoice(invoice, responder)
 	}
 
-	fn initiate_async_payment_(
+	fn initiate_async_payment(
 		&self, invoice: &StaticInvoice, payment_id: PaymentId,
 	) -> Result<(), Bolt12PaymentError> {
 		let mut res = Ok(());
 		PersistenceNotifierGuard::optionally_notify(self, || {
 			let best_block_height = self.best_block.read().unwrap().height;
 			let features = self.bolt12_invoice_features();
-			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received_(
+			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
 				invoice,
 				payment_id,
 				features,
@@ -13147,7 +13147,7 @@ where
 
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 
-		let builder = self.flow.create_invoice_builder_from_refund_(
+		let builder = self.flow.create_invoice_builder_from_refund(
 			&self.router,
 			entropy,
 			refund,
@@ -15322,7 +15322,7 @@ where
 							return None
 						}
 
-						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys_(
+						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
 							self.list_usable_channels(),
@@ -15350,7 +15350,7 @@ where
 							return None
 						}
 
-						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys_(
+						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
 							self.list_usable_channels(),
@@ -15426,7 +15426,7 @@ where
 				if let Err(_) = invoice.interpret_amount(&DefaultCurrencyConversion) {
 					return None
 				}
-				let res = self.initiate_async_payment_(&invoice, payment_id);
+				let res = self.initiate_async_payment(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, self.logger);
 			},
 			OffersMessage::InvoiceError(invoice_error) => {
