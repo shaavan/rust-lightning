@@ -9,6 +9,7 @@
 
 //! Data structures and encoding for static BOLT 12 invoices.
 
+use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -22,7 +23,7 @@ use crate::offers::invoice::{
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
-use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::invoice_request::{CurrencyConversion, InvoiceRequest};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -388,6 +389,7 @@ where
 }
 
 impl StaticInvoice {
+	offer_resolution_methods!(self, self.contents.offer);
 	invoice_accessors_common!(self, self.contents, StaticInvoice);
 	invoice_accessors_signing_pubkey!(self, self.contents, StaticInvoice);
 	invoice_accessors!(self, self.contents);
