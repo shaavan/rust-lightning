@@ -15317,8 +15317,10 @@ where
 				};
 
 				let (result, context) = match invoice_request {
-					InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-						request.interpret_amount(&DefaultCurrencyConversion);
+					InvoiceRequestVerifiedFromOffer::DerivedKeys(mut request) => {
+						if let Err(_) = request.interpret_amount(&DefaultCurrencyConversion) {
+							return None
+						}
 
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys_(
 							&self.router,
@@ -15343,8 +15345,10 @@ where
 							},
 						}
 					},
-					InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => {
-						request.interpret_amount(&DefaultCurrencyConversion);
+					InvoiceRequestVerifiedFromOffer::ExplicitKeys(mut request) => {
+						if let Err(_) = request.interpret_amount(&DefaultCurrencyConversion) {
+							return None
+						}
 
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys_(
 							&self.router,
@@ -15414,12 +15418,14 @@ where
 				let res = self.send_payment_for_verified_bolt12_invoice(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, logger);
 			},
-			OffersMessage::StaticInvoice(invoice) => {
+			OffersMessage::StaticInvoice(mut invoice) => {
 				let payment_id = match context {
 					Some(OffersContext::OutboundPayment { payment_id, .. }) => payment_id,
 					_ => return None
 				};
-				invoice.interpret_amount(&DefaultCurrencyConversion);
+				if let Err(_) = invoice.interpret_amount(&DefaultCurrencyConversion) {
+					return None
+				}
 				let res = self.initiate_async_payment_(&invoice, payment_id);
 				handle_pay_invoice_res!(res, invoice, self.logger);
 			},
