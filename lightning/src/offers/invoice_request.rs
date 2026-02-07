@@ -857,7 +857,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 
 	#[cfg(test)]
 	#[allow(dead_code)]
-	pub(super) fn respond_with_no_std_using_signing_pubkey(
+	pub(super) fn respond_with_no_std_using_signing_pubkey_(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration, signing_pubkey: PublicKey
 	) -> Result<$builder, Bolt12SemanticError> {
@@ -1051,6 +1051,13 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// the same [`ExpandedKey`] as the one used to create the offer.
 	///
 	/// See [`InvoiceRequest::respond_with_no_std`] for further details.
+	/// 
+	/// ## Note
+	///
+	/// If the originating [`Offer`] specifies its amount using [`Amount::Currency`], the amount
+	/// must be interpreted via [`Offer::interpret_amount`] prior to invoking this method.
+	/// Otherwise, invoice construction will fail with
+	/// [`Bolt12SemanticError::UnsupportedCurrency`].
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn respond_using_derived_keys_no_std(
