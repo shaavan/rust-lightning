@@ -241,7 +241,7 @@ impl SigningPubkeyStrategy for DerivedSigningPubkey {}
 macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
-		pub(super) fn for_offer_(
+		pub(super) fn for_offer(
 			invoice_request: &'a InvoiceRequest, payment_paths: Vec<BlindedPaymentPath>,
 			created_at: Duration, payment_hash: PaymentHash, signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError> {
@@ -334,7 +334,7 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
-		pub(super) fn for_refund_using_keys(
+		pub(super) fn for_refund_using_keys_(
 			refund: &'a Refund, payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
 			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {
@@ -393,7 +393,7 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats_(
+		pub(crate) fn amount_msats(
 			invoice_request: &InvoiceRequest,
 		) -> Result<u64, Bolt12SemanticError> {
 			let requested_msats = invoice_request.amount_msats();

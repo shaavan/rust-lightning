@@ -65,7 +65,6 @@
 //! # }
 //! ```
 
-use core::ops::Deref;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
@@ -97,6 +96,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::network::Network;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice::InvoiceBuilder;
@@ -799,8 +799,8 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// Creates an [`InvoiceBuilder`] for the request with the given required fields and using the
 	/// [`Duration`] since [`std::time::SystemTime::UNIX_EPOCH`] as the creation time.
 	///
-	/// See [`InvoiceRequest::respond_with_no_std`] for further details where the aforementioned
-	/// creation time is used for the `created_at` parameter.
+	/// See [`InvoiceRequest::respond_with_no_std`] for further details on [`Amount::Currency`] suport,
+	/// and where the aforementioned creation time is used for the `created_at` parameter.
 	///
 	/// [`Duration`]: core::time::Duration
 	#[cfg(feature = "std")]
@@ -830,12 +830,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// Errors if the request contains unknown required features.
 	///
-	/// # Note
-	///
-	/// If the originating [`Offer`] was created using [`OfferBuilder::deriving_signing_pubkey`],
-	/// then first use [`InvoiceRequest::verify_using_metadata`] or
-	/// [`InvoiceRequest::verify_using_recipient_data`] and then [`InvoiceRequestVerifiedFromOffer`] methods
-	/// instead.
+	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
 	/// [`OfferBuilder::deriving_signing_pubkey`]: crate::offers::offer::OfferBuilder::deriving_signing_pubkey
@@ -1036,14 +1031,14 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
-	pub fn respond_using_derived_keys(
+	pub fn respond_using_derived_keys_(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError> {
 		let created_at = std::time::SystemTime::now()
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 
-		$self.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at)
+		$self.respond_using_derived_keys_no_std_(payment_paths, payment_hash, created_at)
 	}
 
 	/// Creates an [`InvoiceBuilder`] for the request using the given required fields and that uses
@@ -1051,16 +1046,11 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// the same [`ExpandedKey`] as the one used to create the offer.
 	///
 	/// See [`InvoiceRequest::respond_with_no_std`] for further details.
-	/// 
-	/// ## Note
 	///
-	/// If the originating [`Offer`] specifies its amount using [`Amount::Currency`], the amount
-	/// must be interpreted via [`Offer::interpret_amount`] prior to invoking this method.
-	/// Otherwise, invoice construction will fail with
-	/// [`Bolt12SemanticError::UnsupportedCurrency`].
+	/// See [`Offer::interpret_amount`] for details on supporting currency conversion.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn respond_using_derived_keys_no_std(
+	pub fn respond_using_derived_keys_no_std_(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError> {
@@ -1075,7 +1065,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			None => return Err(Bolt12SemanticError::MissingIssuerSigningPubkey),
 		}
 
-		<$builder>::for_offer_using_keys(
+		<$builder>::for_offer_using_keys_(
 			&$self.inner, payment_paths, created_at, payment_hash, keys
 		)
 	}
