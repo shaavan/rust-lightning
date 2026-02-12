@@ -71,6 +71,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::currency::DefaultCurrencyConversion;
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
@@ -813,7 +814,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 			None => return Err(Bolt12SemanticError::MissingIssuerSigningPubkey),
 		};
 
-		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey)
+		<$builder>::for_offer(&$contents, &DefaultCurrencyConversion, payment_paths, created_at, payment_hash, signing_pubkey)
 	}
 
 	#[cfg(test)]
@@ -828,7 +829,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		<$builder>::for_offer(&$contents, payment_paths, created_at, payment_hash, signing_pubkey)
+		<$builder>::for_offer(&$contents, &DefaultCurrencyConversion, payment_paths, created_at, payment_hash, signing_pubkey)
 	}
 } }
 
@@ -1030,7 +1031,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		}
 
 		<$builder>::for_offer_using_keys(
-			&$self.inner, payment_paths, created_at, payment_hash, keys
+			&$self.inner, &DefaultCurrencyConversion, payment_paths, created_at, payment_hash, keys
 		)
 	}
 } }

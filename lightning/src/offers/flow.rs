@@ -35,6 +35,7 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::ln::channelmanager::{InterceptId, PaymentId, CLTV_FAR_FAR_AWAY};
 use crate::ln::inbound_payment;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
+use crate::offers::currency::DefaultCurrencyConversion;
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
 	DEFAULT_RELATIVE_EXPIRY,
@@ -91,6 +92,8 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
+	pub(crate) currency_conversion: DefaultCurrencyConversion,
+
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
 	#[cfg(any(test, feature = "_test_utils"))]
@@ -131,6 +134,8 @@ where
 
 			secp_ctx,
 			message_router,
+
+			currency_conversion: DefaultCurrencyConversion,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -969,10 +974,13 @@ where
 		R::Target: Router,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
+		let conversion = &self.currency_conversion;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1029,10 +1037,13 @@ where
 		R::Target: Router,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
+		let conversion = &self.currency_conversion;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
