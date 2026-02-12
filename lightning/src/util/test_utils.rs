@@ -32,7 +32,9 @@ use crate::ln::msgs::{BaseMessageHandler, MessageSendEvent};
 use crate::ln::script::ShutdownScript;
 use crate::ln::types::ChannelId;
 use crate::ln::{msgs, wire};
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::UnsignedBolt12Invoice;
+use crate::offers::offer::CurrencyCode;
 use crate::onion_message::messenger::{
 	DefaultMessageRouter, Destination, MessageRouter, NodeIdMessageRouter, OnionMessagePath,
 };
@@ -89,6 +91,7 @@ use crate::sync::{Arc, Mutex};
 use alloc::boxed::Box;
 use core::future::Future;
 use core::mem;
+use core::ops::Deref;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
@@ -444,6 +447,30 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 				secp_ctx,
 			),
 		}
+	}
+}
+
+pub struct TestCurrencyConversion;
+
+impl Deref for TestCurrencyConversion {
+	type Target = TestCurrencyConversion;
+
+	fn deref(&self) -> &Self::Target {
+		self
+	}
+}
+
+impl CurrencyConversion for TestCurrencyConversion {
+	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		if iso4217_code.as_str() == "USD" {
+			Ok(1_000) // 1 cent = 1000 msats (test-only fixed rate)
+		} else {
+			Err(())
+		}
+	}
+
+	fn tolerance_percent(&self) -> u8 {
+		0
 	}
 }
 
