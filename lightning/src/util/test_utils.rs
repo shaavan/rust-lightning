@@ -32,7 +32,9 @@ use crate::ln::msgs::{BaseMessageHandler, MessageSendEvent};
 use crate::ln::script::ShutdownScript;
 use crate::ln::types::ChannelId;
 use crate::ln::{msgs, wire};
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::UnsignedBolt12Invoice;
+use crate::offers::offer::CurrencyCode;
 use crate::onion_message::messenger::{
 	DefaultMessageRouter, Destination, MessageRouter, NodeIdMessageRouter, OnionMessagePath,
 };
@@ -444,6 +446,18 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 				secp_ctx,
 			),
 		}
+	}
+}
+
+pub struct TestCurrencyConversion {}
+
+impl CurrencyConversion for TestCurrencyConversion {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		Err(())
+	}
+
+	fn tolerance_percent(&self) -> u8 {
+		0
 	}
 }
 

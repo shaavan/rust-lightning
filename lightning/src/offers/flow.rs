@@ -35,7 +35,7 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::ln::channelmanager::{InterceptId, PaymentId, CLTV_FAR_FAR_AWAY};
 use crate::ln::inbound_payment;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::currency::DefaultCurrencyConversion;
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
 	DEFAULT_RELATIVE_EXPIRY,
@@ -75,9 +75,10 @@ use {
 ///
 /// [`OffersMessageFlow`] is parameterized by a [`MessageRouter`], which is responsible
 /// for finding message paths when initiating and retrying onion messages.
-pub struct OffersMessageFlow<MR: Deref, L: Deref>
+pub struct OffersMessageFlow<MR: Deref, CC: Deref, L: Deref>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 	L::Target: Logger,
 {
 	chain_hash: ChainHash,
@@ -92,7 +93,7 @@ where
 	secp_ctx: Secp256k1<secp256k1::All>,
 	message_router: MR,
 
-	pub(crate) currency_conversion: DefaultCurrencyConversion,
+	pub(crate) currency_conversion: CC,
 
 	#[cfg(not(any(test, feature = "_test_utils")))]
 	pending_offers_messages: Mutex<Vec<(OffersMessage, MessageSendInstructions)>>,
@@ -110,9 +111,10 @@ where
 	logger: L,
 }
 
-impl<MR: Deref, L: Deref> OffersMessageFlow<MR, L>
+impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 	L::Target: Logger,
 {
 	/// Creates a new [`OffersMessageFlow`]
@@ -120,7 +122,7 @@ where
 		chain_hash: ChainHash, best_block: BestBlock, our_network_pubkey: PublicKey,
 		current_timestamp: u32, inbound_payment_key: inbound_payment::ExpandedKey,
 		receive_auth_key: ReceiveAuthKey, secp_ctx: Secp256k1<secp256k1::All>, message_router: MR,
-		logger: L,
+		currency_conversion: CC, logger: L,
 	) -> Self {
 		Self {
 			chain_hash,
@@ -135,7 +137,7 @@ where
 			secp_ctx,
 			message_router,
 
-			currency_conversion: DefaultCurrencyConversion,
+			currency_conversion,
 
 			pending_offers_messages: Mutex::new(Vec::new()),
 			pending_async_payments_messages: Mutex::new(Vec::new()),
@@ -271,9 +273,10 @@ const DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration = Duration::from_secs(365 * 2
 pub(crate) const TEST_DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration =
 	DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY;
 
-impl<MR: Deref, L: Deref> OffersMessageFlow<MR, L>
+impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 	L::Target: Logger,
 {
 	/// [`BlindedMessagePath`]s for an async recipient to communicate with this node and interactively
@@ -441,9 +444,10 @@ pub enum HeldHtlcReplyPath {
 	},
 }
 
-impl<MR: Deref, L: Deref> OffersMessageFlow<MR, L>
+impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
+	CC::Target: CurrencyConversion,
 	L::Target: Logger,
 {
 	/// Verifies an [`InvoiceRequest`] using the provided [`OffersContext`] or the [`InvoiceRequest::metadata`].
@@ -974,12 +978,12 @@ where
 		R::Target: Router,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
-		let conversion = &self.currency_conversion;
+		let conversion = &*self.currency_conversion;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 			&invoice_request.inner,
-			conversion
+			conversion,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
@@ -1001,11 +1005,7 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(
-			conversion,
-			payment_paths,
-			payment_hash,
-		);
+		let builder = invoice_request.respond_using_derived_keys(conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
 			conversion,
@@ -1042,12 +1042,12 @@ where
 		R::Target: Router,
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
-		let conversion = &self.currency_conversion;
+		let conversion = &*self.currency_conversion;
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
 		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 			&invoice_request.inner,
-			conversion
+			conversion,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
