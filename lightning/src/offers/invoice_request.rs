@@ -161,8 +161,15 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 		}
 
 		/// Builds a signed [`InvoiceRequest`] after checking for valid semantics.
-		pub fn build_and_sign($self: $self_type) -> Result<InvoiceRequest, Bolt12SemanticError> {
-			let (unsigned_invoice_request, keys, secp_ctx) = $self.build_with_checks()?;
+		pub fn build_and_sign<CC: Deref>(
+			$self: $self_type,
+			currency_conversion: CC,
+		) -> Result<InvoiceRequest, Bolt12SemanticError>
+		where
+			CC::Target: CurrencyConversion,
+		{
+			let (unsigned_invoice_request, keys, secp_ctx) =
+				$self.build_with_checks(currency_conversion)?;
 			#[cfg(c_bindings)]
 			let mut unsigned_invoice_request = unsigned_invoice_request;
 			debug_assert!(keys.is_some());
@@ -223,9 +230,14 @@ macro_rules! invoice_request_builder_methods { (
 	/// Successive calls to this method will override the previous setting.
 	///
 	/// [`quantity`]: Self::quantity
-	pub fn amount_msats($($self_mut)* $self: $self_type, amount_msats: u64) -> Result<$return_type, Bolt12SemanticError> {
+	pub fn amount_msats<CC: Deref>(
+		$($self_mut)* $self: $self_type, currency_conversion: CC, amount_msats: u64,
+	) -> Result<$return_type, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			Some(amount_msats), $self.invoice_request.quantity
+			currency_conversion, Some(amount_msats), $self.invoice_request.quantity
 		)?;
 		$self.invoice_request.amount_msats = Some(amount_msats);
 		Ok($return_value)
@@ -257,10 +269,13 @@ macro_rules! invoice_request_builder_methods { (
 		$return_value
 	}
 
-	fn build_with_checks($($self_mut)* $self: $self_type) -> Result<
+	fn build_with_checks<CC: Deref>($($self_mut)* $self: $self_type, currency_conversion: CC) -> Result<
 		(UnsignedInvoiceRequest, Option<Keypair>, Option<&'b Secp256k1<$secp_context>>),
 		Bolt12SemanticError
-	> {
+	>
+	where
+		CC::Target: CurrencyConversion,
+	{
 		#[cfg(feature = "std")] {
 			if $self.offer.is_expired() {
 				return Err(Bolt12SemanticError::AlreadyExpired);
@@ -282,7 +297,9 @@ macro_rules! invoice_request_builder_methods { (
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			$self.invoice_request.amount_msats, $self.invoice_request.quantity
+			currency_conversion,
+			$self.invoice_request.amount_msats,
+			$self.invoice_request.quantity,
 		)?;
 
 		Ok($self.build_without_checks())
@@ -1474,6 +1491,7 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 		}
 
 		offer.check_quantity(quantity)?;
+		// Question: How to handle currency conversion here?
 		offer.check_amount_msats_for_quantity(amount, quantity)?;
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);

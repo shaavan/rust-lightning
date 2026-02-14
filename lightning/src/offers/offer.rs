@@ -932,13 +932,21 @@ impl OfferContents {
 		self.paths.as_ref().map(|paths| paths.as_slice()).unwrap_or(&[])
 	}
 
-	pub(super) fn check_amount_msats_for_quantity(
-		&self, amount_msats: Option<u64>, quantity: Option<u64>,
-	) -> Result<(), Bolt12SemanticError> {
+	pub(super) fn check_amount_msats_for_quantity<CC: Deref>(
+		&self, currency_conversion: CC, amount_msats: Option<u64>, quantity: Option<u64>,
+	) -> Result<(), Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
 		let offer_amount_msats = match self.amount {
 			None => 0,
 			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			Some(Amount::Currency { iso4217_code, amount }) => {
+				let unit_conversion = currency_conversion
+					.msats_per_minor_unit(iso4217_code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+				unit_conversion.checked_mul(amount).ok_or(Bolt12SemanticError::InvalidAmount)?
+			},
 		};
 
 		if !self.expects_quantity() || quantity.is_some() {
