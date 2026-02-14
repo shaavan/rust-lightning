@@ -452,8 +452,12 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 pub struct TestCurrencyConversion {}
 
 impl CurrencyConversion for TestCurrencyConversion {
-	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
-		Err(())
+	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		if iso4217_code.as_str() == "USD" {
+			Ok(1_000) // 1 cent = 1000 msats (test-only fixed rate)
+		} else {
+			Err(())
+		}
 	}
 
 	fn tolerance_percent(&self) -> u8 {
