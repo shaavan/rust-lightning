@@ -13110,7 +13110,7 @@ where
 		};
 		let builder = match amount_msats {
 			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
+			Some(amount_msats) => builder.amount_msats(&*self.flow.currency_conversion,amount_msats)?,
 		};
 		let builder = match payer_note {
 			None => builder,
