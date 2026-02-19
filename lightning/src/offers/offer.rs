@@ -787,20 +787,25 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 	pub fn request_invoice<
 		'a, 'b,
 		#[cfg(not(c_bindings))]
-		T: secp256k1::Signing
+		T: secp256k1::Signing,
+		CC: Deref
 	>(
 		&'a $self, expanded_key: &ExpandedKey, nonce: Nonce,
 		#[cfg(not(c_bindings))]
 		secp_ctx: &'b Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &'b Secp256k1<secp256k1::All>,
-		payment_id: PaymentId
-	) -> Result<$builder, Bolt12SemanticError> {
+		payment_id: PaymentId,
+		currency_conversion: CC,
+	) -> Result<$builder, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
 		if $offer.offer_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id);
+		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id, currency_conversion);
 		if let Some(hrn) = $hrn {
 			#[cfg(c_bindings)]
 			{
@@ -817,7 +822,7 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 
 #[cfg(not(c_bindings))]
 impl Offer {
-	request_invoice_derived_signing_pubkey!(self, self, InvoiceRequestBuilder<'a, 'b, T>, None);
+	request_invoice_derived_signing_pubkey!(self, self, InvoiceRequestBuilder<'a, 'b, T, CC>, None);
 }
 
 #[cfg(not(c_bindings))]
@@ -825,7 +830,7 @@ impl OfferFromHrn {
 	request_invoice_derived_signing_pubkey!(
 		self,
 		self.offer,
-		InvoiceRequestBuilder<'a, 'b, T>,
+		InvoiceRequestBuilder<'a, 'b, T, CC>,
 		Some(self.hrn)
 	);
 }
@@ -932,13 +937,21 @@ impl OfferContents {
 		self.paths.as_ref().map(|paths| paths.as_slice()).unwrap_or(&[])
 	}
 
-	pub(super) fn check_amount_msats_for_quantity(
-		&self, amount_msats: Option<u64>, quantity: Option<u64>,
-	) -> Result<(), Bolt12SemanticError> {
+	pub(super) fn check_amount_msats_for_quantity<CC: Deref>(
+		&self, currency_conversion: CC, amount_msats: Option<u64>, quantity: Option<u64>,
+	) -> Result<(), Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
 		let offer_amount_msats = match self.amount {
 			None => 0,
 			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			Some(Amount::Currency { iso4217_code, amount }) => {
+				let unit_conversion = currency_conversion
+					.msats_per_minor_unit(iso4217_code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+				unit_conversion.checked_mul(amount).ok_or(Bolt12SemanticError::InvalidAmount)?
+			},
 		};
 
 		if !self.expects_quantity() || quantity.is_some() {

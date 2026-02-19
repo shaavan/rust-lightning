@@ -120,11 +120,15 @@ pub(super) const IV_BYTES: &[u8; IV_LEN] = b"LDK Invreq ~~~~~";
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 ///
 /// [module-level documentation]: self
-pub struct InvoiceRequestBuilder<'a, 'b, T: secp256k1::Signing> {
+pub struct InvoiceRequestBuilder<'a, 'b, T: secp256k1::Signing, CC: Deref>
+where
+	CC::Target: CurrencyConversion,
+{
 	offer: &'a Offer,
 	invoice_request: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: Option<PublicKey>,
 	secp_ctx: Option<&'b Secp256k1<T>>,
+	currency_conversion: CC,
 }
 
 /// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
@@ -148,6 +152,7 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 		pub(super) fn deriving_signing_pubkey(
 			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce,
 			secp_ctx: &'b Secp256k1<$secp_context>, payment_id: PaymentId,
+			currency_conversion: CC,
 		) -> Self {
 			let payment_id = Some(payment_id);
 			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
@@ -157,6 +162,7 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 				invoice_request: Self::create_contents(offer, metadata),
 				payer_signing_pubkey: None,
 				secp_ctx: Some(secp_ctx),
+				currency_conversion,
 			}
 		}
 
@@ -225,7 +231,7 @@ macro_rules! invoice_request_builder_methods { (
 	/// [`quantity`]: Self::quantity
 	pub fn amount_msats($($self_mut)* $self: $self_type, amount_msats: u64) -> Result<$return_type, Bolt12SemanticError> {
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			Some(amount_msats), $self.invoice_request.quantity
+			&*$self.currency_conversion, Some(amount_msats), $self.invoice_request.quantity
 		)?;
 		$self.invoice_request.amount_msats = Some(amount_msats);
 		Ok($return_value)
@@ -282,7 +288,7 @@ macro_rules! invoice_request_builder_methods { (
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			$self.invoice_request.amount_msats, $self.invoice_request.quantity
+			$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
 
 		Ok($self.build_without_checks())
@@ -402,7 +408,10 @@ macro_rules! invoice_request_builder_test_methods { (
 	}
 } }
 
-impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestBuilder<'a, 'b, T> {
+impl<'a, 'b, T: secp256k1::Signing, CC: Deref> InvoiceRequestBuilder<'a, 'b, T, CC>
+where
+	CC::Target: CurrencyConversion,
+{
 	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, Self, T);
 	invoice_request_builder_methods!(self, Self, Self, self, T, mut);
 
@@ -1474,7 +1483,8 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 		}
 
 		offer.check_quantity(quantity)?;
-		offer.check_amount_msats_for_quantity(amount, quantity)?;
+		// Question: How to handle currency conversion here?
+		offer.check_amount_msats_for_quantity(&&DefaultCurrencyConversion, amount, quantity)?;
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
 
