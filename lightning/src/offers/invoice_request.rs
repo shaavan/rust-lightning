@@ -52,7 +52,7 @@
 //! # <InvoiceRequestBuilder<_>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
-//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)?
+//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})?
 //! # )
 //!     .chain(Network::Testnet)?
 //!     .amount_msats(1000)?
@@ -71,7 +71,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
-use crate::offers::currency::CurrencyConversion;
+use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
@@ -1484,7 +1484,7 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 
 		offer.check_quantity(quantity)?;
 		// Question: How to handle currency conversion here?
-		offer.check_amount_msats_for_quantity(&&DefaultCurrencyConversion, amount, quantity)?;
+		offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity)?;
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
 
@@ -1621,7 +1621,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1714,7 +1714,7 @@ mod tests {
 			.absolute_expiry(future_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1726,7 +1726,7 @@ mod tests {
 			.absolute_expiry(past_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1749,7 +1749,7 @@ mod tests {
 			.build()
 			.unwrap();
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.experimental_bar(42)
 			.build_and_sign()
@@ -1860,7 +1860,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1875,7 +1875,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()
@@ -1891,7 +1891,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1907,7 +1907,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1924,7 +1924,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Bitcoin)
 		{
@@ -1937,7 +1937,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1958,7 +1958,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -1973,7 +1973,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(1001)
 			.unwrap()
@@ -1990,7 +1990,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(1001)
 			.unwrap()
@@ -2005,7 +2005,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(999)
 		{
@@ -2018,7 +2018,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2032,7 +2032,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(MAX_VALUE_MSAT + 1)
 		{
@@ -2045,7 +2045,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -2060,7 +2060,7 @@ mod tests {
 		match OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2073,7 +2073,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2096,7 +2096,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2110,7 +2110,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2127,7 +2127,7 @@ mod tests {
 				amount: 10,
 			})
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
@@ -2148,7 +2148,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2161,7 +2161,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.features_unchecked(InvoiceRequestFeatures::empty())
@@ -2188,7 +2188,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2201,7 +2201,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2216,7 +2216,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(10_000)
 			.unwrap()
@@ -2233,7 +2233,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(11_000)
 			.unwrap()
@@ -2248,7 +2248,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2265,7 +2265,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2278,7 +2278,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2299,7 +2299,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.payer_note("bar".into())
 			.build_and_sign()
@@ -2312,7 +2312,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.payer_note("bar".into())
 			.payer_note("baz".into())
@@ -2335,7 +2335,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2359,7 +2359,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2384,7 +2384,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -2402,7 +2402,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain_unchecked(Network::Testnet)
 			.build_unchecked_and_sign();
@@ -2431,7 +2431,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2446,7 +2446,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -2463,7 +2463,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2482,7 +2482,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats_unchecked(999)
 			.build_unchecked_and_sign();
@@ -2505,7 +2505,7 @@ mod tests {
 				amount: 1000,
 			})
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2527,7 +2527,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2561,7 +2561,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2578,7 +2578,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2603,7 +2603,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(10_000)
 			.unwrap()
@@ -2624,7 +2624,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(11_000)
 			.unwrap()
@@ -2647,7 +2647,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2668,7 +2668,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2688,7 +2688,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2716,7 +2716,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2748,7 +2748,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2778,7 +2778,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2813,7 +2813,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_unchecked()
 			.contents
@@ -2841,7 +2841,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2878,7 +2878,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_without_checks();
 
@@ -2913,7 +2913,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_without_checks();
 
@@ -2958,7 +2958,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_without_checks();
 
@@ -2996,7 +2996,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_without_checks();
 
@@ -3031,7 +3031,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -3064,7 +3064,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -3120,7 +3120,7 @@ mod tests {
 		let expected_payer_note = "❤️".repeat(85);
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()

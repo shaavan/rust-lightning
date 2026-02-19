@@ -49,7 +49,7 @@ fn build_request(offer: &Offer) -> Result<InvoiceRequest, Bolt12SemanticError> {
 	let secp_ctx = Secp256k1::new();
 	let payment_id = PaymentId([1; 32]);
 
-	let mut builder = offer.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)?;
+	let mut builder = offer.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})?;
 
 	builder = match offer.amount() {
 		None => builder.amount_msats(1000).unwrap(),

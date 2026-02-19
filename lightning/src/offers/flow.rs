@@ -815,12 +815,12 @@ where
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	pub fn create_invoice_request_builder<'a>(
 		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
-	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError> {
+	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All, _>, Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
-		let builder: InvoiceRequestBuilder<secp256k1::All> =
-			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?.into();
+		let builder: InvoiceRequestBuilder<secp256k1::All, _> =
+			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, &*self.currency_conversion)?.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)

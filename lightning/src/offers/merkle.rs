@@ -286,7 +286,8 @@ mod tests {
 
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
-	use crate::offers::invoice_request::{InvoiceRequest, UnsignedInvoiceRequest};
+	use crate::offers::currency::DefaultCurrencyConversion;
+use crate::offers::invoice_request::{InvoiceRequest, UnsignedInvoiceRequest};
 	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
 	use crate::offers::parse::Bech32Encode;
@@ -362,7 +363,7 @@ mod tests {
 			})
 			.build_unchecked()
 			// Override the payer metadata and signing pubkey to match the test vectors
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.payer_metadata(Metadata::Bytes(vec![0; 8]))
 			.payer_signing_pubkey(payer_keys.public_key())
@@ -399,7 +400,7 @@ mod tests {
 			.amount_msats(1000)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.payer_note("bar".into())
 			.build_unchecked();
@@ -430,7 +431,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey)
 			.amount_msats(100)
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -464,7 +465,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey)
 			.amount_msats(100)
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
