@@ -9,6 +9,7 @@
 
 //! Data structures and encoding for currency conversion support.
 
+use core::ops::Deref;
 use crate::offers::offer::CurrencyCode;
 
 #[allow(unused_imports)]
@@ -40,6 +41,14 @@ pub trait CurrencyConversion {
 /// A [`CurrencyConversion`] implementation that does not support
 /// any fiat currency conversions.
 pub struct DefaultCurrencyConversion;
+
+impl Deref for DefaultCurrencyConversion {
+	type Target = Self;
+
+	fn deref(&self) -> &Self::Target {
+		self
+	}
+}
 
 impl CurrencyConversion for DefaultCurrencyConversion {
 	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {

@@ -796,7 +796,7 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 		#[cfg(c_bindings)]
 		secp_ctx: &'b Secp256k1<secp256k1::All>,
 		payment_id: PaymentId,
-		currency_conversion: CC,
+		currency_conversion: &'b CC,
 	) -> Result<$builder, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion
@@ -937,8 +937,8 @@ impl OfferContents {
 		self.paths.as_ref().map(|paths| paths.as_slice()).unwrap_or(&[])
 	}
 
-	pub(super) fn check_amount_msats_for_quantity<CC: Deref>(
-		&self, currency_conversion: CC, amount_msats: Option<u64>, quantity: Option<u64>,
+	pub(super) fn check_amount_msats_for_quantity<'a, CC: Deref>(
+		&self, currency_conversion: &'a CC, amount_msats: Option<u64>, quantity: Option<u64>,
 	) -> Result<(), Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion,

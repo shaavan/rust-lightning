@@ -128,7 +128,7 @@ where
 	invoice_request: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: Option<PublicKey>,
 	secp_ctx: Option<&'b Secp256k1<T>>,
-	currency_conversion: CC,
+	currency_conversion: &'b CC,
 }
 
 /// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
@@ -152,7 +152,7 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 		pub(super) fn deriving_signing_pubkey(
 			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce,
 			secp_ctx: &'b Secp256k1<$secp_context>, payment_id: PaymentId,
-			currency_conversion: CC,
+			currency_conversion: &'b CC,
 		) -> Self {
 			let payment_id = Some(payment_id);
 			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
@@ -288,7 +288,7 @@ macro_rules! invoice_request_builder_methods { (
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
+			&*$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
 
 		Ok($self.build_without_checks())
