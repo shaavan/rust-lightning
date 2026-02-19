@@ -39,6 +39,7 @@ pub trait CurrencyConversion {
 
 /// A [`CurrencyConversion`] implementation that does not support
 /// any fiat currency conversions.
+#[derive(Clone)]
 pub struct DefaultCurrencyConversion;
 
 impl CurrencyConversion for DefaultCurrencyConversion {

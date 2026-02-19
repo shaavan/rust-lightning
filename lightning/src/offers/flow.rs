@@ -75,7 +75,7 @@ use {
 ///
 /// [`OffersMessageFlow`] is parameterized by a [`MessageRouter`], which is responsible
 /// for finding message paths when initiating and retrying onion messages.
-pub struct OffersMessageFlow<MR: Deref, CC: Deref, L: Deref>
+pub struct OffersMessageFlow<MR: Deref, CC: Deref + Clone, L: Deref>
 where
 	MR::Target: MessageRouter,
 	CC::Target: CurrencyConversion,
@@ -111,7 +111,7 @@ where
 	logger: L,
 }
 
-impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
+impl<MR: Deref, CC: Deref + Clone, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
 	CC::Target: CurrencyConversion,
@@ -273,7 +273,7 @@ const DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration = Duration::from_secs(365 * 2
 pub(crate) const TEST_DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY: Duration =
 	DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY;
 
-impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
+impl<MR: Deref, CC: Deref + Clone, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
 	CC::Target: CurrencyConversion,
@@ -444,7 +444,7 @@ pub enum HeldHtlcReplyPath {
 	},
 }
 
-impl<MR: Deref, CC: Deref, L: Deref> OffersMessageFlow<MR, CC, L>
+impl<MR: Deref, CC: Deref + Clone, L: Deref> OffersMessageFlow<MR, CC, L>
 where
 	MR::Target: MessageRouter,
 	CC::Target: CurrencyConversion,
@@ -815,12 +815,12 @@ where
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	pub fn create_invoice_request_builder<'a>(
 		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
-	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All, _>, Bolt12SemanticError> {
+	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All, CC>, Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
-		let builder: InvoiceRequestBuilder<secp256k1::All, _> =
-			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, &*self.currency_conversion)?.into();
+		let builder: InvoiceRequestBuilder<secp256k1::All, CC> =
+			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, self.currency_conversion.clone())?.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)
