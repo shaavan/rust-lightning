@@ -1899,14 +1899,12 @@ fn expired_static_invoice_payment_path() {
 	// Mine a bunch of blocks so the hardcoded path's `max_cltv_expiry` is expired at the recipient's
 	// end by the time the payment arrives.
 	let min_cltv_expiry_delta = test_default_channel_config().channel_config.cltv_expiry_delta;
-	// const DUMMY_BLOCK_CLTV_COUNT: u32 = 80 * 3;
 	connect_blocks(
 		&nodes[0],
 		final_max_cltv_expiry
 			- nodes[0].best_block_info().1
 			- min_cltv_expiry_delta as u32
 			- HTLC_FAIL_BACK_BUFFER
-			// - DUMMY_BLOCK_CLTV_COUNT
 			- LATENCY_GRACE_PERIOD_BLOCKS
 			- 1,
 	);
@@ -1917,11 +1915,14 @@ fn expired_static_invoice_payment_path() {
 			// Don't expire the path for nodes[1]
 			- min_cltv_expiry_delta as u32
 			- HTLC_FAIL_BACK_BUFFER
-			// - DUMMY_BLOCK_CLTV_COUNT
 			- LATENCY_GRACE_PERIOD_BLOCKS
 			- 1,
 	);
-	connect_blocks(&nodes[2], final_max_cltv_expiry - nodes[2].best_block_info().1);
+	connect_blocks(
+		&nodes[2],
+		final_max_cltv_expiry
+		- nodes[2].best_block_info().1
+	);
 
 	let invoice_flow_res =
 		pass_static_invoice_server_messages(&nodes[1], &nodes[2], recipient_id.clone());

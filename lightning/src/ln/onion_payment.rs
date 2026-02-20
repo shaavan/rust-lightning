@@ -62,6 +62,12 @@ fn check_blinded_forward(
 	inbound_amt_msat: u64, inbound_cltv_expiry: u32, payment_relay: &PaymentRelay,
 	payment_constraints: &PaymentConstraints, features: &BlindedHopFeatures
 ) -> Result<(u64, u32), ()> {
+
+	println!("\npayment_relay: {:?}", payment_relay);
+	println!("payment_constraints: {:?}", payment_constraints);
+	println!("inbound_amt_msat: {:?}", inbound_amt_msat);
+	println!("inbound_cltv_expiry: {:?}", inbound_cltv_expiry);
+
 	let amt_to_forward = blinded_path::payment::amt_to_forward_msat(
 		inbound_amt_msat, payment_relay
 	).ok_or(())?;
@@ -666,6 +672,7 @@ where
 			) {
 				Ok((amt, cltv)) => (amt, cltv),
 				Err(()) => {
+					assert!(false);
 					return encode_relay_error("Underflow calculating outbound amount or cltv value for blinded forward",
 						LocalHTLCFailureReason::InvalidOnionBlinding, shared_secret.secret_bytes(), None, &[0; 32]);
 				}
@@ -683,7 +690,6 @@ where
 			) {
 				Ok((amt, cltv)) => (amt, cltv),
 				Err(()) => {
-					assert!(false);
 					return encode_relay_error("Underflow calculating outbound amount or cltv value for dummy hop",
 						LocalHTLCFailureReason::InvalidOnionBlinding, shared_secret.secret_bytes(), None, &[0; 32]);
 				}

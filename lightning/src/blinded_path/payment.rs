@@ -423,7 +423,8 @@ impl DummyTlvs {
 				fee_base_msat: 1000,
 			},
 			payment_constraints: PaymentConstraints {
-				max_cltv_expiry: 2099,
+				// Set to a long time in future, to prevent any payment drops due to arbritary constraints
+				max_cltv_expiry: 3000,
 				htlc_minimum_msat: 1000,
 			},
 		}
