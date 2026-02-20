@@ -819,8 +819,9 @@ where
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
 
-		let builder: InvoiceRequestBuilder<secp256k1::All, CC> =
-			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, &self.currency_conversion)?.into();
+		let builder: InvoiceRequestBuilder<secp256k1::All, CC> = offer
+			.request_invoice(expanded_key, nonce, secp_ctx, payment_id, &self.currency_conversion)?
+			.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)

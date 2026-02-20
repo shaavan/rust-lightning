@@ -1428,7 +1428,7 @@ mod tests {
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 	use crate::offers::currency::DefaultCurrencyConversion;
-use crate::offers::nonce::Nonce;
+	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::CurrencyCode;
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::test_utils::*;
@@ -1561,7 +1561,13 @@ use crate::offers::nonce::Nonce;
 		assert_eq!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1572,7 +1578,13 @@ use crate::offers::nonce::Nonce;
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1589,7 +1601,13 @@ use crate::offers::nonce::Nonce;
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1605,7 +1623,13 @@ use crate::offers::nonce::Nonce;
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1642,7 +1666,13 @@ use crate::offers::nonce::Nonce;
 		assert_ne!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1653,7 +1683,13 @@ use crate::offers::nonce::Nonce;
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1668,7 +1704,13 @@ use crate::offers::nonce::Nonce;
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1686,7 +1728,13 @@ use crate::offers::nonce::Nonce;
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1909,8 +1957,13 @@ use crate::offers::nonce::Nonce;
 			.features_unchecked(OfferFeatures::unknown())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})
-		{
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&DefaultCurrencyConversion {},
+			) {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),
 		}

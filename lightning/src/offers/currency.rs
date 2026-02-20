@@ -9,8 +9,8 @@
 
 //! Data structures and encoding for currency conversion support.
 
-use core::ops::Deref;
 use crate::offers::offer::CurrencyCode;
+use core::ops::Deref;
 
 #[allow(unused_imports)]
 use crate::prelude::*;
