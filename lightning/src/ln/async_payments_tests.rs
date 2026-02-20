@@ -3037,12 +3037,19 @@ fn held_htlc_timeout() {
 	// Extract the release_htlc_om, but don't deliver it to the sender's LSP.
 	let _ = extract_release_htlc_oms(recipient, &[sender, sender_lsp, invoice_server]);
 
+	// Note: The 80 comes from the CLTV expiry delta we set for one dummy hop in payment.rs
+	// DummyTlvs::default()
+	//
+	// TODO: encode it formally.
+	const EXTRA_CLTV_DELTA_DUE_TO_DUMMY: u32 = DEFAULT_PAYMENT_DUMMY_HOPS as u32 * 80;
+
 	// Connect blocks to the sender's LSP until they timeout the HTLC.
 	connect_blocks(
 		sender_lsp,
 		MIN_CLTV_EXPIRY_DELTA as u32
 			+ TEST_FINAL_CLTV
 			+ HTLC_FAIL_BACK_BUFFER
+			+ EXTRA_CLTV_DELTA_DUE_TO_DUMMY
 			+ LATENCY_GRACE_PERIOD_BLOCKS,
 	);
 	sender_lsp.node.process_pending_htlc_forwards();
