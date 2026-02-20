@@ -70,8 +70,8 @@ use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
-use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
@@ -230,8 +230,14 @@ macro_rules! invoice_request_builder_methods { (
 	///
 	/// [`quantity`]: Self::quantity
 	pub fn amount_msats($($self_mut)* $self: $self_type, amount_msats: u64) -> Result<$return_type, Bolt12SemanticError> {
+		if amount_msats > MAX_VALUE_MSAT {
+			return Err(Bolt12SemanticError::InvalidAmount);
+		}
+
+		let offer_amount_msats = $self.invoice_request.offer.resolve_offer_amount(&*$self.currency_conversion)?;
+
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			&*$self.currency_conversion, Some(amount_msats), $self.invoice_request.quantity
+			offer_amount_msats, Some(amount_msats), $self.invoice_request.quantity
 		)?;
 		$self.invoice_request.amount_msats = Some(amount_msats);
 		Ok($return_value)
@@ -287,8 +293,10 @@ macro_rules! invoice_request_builder_methods { (
 		}
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
+
+		let offer_amount_msats = $self.invoice_request.offer.resolve_offer_amount(&*$self.currency_conversion)?;
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			&*$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
+			offer_amount_msats, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
 
 		Ok($self.build_without_checks())
@@ -1483,8 +1491,16 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 		}
 
 		offer.check_quantity(quantity)?;
-		// Question: How to handle currency conversion here?
-		offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity)?;
+
+		let offer_amount_msats = match offer.amount() {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+			// If the offer amount is in currency, we don't have access to currency conversion at this point.
+			// The following check will be perfomed at the time of handling the Invoice Request
+			Some(Amount::Currency { .. }) => None,
+		};
+
+		offer.check_amount_msats_for_quantity(offer_amount_msats, amount, quantity)?;
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
 

@@ -937,36 +937,58 @@ impl OfferContents {
 		self.paths.as_ref().map(|paths| paths.as_slice()).unwrap_or(&[])
 	}
 
-	pub(super) fn check_amount_msats_for_quantity<'a, CC: Deref>(
-		&self, currency_conversion: &'a CC, amount_msats: Option<u64>, quantity: Option<u64>,
-	) -> Result<(), Bolt12SemanticError>
+	pub(super) fn resolve_offer_amount<'a, CC: Deref>(
+		&self, currency_conversion: &'a CC,
+	) -> Result<Option<u64>, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion,
 	{
-		let offer_amount_msats = match self.amount {
-			None => 0,
-			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
+		let amount_msats = match self.amount {
+			None => None,
+			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
 			Some(Amount::Currency { iso4217_code, amount }) => {
 				let unit_conversion = currency_conversion
 					.msats_per_minor_unit(iso4217_code)
 					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
-				unit_conversion.checked_mul(amount).ok_or(Bolt12SemanticError::InvalidAmount)?
+				Some(
+					unit_conversion
+						.checked_mul(amount)
+						.ok_or(Bolt12SemanticError::InvalidAmount)?,
+				)
 			},
 		};
 
-		if !self.expects_quantity() || quantity.is_some() {
-			let expected_amount_msats = offer_amount_msats
-				.checked_mul(quantity.unwrap_or(1))
-				.ok_or(Bolt12SemanticError::InvalidAmount)?;
-			let amount_msats = amount_msats.unwrap_or(expected_amount_msats);
+		Ok(amount_msats)
+	}
 
-			if amount_msats < expected_amount_msats {
-				return Err(Bolt12SemanticError::InsufficientAmount);
-			}
+	pub(super) fn check_amount_msats_for_quantity(
+		&self, offer_amount_msats: Option<u64>, requested_total_amount_msats: Option<u64>,
+		requested_quantity: Option<u64>,
+	) -> Result<(), Bolt12SemanticError> {
+		// Quantity handling
+		let quantity = if self.expects_quantity() {
+			requested_quantity.ok_or(Bolt12SemanticError::MissingQuantity)?
+		} else {
+			requested_quantity.unwrap_or(1)
+		};
 
-			if amount_msats > MAX_VALUE_MSAT {
-				return Err(Bolt12SemanticError::InvalidAmount);
-			}
+		// Expected offer amount defaults to zero if unspecified
+		let expected_amount_msats = offer_amount_msats
+			.unwrap_or(0)
+			.checked_mul(quantity)
+			.ok_or(Bolt12SemanticError::InvalidAmount)?;
+
+		// Use provided total amount or default to expected
+		let total_amount_msats = requested_total_amount_msats.unwrap_or(expected_amount_msats);
+
+		// Underpayment check
+		if total_amount_msats < expected_amount_msats {
+			return Err(Bolt12SemanticError::InsufficientAmount);
+		}
+
+		// Upper bound sanity check
+		if total_amount_msats > MAX_VALUE_MSAT {
+			return Err(Bolt12SemanticError::InvalidAmount);
 		}
 
 		Ok(())
