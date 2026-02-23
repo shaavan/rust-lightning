@@ -280,6 +280,7 @@ pub(super) fn create_fwd_pending_htlc_info(
 		incoming_amt_msat: Some(msg.amount_msat),
 		outgoing_amt_msat: amt_to_forward,
 		outgoing_cltv_value,
+		dummy_hops_skimmed_fee_msat: None,
 		skimmed_fee_msat: None,
 		incoming_accountable: msg.accountable.unwrap_or(false),
 	})
@@ -289,7 +290,8 @@ pub(super) fn create_fwd_pending_htlc_info(
 pub(super) fn create_recv_pending_htlc_info(
 	hop_data: onion_utils::Hop, shared_secret: [u8; 32], payment_hash: PaymentHash,
 	amt_msat: u64, cltv_expiry: u32, phantom_shared_secret: Option<[u8; 32]>, allow_underpay: bool,
-	counterparty_skimmed_fee_msat: Option<u64>, incoming_accountable: bool, current_height: u32
+	dummy_hops_skimmed_fee_msat: Option<u64>, counterparty_skimmed_fee_msat: Option<u64>,
+	incoming_accountable: bool, current_height: u32
 ) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 	let (
 		payment_data, keysend_preimage, custom_tlvs, onion_amt_msat, onion_cltv_expiry,
@@ -478,6 +480,7 @@ pub(super) fn create_recv_pending_htlc_info(
 		incoming_amt_msat: Some(amt_msat),
 		outgoing_amt_msat: onion_amt_msat,
 		outgoing_cltv_value: onion_cltv_expiry,
+		dummy_hops_skimmed_fee_msat,
 		skimmed_fee_msat: counterparty_skimmed_fee_msat,
 		incoming_accountable,
 	})
@@ -552,7 +555,7 @@ where
 			};
 
 			let new_update_add_htlc = onion_utils::peel_dummy_hop_update_add_htlc(
-				msg,
+				msg,	
 				dummy_hop_data,
 				next_hop_hmac,
 				new_packet_bytes,
@@ -567,8 +570,9 @@ where
 			let shared_secret = hop.shared_secret().secret_bytes();
 			create_recv_pending_htlc_info(
 				hop, shared_secret, msg.payment_hash, msg.amount_msat, msg.cltv_expiry,
-				None, allow_skimmed_fees, msg.skimmed_fee_msat,
-				msg.accountable.unwrap_or(false), cur_height,
+				None, allow_skimmed_fees, msg.dummy_hops_skimmed_fee_msat,
+				msg.skimmed_fee_msat, msg.accountable.unwrap_or(false),
+				cur_height,
 			)?
 		}
 	})
@@ -840,7 +844,7 @@ mod tests {
 		let msg = make_update_add_msg(amount_msat, cltv_expiry, payment_hash, onion);
 		let logger = test_utils::TestLogger::with_id("bob".to_string());
 
-		let peeled = peel_payment_onion(&msg, &bob, &logger, &secp_ctx, cur_height, false)
+		let peeled = peel_payment_onion(&msg, &bob, &logger, &secp_ctx, cur_height, false, None)
 			.map_err(|e| e.msg).unwrap();
 
 		let next_onion = match peeled.routing {
@@ -851,7 +855,7 @@ mod tests {
 		};
 
 		let msg2 = make_update_add_msg(amount_msat, cltv_expiry, payment_hash, next_onion);
-		let peeled2 = peel_payment_onion(&msg2, &charlie, &logger, &secp_ctx, cur_height, false)
+		let peeled2 = peel_payment_onion(&msg2, &charlie, &logger, &secp_ctx, cur_height, false, None)
 			.map_err(|e| e.msg).unwrap();
 
 		match peeled2.routing {
@@ -878,6 +882,7 @@ mod tests {
 			cltv_expiry,
 			payment_hash,
 			onion_routing_packet,
+			dummy_hops_skimmed_fee_msat: None,
 			skimmed_fee_msat: None,
 			blinding_point: None,
 			hold_htlc: None,

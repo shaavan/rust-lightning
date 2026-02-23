@@ -1595,6 +1595,7 @@ fn update_add_msg(
 		cltv_expiry,
 		payment_hash: PaymentHash([0; 32]),
 		onion_routing_packet,
+		dummy_hops_skimmed_fee_msat: None,
 		skimmed_fee_msat: None,
 		blinding_point,
 		hold_htlc: None,

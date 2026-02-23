@@ -9792,6 +9792,7 @@ where
 					payment_hash: htlc.payment_hash,
 					cltv_expiry: htlc.cltv_expiry,
 					onion_routing_packet: (**onion_packet).clone(),
+					dummy_hops_skimmed_fee_msat: None,
 					skimmed_fee_msat: htlc.skimmed_fee_msat,
 					blinding_point: htlc.blinding_point,
 					hold_htlc: htlc.hold_htlc,

@@ -866,6 +866,10 @@ pub enum Event {
 		///
 		/// [`ChannelConfig::accept_underpaying_htlcs`]: crate::util::config::ChannelConfig::accept_underpaying_htlcs
 		amount_msat: u64,
+		/// The value, in thousands of a satoshi, that was skimmed off by the dummy hops proceeding
+		/// the final receival. This amount is the additional amount that the receivers earns in
+		/// form of skimmed fees, in addition to the `amount_msat`.
+		dummy_hops_skimmed_fee_msat: u64,
 		/// The value, in thousands of a satoshi, that was skimmed off of this payment as an extra fee
 		/// taken by our channel counterparty.
 		///
@@ -1885,6 +1889,7 @@ impl Writeable for Event {
 			&Event::PaymentClaimable {
 				ref payment_hash,
 				ref amount_msat,
+				dummy_hops_skimmed_fee_msat,
 				counterparty_skimmed_fee_msat,
 				ref purpose,
 				ref receiver_node_id,
@@ -1933,6 +1938,12 @@ impl Writeable for Event {
 					Some(counterparty_skimmed_fee_msat)
 				};
 
+				let dummy_skimmed_fee_opt = if dummy_hops_skimmed_fee_msat == 0 {
+					None
+				} else {
+					Some(dummy_hops_skimmed_fee_msat)
+				};
+
 				let (receiving_channel_id_legacy, receiving_user_channel_id_legacy) =
 					match receiving_channel_ids.last() {
 						Some((chan_id, user_chan_id)) => (Some(*chan_id), *user_chan_id),
@@ -1958,6 +1969,7 @@ impl Writeable for Event {
 					(11, payment_context, option),
 					(13, payment_id, option),
 					(15, *receiving_channel_ids, optional_vec),
+					(16, dummy_skimmed_fee_opt, option),
 				});
 			},
 			&Event::PaymentSent {
@@ -2377,6 +2389,7 @@ impl MaybeReadable for Event {
 					let mut payment_preimage = None;
 					let mut payment_secret = None;
 					let mut amount_msat = 0;
+					let mut dummy_skimmed_fee_msat_opt = None;
 					let mut counterparty_skimmed_fee_msat_opt = None;
 					let mut receiver_node_id = None;
 					let mut _user_payment_id = None::<u64>; // Used in 0.0.103 and earlier, no longer written in 0.0.116+.
@@ -2402,6 +2415,7 @@ impl MaybeReadable for Event {
 						(11, payment_context, option),
 						(13, payment_id, option),
 						(15, receiving_channel_ids_opt, optional_vec),
+						(16, dummy_skimmed_fee_msat_opt, option),
 					});
 					let purpose = match payment_secret {
 						Some(secret) => {
@@ -2425,6 +2439,7 @@ impl MaybeReadable for Event {
 						receiver_node_id,
 						payment_hash,
 						amount_msat,
+						dummy_hops_skimmed_fee_msat: dummy_skimmed_fee_msat_opt.unwrap_or(0),
 						counterparty_skimmed_fee_msat: counterparty_skimmed_fee_msat_opt
 							.unwrap_or(0),
 						purpose,
