@@ -1918,11 +1918,7 @@ fn expired_static_invoice_payment_path() {
 			- LATENCY_GRACE_PERIOD_BLOCKS
 			- 1,
 	);
-	connect_blocks(
-		&nodes[2],
-		final_max_cltv_expiry
-		- nodes[2].best_block_info().1
-	);
+	connect_blocks(&nodes[2], final_max_cltv_expiry - nodes[2].best_block_info().1);
 
 	let invoice_flow_res =
 		pass_static_invoice_server_messages(&nodes[1], &nodes[2], recipient_id.clone());

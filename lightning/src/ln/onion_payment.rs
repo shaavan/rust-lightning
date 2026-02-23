@@ -280,6 +280,7 @@ pub(super) fn create_fwd_pending_htlc_info(
 		incoming_amt_msat: Some(msg.amount_msat),
 		outgoing_amt_msat: amt_to_forward,
 		outgoing_cltv_value,
+		dummy_hops_skimmed_fee_msat: None,
 		skimmed_fee_msat: None,
 		incoming_accountable: msg.accountable.unwrap_or(false),
 	})
@@ -289,7 +290,8 @@ pub(super) fn create_fwd_pending_htlc_info(
 pub(super) fn create_recv_pending_htlc_info(
 	hop_data: onion_utils::Hop, shared_secret: [u8; 32], payment_hash: PaymentHash,
 	amt_msat: u64, cltv_expiry: u32, phantom_shared_secret: Option<[u8; 32]>, allow_underpay: bool,
-	counterparty_skimmed_fee_msat: Option<u64>, incoming_accountable: bool, current_height: u32
+	dummy_hops_skimmed_fee_msat: Option<u64>, counterparty_skimmed_fee_msat: Option<u64>,
+	incoming_accountable: bool, current_height: u32
 ) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 	let (
 		payment_data, keysend_preimage, custom_tlvs, onion_amt_msat, onion_cltv_expiry,
@@ -478,6 +480,7 @@ pub(super) fn create_recv_pending_htlc_info(
 		incoming_amt_msat: Some(amt_msat),
 		outgoing_amt_msat: onion_amt_msat,
 		outgoing_cltv_value: onion_cltv_expiry,
+		dummy_hops_skimmed_fee_msat,
 		skimmed_fee_msat: counterparty_skimmed_fee_msat,
 		incoming_accountable,
 	})
@@ -495,7 +498,7 @@ pub(super) fn create_recv_pending_htlc_info(
 #[rustfmt::skip]
 pub fn peel_payment_onion<NS: Deref, L: Deref, T: secp256k1::Verification>(
 	msg: &msgs::UpdateAddHTLC, node_signer: NS, logger: L, secp_ctx: &Secp256k1<T>,
-	cur_height: u32, allow_skimmed_fees: bool,
+	cur_height: u32, allow_skimmed_fees: bool, dummy_hops_skimmed_fee_msat: Option<u64>,
 ) -> Result<PendingHTLCInfo, InboundHTLCErr>
 where
 	NS::Target: NodeSigner,
@@ -551,8 +554,24 @@ where
 				}),
 			};
 
+			let this_dummy_fee = msg.amount_msat
+				.checked_sub(next_packet_details.outgoing_amt_msat)
+				.ok_or(InboundHTLCErr {
+					msg: "Dummy hop outgoing amount exceeds incoming amount",
+					reason: LocalHTLCFailureReason::InvalidOnionPayload,
+					err_data: Vec::new(),
+				})?;
+
+			let dummy_hop_skimmed_fee_msat = dummy_hops_skimmed_fee_msat.unwrap_or(0)
+				.checked_add(this_dummy_fee)
+				.ok_or(InboundHTLCErr {
+					msg: "Failed to accumulate the dummy hop skimmed fees",
+					reason: LocalHTLCFailureReason::InvalidOnionPayload,
+					err_data: Vec::new(),
+				})?;
+
 			let new_update_add_htlc = onion_utils::peel_dummy_hop_update_add_htlc(
-				msg,
+				msg,	
 				dummy_hop_data,
 				next_hop_hmac,
 				new_packet_bytes,
@@ -561,14 +580,15 @@ where
 				secp_ctx
 			);
 
-			peel_payment_onion(&new_update_add_htlc, node_signer, logger, secp_ctx, cur_height, allow_skimmed_fees)?
+			peel_payment_onion(&new_update_add_htlc, node_signer, logger, secp_ctx, cur_height, allow_skimmed_fees, Some(dummy_hop_skimmed_fee_msat))?
 		},
 		_ => {
 			let shared_secret = hop.shared_secret().secret_bytes();
 			create_recv_pending_htlc_info(
 				hop, shared_secret, msg.payment_hash, msg.amount_msat, msg.cltv_expiry,
-				None, allow_skimmed_fees, msg.skimmed_fee_msat,
-				msg.accountable.unwrap_or(false), cur_height,
+				None, allow_skimmed_fees, dummy_hops_skimmed_fee_msat,
+				msg.skimmed_fee_msat, msg.accountable.unwrap_or(false),
+				cur_height,
 			)?
 		}
 	})
@@ -840,7 +860,7 @@ mod tests {
 		let msg = make_update_add_msg(amount_msat, cltv_expiry, payment_hash, onion);
 		let logger = test_utils::TestLogger::with_id("bob".to_string());
 
-		let peeled = peel_payment_onion(&msg, &bob, &logger, &secp_ctx, cur_height, false)
+		let peeled = peel_payment_onion(&msg, &bob, &logger, &secp_ctx, cur_height, false, None)
 			.map_err(|e| e.msg).unwrap();
 
 		let next_onion = match peeled.routing {
@@ -851,7 +871,7 @@ mod tests {
 		};
 
 		let msg2 = make_update_add_msg(amount_msat, cltv_expiry, payment_hash, next_onion);
-		let peeled2 = peel_payment_onion(&msg2, &charlie, &logger, &secp_ctx, cur_height, false)
+		let peeled2 = peel_payment_onion(&msg2, &charlie, &logger, &secp_ctx, cur_height, false, None)
 			.map_err(|e| e.msg).unwrap();
 
 		match peeled2.routing {

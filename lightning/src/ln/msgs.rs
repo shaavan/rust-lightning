@@ -3417,6 +3417,7 @@ impl_writeable_msg!(UpdateAddHTLC, {
 }, {
 	(0, blinding_point, option),
 	(65537, skimmed_fee_msat, option),
+	(65539, dummy_hops_skimmed_fee_msat, option),
 	// TODO: currently we may fail to read the `ChannelManager` if we write a new even TLV in this message
 	// and then downgrade. Once this is fixed, update the type here to match BOLTs PR 989.
 	(75537, hold_htlc, option),
@@ -5935,6 +5936,7 @@ mod tests {
 			amount_msat: 3608586615801332854,
 			payment_hash: PaymentHash([1; 32]),
 			cltv_expiry: 821716,
+			dummy_hops_skimmed_fee_msat: None,
 			onion_routing_packet,
 			skimmed_fee_msat: None,
 			blinding_point: None,
@@ -6835,6 +6837,7 @@ mod tests {
 			amount_msat: 1000,
 			payment_hash: PaymentHash([1; 32]),
 			cltv_expiry: 500000,
+			dummy_hops_skimmed_fee_msat: None,
 			skimmed_fee_msat: None,
 			onion_routing_packet: msgs::OnionPacket {
 				version: 0,
