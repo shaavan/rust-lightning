@@ -245,7 +245,7 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer<CC: Deref>(
-			invoice_request: &'a InvoiceRequest, currency_conversion: CC,
+			invoice_request: &'a InvoiceRequest, currency_conversion: &'a CC,
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
 			payment_hash: PaymentHash, signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError>
@@ -321,7 +321,7 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer_using_keys<CC: Deref>(
-			invoice_request: &'a InvoiceRequest, currency_conversion: CC,
+			invoice_request: &'a InvoiceRequest, currency_conversion: &'a CC,
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
 			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError>
@@ -404,7 +404,7 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats<'a, CC: Deref>(
+		pub(crate) fn amount_msats<CC: Deref>(
 			invoice_request: &InvoiceRequest, currency_conversion: &'a CC,
 		) -> Result<u64, Bolt12SemanticError>
 		where
