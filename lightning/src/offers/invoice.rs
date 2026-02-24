@@ -404,8 +404,8 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats<CC: Deref>(
-			invoice_request: &InvoiceRequest, currency_conversion: CC,
+		pub(crate) fn amount_msats<'a, CC: Deref>(
+			invoice_request: &InvoiceRequest, currency_conversion: &'a CC,
 		) -> Result<u64, Bolt12SemanticError>
 		where
 			CC::Target: CurrencyConversion,

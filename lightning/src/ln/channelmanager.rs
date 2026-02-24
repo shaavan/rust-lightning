@@ -15332,6 +15332,11 @@ where
 					None => return None,
 				};
 
+				// If the offer amount is in currency, the Invoice Request parser delegated the
+				// amount checks to the handler. So, here we perform the currency checks again
+				// to ensure the invoice request amount is sufficient.
+				invoice_request.
+
 				let invoice_request = match self.flow.verify_invoice_request(invoice_request, context) {
 					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => invoice_request,
 					Ok(InvreqResponseInstructions::SendStaticInvoice { recipient_id, invoice_slot, invoice_request }) => {

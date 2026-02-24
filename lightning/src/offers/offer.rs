@@ -710,6 +710,17 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	pub fn issuer_signing_pubkey(&$self) -> Option<bitcoin::secp256k1::PublicKey> {
 		$contents.issuer_signing_pubkey()
 	}
+
+	pub fn resolve_offer_amount<'a, CC: Deref>(
+		&$self, currency_conversion: &'a CC,
+	) -> Result<Option<u64>, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		$contents.amount().map(|amt| {
+			amt.into_msats(currency_conversion)
+		}).transpose()
+	}
 } }
 
 impl Offer {
@@ -937,30 +948,6 @@ impl OfferContents {
 		self.paths.as_ref().map(|paths| paths.as_slice()).unwrap_or(&[])
 	}
 
-	pub(super) fn resolve_offer_amount<'a, CC: Deref>(
-		&self, currency_conversion: &'a CC,
-	) -> Result<Option<u64>, Bolt12SemanticError>
-	where
-		CC::Target: CurrencyConversion,
-	{
-		let amount_msats = match self.amount {
-			None => None,
-			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
-			Some(Amount::Currency { iso4217_code, amount }) => {
-				let unit_conversion = currency_conversion
-					.msats_per_minor_unit(iso4217_code)
-					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
-				Some(
-					unit_conversion
-						.checked_mul(amount)
-						.ok_or(Bolt12SemanticError::InvalidAmount)?,
-				)
-			},
-		};
-
-		Ok(amount_msats)
-	}
-
 	pub(super) fn check_amount_msats_for_quantity(
 		&self, offer_amount_msats: Option<u64>, requested_total_amount_msats: Option<u64>,
 		requested_quantity: Option<u64>,
@@ -1163,8 +1150,8 @@ pub enum Amount {
 }
 
 impl Amount {
-	pub(crate) fn into_msats<CC: Deref>(
-		self, currency_conversion: CC,
+	pub(crate) fn into_msats<'a, CC: Deref>(
+		self, currency_conversion: &'a CC,
 	) -> Result<u64, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion,
