@@ -711,15 +711,13 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 		$contents.issuer_signing_pubkey()
 	}
 
-	pub fn resolve_offer_amount<'a, CC: Deref>(
-		&$self, currency_conversion: &'a CC,
-	) -> Result<Option<u64>, Bolt12SemanticError>
+	/// Resolves the offer amount into msats.
+	pub fn resolve_offer_amount<'a, CC: Deref>
+		(&$self, currency_conversion: &'a CC) -> Result<Option<u64>, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion,
 	{
-		$contents.amount().map(|amt| {
-			amt.into_msats(currency_conversion)
-		}).transpose()
+		$contents.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
 	}
 } }
 

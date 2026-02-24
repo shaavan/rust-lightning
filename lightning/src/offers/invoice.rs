@@ -121,7 +121,7 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 use crate::offers::currency::CurrencyConversion;
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
@@ -245,7 +245,7 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer<CC: Deref>(
-			invoice_request: &'a InvoiceRequest, currency_conversion: CC,
+			invoice_request: &'a InvoiceRequest, currency_conversion: &'a CC,
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
 			payment_hash: PaymentHash, signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError>
@@ -321,7 +321,7 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		pub(super) fn for_offer_using_keys<CC: Deref>(
-			invoice_request: &'a InvoiceRequest, currency_conversion: CC,
+			invoice_request: &'a InvoiceRequest, currency_conversion: &'a CC,
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
 			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError>
@@ -404,32 +404,28 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats<'a, CC: Deref>(
+		pub(crate) fn amount_msats<CC: Deref>(
 			invoice_request: &InvoiceRequest, currency_conversion: &'a CC,
 		) -> Result<u64, Bolt12SemanticError>
 		where
 			CC::Target: CurrencyConversion,
 		{
 			let quantity = invoice_request.quantity().unwrap_or(1);
-
 			let requested_msats = invoice_request.amount_msats();
-			let offer_minimum_msats = invoice_request
-				.amount()
-				.map(|amt| {
-					amt.into_msats(currency_conversion).and_then(|unit_msats| {
-						unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
-					})
-				})
+
+			let offer_amount_msats = invoice_request
+				.resolve_offer_amount(currency_conversion)?
+				.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
 				.transpose()?;
 
-			match (requested_msats, offer_minimum_msats) {
+			let amount = match (requested_msats, offer_amount_msats) {
 				// The payer specified an amount and the offer defines a minimum.
 				// Enforce that the requested amount satisfies the minimum.
 				(Some(requested), Some(minimum)) if requested < minimum => {
 					Err(Bolt12SemanticError::InsufficientAmount)
 				},
 
-				// The payer specified an amount which satisfies the offer minimum
+				// The payer specified a valid amount which satisfies the offer minimum
 				// (or the offer does not define one).
 				(Some(requested), _) => Ok(requested),
 
@@ -439,7 +435,14 @@ macro_rules! invoice_builder_methods {
 
 				// Neither the payer nor the offer defines an amount.
 				(None, None) => Err(Bolt12SemanticError::MissingAmount),
+			}?;
+
+			// Sanity check:
+			if amount > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
 			}
+
+			Ok(amount)
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]

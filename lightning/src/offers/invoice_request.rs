@@ -234,7 +234,7 @@ macro_rules! invoice_request_builder_methods { (
 			return Err(Bolt12SemanticError::InvalidAmount);
 		}
 
-		let offer_amount_msats = $self.invoice_request.offer.resolve_offer_amount(&*$self.currency_conversion)?;
+		let offer_amount_msats = $self.offer.resolve_offer_amount($self.currency_conversion)?;
 
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
 			offer_amount_msats, Some(amount_msats), $self.invoice_request.quantity
@@ -294,7 +294,7 @@ macro_rules! invoice_request_builder_methods { (
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
 
-		let offer_amount_msats = $self.invoice_request.offer.resolve_offer_amount(&*$self.currency_conversion)?;
+		let offer_amount_msats = $self.offer.resolve_offer_amount($self.currency_conversion)?;
 		$self.invoice_request.offer.check_amount_msats_for_quantity(
 			offer_amount_msats, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
@@ -784,8 +784,8 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// [`Duration`]: core::time::Duration
 	#[cfg(feature = "std")]
-	pub fn respond_with<CC: Deref>(
-		&$self, currency_conversion: CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+	pub fn respond_with<'a, CC: Deref>(
+		&'a $self, currency_conversion: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion
@@ -822,8 +822,8 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
 	/// [`OfferBuilder::deriving_signing_pubkey`]: crate::offers::offer::OfferBuilder::deriving_signing_pubkey
-	pub fn respond_with_no_std<CC: Deref>(
-		&$self, currency_conversion: CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+	pub fn respond_with_no_std<'a, CC: Deref>(
+		&'a $self, currency_conversion: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError>
 	where
@@ -843,8 +843,8 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 
 	#[cfg(test)]
 	#[allow(dead_code)]
-	pub(super) fn respond_with_no_std_using_signing_pubkey<CC: Deref>(
-		&$self, currency_conversion: CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+	pub(super) fn respond_with_no_std_using_signing_pubkey<'a, CC: Deref>(
+		&'a $self, currency_conversion: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration, signing_pubkey: PublicKey
 	) -> Result<$builder, Bolt12SemanticError>
 	where
@@ -959,7 +959,7 @@ impl InvoiceRequest {
 	invoice_request_respond_with_explicit_signing_pubkey_methods!(
 		self,
 		self,
-		InvoiceBuilder<'_, ExplicitSigningPubkey>
+		InvoiceBuilder<'a, ExplicitSigningPubkey>
 	);
 	invoice_request_verify_method!(self, Self);
 
@@ -1025,8 +1025,8 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
-	pub fn respond_using_derived_keys<CC: Deref>(
-		&$self, currency_conversion: CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+	pub fn respond_using_derived_keys<'a, CC: Deref>(
+		&'a $self, currency_conversion: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion
@@ -1045,8 +1045,8 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// See [`InvoiceRequest::respond_with_no_std`] for further details.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn respond_using_derived_keys_no_std<CC: Deref>(
-		&$self, currency_conversion: CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+	pub fn respond_using_derived_keys_no_std<'a, CC: Deref>(
+		&'a $self, currency_conversion: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError>
 	where
@@ -1111,7 +1111,7 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 	invoice_request_respond_with_derived_signing_pubkey_methods!(
 		self,
 		self.inner,
-		InvoiceBuilder<'_, DerivedSigningPubkey>
+		InvoiceBuilder<'a, DerivedSigningPubkey>
 	);
 	#[cfg(c_bindings)]
 	invoice_request_respond_with_derived_signing_pubkey_methods!(
@@ -1130,7 +1130,7 @@ impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
 	invoice_request_respond_with_explicit_signing_pubkey_methods!(
 		self,
 		self.inner,
-		InvoiceBuilder<'_, ExplicitSigningPubkey>
+		InvoiceBuilder<'a, ExplicitSigningPubkey>
 	);
 	#[cfg(c_bindings)]
 	invoice_request_respond_with_explicit_signing_pubkey_methods!(
