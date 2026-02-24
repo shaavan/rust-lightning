@@ -959,19 +959,29 @@ impl OfferContents {
 
 		// Expected offer amount defaults to zero if unspecified
 		let expected_amount_msats = offer_amount_msats
-			.unwrap_or(0)
-			.checked_mul(quantity)
-			.ok_or(Bolt12SemanticError::InvalidAmount)?;
+			.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
+			.transpose()?;
 
-		// Use provided total amount or default to expected
-		let total_amount_msats = requested_total_amount_msats.unwrap_or(expected_amount_msats);
+		let total_amount_msats = match (requested_total_amount_msats, expected_amount_msats) {
+			// The payer specified an amount and the offer defines a minimum.
+			// Enforce that the requested amount satisfies the minimum.
+			(Some(requested), Some(minimum)) if requested < minimum => {
+				Err(Bolt12SemanticError::InsufficientAmount)
+			},
 
-		// Underpayment check
-		if total_amount_msats < expected_amount_msats {
-			return Err(Bolt12SemanticError::InsufficientAmount);
-		}
+			// The payer specified a valid amount which satisfies the offer minimum
+			// (or the offer does not define one).
+			(Some(requested), _) => Ok(requested),
 
-		// Upper bound sanity check
+			// The payer did not specify an amount but the offer defines one.
+			// Use the offer-implied amount.
+			(None, Some(amount_msats)) => Ok(amount_msats),
+
+			// Neither the payer nor the offer defines an amount.
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}?;
+
+		// Sanity check:
 		if total_amount_msats > MAX_VALUE_MSAT {
 			return Err(Bolt12SemanticError::InvalidAmount);
 		}
