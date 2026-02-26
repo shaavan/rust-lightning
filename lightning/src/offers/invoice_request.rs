@@ -723,13 +723,16 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.chain()
 	}
 
-	/// The amount to pay in msats (i.e., the minimum lightning-payable unit for [`chain`]), which
-	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
+	/// The amount *explicitly* set on the invoice request, in millisatoshis
+	/// (the minimum lightning-payable unit for [`chain`]), which
+	/// must be greater than or equal to [Offer::amount].
 	///
 	/// [`chain`]: Self::chain
-	pub fn amount_msats(&$self) -> Option<u64> {
+	pub fn amount_msats(&self) -> Option<u64> {
 		$contents.amount_msats()
 	}
+
+	pub fn amount_payable<CC: Deref>(&self, currency_conversion: CC) -> Result
 
 	/// Returns whether an amount was set in the request; otherwise, if [`amount_msats`] is `Some`
 	/// then it was inferred from the [`Offer::amount`] and [`quantity`].
@@ -1177,16 +1180,7 @@ impl InvoiceRequestContents {
 	}
 
 	pub(super) fn amount_msats(&self) -> Option<u64> {
-		self.inner.amount_msats().or_else(|| match self.inner.offer.amount() {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
-			},
-			Some(Amount::Currency { .. }) => None,
-			None => {
-				debug_assert!(false);
-				None
-			},
-		})
+		self.inner.amount_msats()
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {
