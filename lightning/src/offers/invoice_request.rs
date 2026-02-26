@@ -728,14 +728,21 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 	/// must be greater than or equal to [Offer::amount].
 	///
 	/// [`chain`]: Self::chain
-	pub fn amount_msats(&self) -> Option<u64> {
+	pub fn amount_msats(&$self) -> Option<u64> {
 		$contents.amount_msats()
 	}
 
-	pub fn amount_payable<CC: Deref>(&self, currency_conversion: CC) -> Result
+	/// The amount that is requested by this invoice request.
+	/// If the invoice request sets the amount explicitly, it is equal to that.
+	/// Otherwise it returns the amount inferred from [`Offer::amount`] and [`quantity`].
+	pub fn payable_amount_msats<CC: Deref>(&$self, currency_conversion: &CC) -> Result<u64, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
+		$contents.payable_amount_msats(currency_conversion)
+	}
 
-	/// Returns whether an amount was set in the request; otherwise, if [`amount_msats`] is `Some`
-	/// then it was inferred from the [`Offer::amount`] and [`quantity`].
+	/// Returns whether an amount was set in the request.
 	///
 	/// [`amount_msats`]: Self::amount_msats
 	/// [`quantity`]: Self::quantity
@@ -1181,6 +1188,45 @@ impl InvoiceRequestContents {
 
 	pub(super) fn amount_msats(&self) -> Option<u64> {
 		self.inner.amount_msats()
+	}
+
+	pub(super) fn payable_amount_msats<CC: Deref>(&self, currency_conversion: &CC) -> Result<u64, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
+		let quantity = self.quantity().unwrap_or(1);
+		let requested_msats = self.amount_msats();
+
+		let offer_amount_msats = self.inner.offer
+			.resolve_offer_amount(currency_conversion)?
+			.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
+			.transpose()?;
+
+		let amount = match (requested_msats, offer_amount_msats) {
+			// The payer specified an amount and the offer defines a minimum.
+			// Enforce that the requested amount satisfies the minimum.
+			(Some(requested), Some(minimum)) if requested < minimum => {
+				Err(Bolt12SemanticError::InsufficientAmount)
+			},
+
+			// The payer specified a valid amount which satisfies the offer minimum
+			// (or the offer does not define one).
+			(Some(requested), _) => Ok(requested),
+
+			// The payer did not specify an amount but the offer defines one.
+			// Use the offer-implied amount.
+			(None, Some(amount_msats)) => Ok(amount_msats),
+
+			// Neither the payer nor the offer defines an amount.
+			(None, None) => Err(Bolt12SemanticError::MissingAmount),
+		}?;
+
+		// Sanity check:
+		if amount > MAX_VALUE_MSAT {
+			return Err(Bolt12SemanticError::InvalidAmount);
+		}
+
+		Ok(amount)
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {
@@ -1659,7 +1705,7 @@ mod tests {
 		assert_eq!(invoice_request.supported_quantity(), Quantity::One);
 		assert_eq!(invoice_request.issuer_signing_pubkey(), Some(recipient_pubkey()));
 		assert_eq!(invoice_request.chain(), ChainHash::using_genesis_block(Network::Bitcoin));
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.payable_amount_msats(&DefaultCurrencyConversion), Ok(1000));
 		assert_eq!(invoice_request.invoice_request_features(), &InvoiceRequestFeatures::empty());
 		assert_eq!(invoice_request.quantity(), None);
 		assert_eq!(invoice_request.payer_note(), None);
@@ -2230,7 +2276,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.payable_amount_msats(&DefaultCurrencyConversion), Ok(1000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2252,7 +2298,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(2000));
+		assert_eq!(invoice_request.payable_amount_msats(&DefaultCurrencyConversion), Ok(2000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())

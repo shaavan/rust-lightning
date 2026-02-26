@@ -717,7 +717,7 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	where
 		CC::Target: CurrencyConversion,
 	{
-		$contents.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
+		$contents.resolve_offer_amount(currency_conversion)
 	}
 } }
 
@@ -1025,6 +1025,14 @@ impl OfferContents {
 
 	pub(super) fn issuer_signing_pubkey(&self) -> Option<PublicKey> {
 		self.issuer_signing_pubkey
+	}
+
+	pub(super) fn resolve_offer_amount<'a, CC: Deref>
+		(&self, currency_conversion: &'a CC) -> Result<Option<u64>, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		self.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
 	}
 
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(

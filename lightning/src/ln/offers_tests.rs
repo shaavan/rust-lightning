@@ -917,7 +917,7 @@ fn creates_and_pays_for_offer_with_fiat_amount_using_one_hop_blinded_path() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), None);
+	assert_eq!(invoice_request.payable_amount_msats(&alice.node.flow.currency_conversion), Ok(100_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 

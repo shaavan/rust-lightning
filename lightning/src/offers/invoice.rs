@@ -121,7 +121,7 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::ln::msgs::DecodeError;
 use crate::offers::currency::CurrencyConversion;
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
@@ -410,39 +410,7 @@ macro_rules! invoice_builder_methods {
 		where
 			CC::Target: CurrencyConversion,
 		{
-			let quantity = invoice_request.quantity().unwrap_or(1);
-			let requested_msats = invoice_request.amount_msats();
-
-			let offer_amount_msats = invoice_request
-				.resolve_offer_amount(currency_conversion)?
-				.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
-				.transpose()?;
-
-			let amount = match (requested_msats, offer_amount_msats) {
-				// The payer specified an amount and the offer defines a minimum.
-				// Enforce that the requested amount satisfies the minimum.
-				(Some(requested), Some(minimum)) if requested < minimum => {
-					Err(Bolt12SemanticError::InsufficientAmount)
-				},
-
-				// The payer specified a valid amount which satisfies the offer minimum
-				// (or the offer does not define one).
-				(Some(requested), _) => Ok(requested),
-
-				// The payer did not specify an amount but the offer defines one.
-				// Use the offer-implied amount.
-				(None, Some(amount_msats)) => Ok(amount_msats),
-
-				// Neither the payer nor the offer defines an amount.
-				(None, None) => Err(Bolt12SemanticError::MissingAmount),
-			}?;
-
-			// Sanity check:
-			if amount > MAX_VALUE_MSAT {
-				return Err(Bolt12SemanticError::InvalidAmount);
-			}
-
-			Ok(amount)
+			invoice_request.payable_amount_msats(currency_conversion)
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
