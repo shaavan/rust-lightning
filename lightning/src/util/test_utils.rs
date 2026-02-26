@@ -95,6 +95,7 @@ use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::time::Duration;
+use core::ops::Deref;
 
 use bitcoin::psbt::Psbt;
 use bitcoin::Sequence;
@@ -449,7 +450,15 @@ impl<'a> MessageRouter for TestMessageRouter<'a> {
 	}
 }
 
-pub struct TestCurrencyConversion {}
+pub struct TestCurrencyConversion;
+
+impl Deref for TestCurrencyConversion {
+	type Target = TestCurrencyConversion;
+
+	fn deref(&self) -> &Self::Target {
+		self
+	}
+}
 
 impl CurrencyConversion for TestCurrencyConversion {
 	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()> {

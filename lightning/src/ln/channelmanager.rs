@@ -1949,7 +1949,7 @@ where
 /// #     tx_broadcaster: &dyn lightning::chain::chaininterface::BroadcasterInterface,
 /// #     router: &lightning::routing::router::DefaultRouter<&NetworkGraph<&'a L>, &'a L, &ES, &S, SP, SL>,
 /// #     message_router: &lightning::onion_message::messenger::DefaultMessageRouter<&NetworkGraph<&'a L>, &'a L, &ES>,
-/// #     currency_conversion: &lightning::offers::currency::DefaultCurrencyConversion
+/// #     currency_conversion: &lightning::offers::currency::DefaultCurrencyConversion,
 /// #     logger: &L,
 /// #     entropy_source: &ES,
 /// #     node_signer: &dyn lightning::sign::NodeSigner,
@@ -13100,6 +13100,13 @@ where
 		let entropy = &*self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
 
+		let amount_msats = match amount_msats {
+			Some(amount) => amount,
+			None => offer
+				.resolve_offer_amount(&self.flow.currency_conversion)?
+				.ok_or(Bolt12SemanticError::MissingAmount)?,
+		};
+
 		let builder = self.flow.create_invoice_request_builder(
 			offer, nonce, payment_id,
 		)?;
@@ -13108,10 +13115,9 @@ where
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
 		};
-		let builder = match amount_msats {
-			None => builder,
-			Some(amount_msats) => builder.amount_msats(amount_msats)?,
-		};
+		
+		let builder = builder.amount_msats(amount_msats)?;
+
 		let builder = match payer_note {
 			None => builder,
 			Some(payer_note) => builder.payer_note(payer_note),
