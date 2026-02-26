@@ -7962,7 +7962,7 @@ where
 								let verified_invreq = match verify_opt {
 									Some(verified_invreq) => {
 										if let Some(invreq_amt_msat) =
-											verified_invreq.amount_msats()
+											verified_invreq.amount_msats(&self.flow.currency_conversion)
 										{
 											if payment_data.total_msat < invreq_amt_msat {
 												fail_htlc!(claimable_htlc, payment_hash);

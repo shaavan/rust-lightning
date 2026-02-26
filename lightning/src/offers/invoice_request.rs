@@ -288,6 +288,8 @@ macro_rules! invoice_request_builder_methods { (
 			$self.invoice_request.chain = None;
 		}
 
+		// $self.invoice_request.amount_msats, is none till this point.
+
 		if $self.offer.amount().is_none() && $self.invoice_request.amount_msats.is_none() {
 			return Err(Bolt12SemanticError::MissingAmount);
 		}
@@ -342,6 +344,8 @@ macro_rules! invoice_request_builder_methods { (
 			payer_signing_pubkey,
 		};
 		let unsigned_invoice_request = UnsignedInvoiceRequest::new($self.offer, invoice_request);
+
+		// unsigned_invoice_request.contents.inner.amount_msats, is None till this point.
 
 		(unsigned_invoice_request, keys, secp_ctx)
 	}
@@ -727,8 +731,11 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
 	///
 	/// [`chain`]: Self::chain
-	pub fn amount_msats(&$self) -> Option<u64> {
-		$contents.amount_msats()
+	pub fn amount_msats<CC: Deref>(&$self, currency_conversion: &CC) -> Option<u64>
+	where
+		CC::Target: CurrencyConversion
+	{
+		$contents.amount_msats(currency_conversion)
 	}
 
 	/// Returns whether an amount was set in the request; otherwise, if [`amount_msats`] is `Some`
@@ -1176,17 +1183,22 @@ impl InvoiceRequestContents {
 		self.inner.chain()
 	}
 
-	pub(super) fn amount_msats(&self) -> Option<u64> {
-		self.inner.amount_msats().or_else(|| match self.inner.offer.amount() {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
-			},
-			Some(Amount::Currency { .. }) => None,
-			None => {
-				debug_assert!(false);
-				None
-			},
-		})
+	pub(super) fn amount_msats<CC: Deref>(&self, currency_conversion: &CC) -> Option<u64>
+	where
+		CC::Target: CurrencyConversion
+	{
+		self.inner.amount_msats()
+			.or_else(|| match self.inner.offer.resolve_offer_amount(currency_conversion) {
+				Ok(Some(amount_msats)) => {
+					Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
+				},
+				// Absent offer amounts or unsupported currencies must be validated earlier.
+				// Reaching this branch indicates an internal invariant violation.
+				Ok(None) | Err(_) => {
+					debug_assert!(false);
+					None
+				},
+			})
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {
@@ -1665,7 +1677,7 @@ mod tests {
 		assert_eq!(invoice_request.supported_quantity(), Quantity::One);
 		assert_eq!(invoice_request.issuer_signing_pubkey(), Some(recipient_pubkey()));
 		assert_eq!(invoice_request.chain(), ChainHash::using_genesis_block(Network::Bitcoin));
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(1000));
 		assert_eq!(invoice_request.invoice_request_features(), &InvoiceRequestFeatures::empty());
 		assert_eq!(invoice_request.quantity(), None);
 		assert_eq!(invoice_request.payer_note(), None);
@@ -2046,7 +2058,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2069,7 +2081,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2090,7 +2102,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1001));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(1001));
 		assert_eq!(tlv_stream.amount, Some(1001));
 
 		match OfferBuilder::new(recipient_pubkey())
@@ -2236,7 +2248,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(1000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2258,7 +2270,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(2000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(2000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2278,7 +2290,7 @@ mod tests {
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), None);
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), None);
 		assert_eq!(tlv_stream.amount, None);
 	}
 
@@ -2401,7 +2413,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert_eq!(invoice_request.amount_msats(), Some(10_000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(10_000));
 		assert_eq!(tlv_stream.amount, Some(10_000));
 
 		match OfferBuilder::new(recipient_pubkey())
@@ -2445,7 +2457,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert_eq!(invoice_request.amount_msats(), Some(2_000));
+		assert_eq!(invoice_request.amount_msats(&DefaultCurrencyConversion), Some(2_000));
 		assert_eq!(tlv_stream.amount, Some(2_000));
 
 		match OfferBuilder::new(recipient_pubkey())

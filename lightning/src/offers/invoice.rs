@@ -1133,7 +1133,7 @@ impl InvoiceContents {
 	fn offer_chains(&self) -> Option<Vec<ChainHash>> {
 		match self {
 			InvoiceContents::ForOffer { invoice_request, .. } => {
-				Some(invoice_request.inner.offer.chains())
+				Some(invoice_request.inner.offer.chains().to_vec())
 			},
 			InvoiceContents::ForRefund { .. } => None,
 		}

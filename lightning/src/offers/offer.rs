@@ -639,13 +639,10 @@ pub(super) struct OfferContents {
 }
 
 macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
-	// TODO: Return a slice once ChainHash has constants.
-	// - https://github.com/rust-bitcoin/rust-bitcoin/pull/1283
-	// - https://github.com/rust-bitcoin/rust-bitcoin/pull/1286
 	/// The chains that may be used when paying a requested invoice (e.g., bitcoin mainnet).
 	/// Payments must be denominated in units of the minimal lightning-payable unit (e.g., msats)
 	/// for the selected chain.
-	pub fn chains(&$self) -> Vec<bitcoin::constants::ChainHash> {
+	pub fn chains(&$self) -> &[bitcoin::constants::ChainHash] {
 		$contents.chains()
 	}
 
@@ -717,7 +714,7 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	where
 		CC::Target: CurrencyConversion,
 	{
-		$contents.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
+		$contents.resolve_offer_amount(currency_conversion)
 	}
 } }
 
@@ -892,8 +889,8 @@ impl Hash for Offer {
 }
 
 impl OfferContents {
-	pub fn chains(&self) -> Vec<ChainHash> {
-		self.chains.as_ref().cloned().unwrap_or_else(|| vec![self.implied_chain()])
+	pub fn chains(&self) -> &[ChainHash] {
+		self.chains.as_ref().map(|chains| chains.as_slice()).unwrap_or(&[ChainHash::BITCOIN])
 	}
 
 	pub fn implied_chain(&self) -> ChainHash {
@@ -1025,6 +1022,14 @@ impl OfferContents {
 
 	pub(super) fn issuer_signing_pubkey(&self) -> Option<PublicKey> {
 		self.issuer_signing_pubkey
+	}
+
+	pub(super) fn resolve_offer_amount<'a, CC: Deref>
+		(&self, currency_conversion: &'a CC) -> Result<Option<u64>, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		self.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
 	}
 
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(
