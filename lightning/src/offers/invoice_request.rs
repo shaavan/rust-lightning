@@ -28,6 +28,7 @@
 //! use lightning::ln::channelmanager::PaymentId;
 //! use lightning::ln::inbound_payment::ExpandedKey;
 //! use lightning::types::features::OfferFeatures;
+//! use lightning::offers::currency::DefaultCurrencyConversion;
 //! use lightning::offers::invoice_request::UnsignedInvoiceRequest;
 //! # use lightning::offers::nonce::Nonce;
 //! use lightning::offers::offer::Offer;
@@ -49,7 +50,7 @@
 //! let mut buffer = Vec::new();
 //!
 //! # use lightning::offers::invoice_request::InvoiceRequestBuilder;
-//! # <InvoiceRequestBuilder<_>>::from(
+//! # <InvoiceRequestBuilder<_, _>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
 //!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &DefaultCurrencyConversion {})?
@@ -1655,6 +1656,7 @@ mod tests {
 	use crate::types::features::{InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::{PrintableString, UntrustedString};
 	use crate::util::ser::{BigSize, Readable, Writeable};
+use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{self, Keypair, Secp256k1, SecretKey};
@@ -2318,7 +2320,13 @@ mod tests {
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), None);
+		assert!(
+			matches!(
+				invoice_request.payable_amount_msats(&DefaultCurrencyConversion),
+				Err(Bolt12SemanticError::UnsupportedCurrency)
+			)
+		);
+		assert_eq!(invoice_request.payable_amount_msats(&TestCurrencyConversion), Ok(10_000));
 		assert_eq!(tlv_stream.amount, None);
 	}
 
