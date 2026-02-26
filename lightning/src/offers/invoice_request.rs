@@ -1492,15 +1492,13 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 
 		offer.check_quantity(quantity)?;
 
-		let offer_amount_msats = match offer.amount() {
-			None => None,
-			Some(Amount::Bitcoin { amount_msats }) => Some(amount_msats),
+		match offer.amount() {
+			None => offer.check_amount_msats_for_quantity(None, amount, quantity)?,
+			Some(Amount::Bitcoin { amount_msats }) => offer.check_amount_msats_for_quantity(Some(amount_msats), amount, quantity)?,
 			// If the offer amount is in currency, we don't have access to currency conversion at this point.
 			// The following check will be perfomed at the time of handling the Invoice Request
-			Some(Amount::Currency { .. }) => None,
+			Some(Amount::Currency { .. }) => (),
 		};
-
-		offer.check_amount_msats_for_quantity(offer_amount_msats, amount, quantity)?;
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
 
@@ -2780,13 +2778,11 @@ mod tests {
 		let mut buffer = Vec::new();
 		invoice_request.write(&mut buffer).unwrap();
 
+		// Since LDK now supports Offers with currency-denominated amounts, this should not fail.
 		match InvoiceRequest::try_from(buffer) {
-			Ok(_) => panic!("expected error"),
+			Ok(_) => (),
 			Err(e) => {
-				assert_eq!(
-					e,
-					Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnsupportedCurrency)
-				);
+				panic!("unexpected error: {:?}", e);
 			},
 		}
 

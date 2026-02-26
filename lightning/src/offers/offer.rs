@@ -950,12 +950,14 @@ impl OfferContents {
 		&self, offer_amount_msats: Option<u64>, requested_total_amount_msats: Option<u64>,
 		requested_quantity: Option<u64>,
 	) -> Result<(), Bolt12SemanticError> {
-		// Quantity handling
-		let quantity = if self.expects_quantity() {
-			requested_quantity.ok_or(Bolt12SemanticError::MissingQuantity)?
-		} else {
-			requested_quantity.unwrap_or(1)
-		};
+		// If the offer expects a quantity but none has been provided yet,
+		// the implied total amount cannot be determined. Defer amount
+		// validation until the quantity is known.
+		if self.expects_quantity() && requested_quantity.is_none() {
+			return Ok(())
+		}
+
+		let quantity = requested_quantity.unwrap_or(1);
 
 		// Expected offer amount defaults to zero if unspecified
 		let expected_amount_msats = offer_amount_msats
@@ -1782,10 +1784,7 @@ mod tests {
 		assert_eq!(builder.offer.amount, Some(currency_amount.clone()));
 		assert_eq!(tlv_stream.0.amount, Some(10));
 		assert_eq!(tlv_stream.0.currency, Some(b"USD"));
-		match builder.build() {
-			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedCurrency),
-		}
+		assert!(builder.build().is_ok(), "unexpected error");
 
 		let offer = OfferBuilder::new(pubkey(42))
 			.amount(currency_amount.clone())
