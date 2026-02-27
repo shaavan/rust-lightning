@@ -1196,38 +1196,18 @@ impl InvoiceRequestContents {
 		CC::Target: CurrencyConversion
 	{
 		let quantity = self.quantity().unwrap_or(1);
-		let requested_msats = self.amount_msats();
-
-		let offer_amount_msats = self.inner.offer
-			.resolve_offer_amount(currency_conversion)?
-			.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
-			.transpose()?;
-
-		let amount = match (requested_msats, offer_amount_msats) {
-			// The payer specified an amount and the offer defines a minimum.
-			// Enforce that the requested amount satisfies the minimum.
-			(Some(requested), Some(minimum)) if requested < minimum => {
-				Err(Bolt12SemanticError::InsufficientAmount)
-			},
-
-			// The payer specified a valid amount which satisfies the offer minimum
-			// (or the offer does not define one).
-			(Some(requested), _) => Ok(requested),
-
-			// The payer did not specify an amount but the offer defines one.
-			// Use the offer-implied amount.
-			(None, Some(amount_msats)) => Ok(amount_msats),
-
-			// Neither the payer nor the offer defines an amount.
-			(None, None) => Err(Bolt12SemanticError::MissingAmount),
-		}?;
-
-		// Sanity check:
-		if amount > MAX_VALUE_MSAT {
-			return Err(Bolt12SemanticError::InvalidAmount);
+		match self.amount_msats() {
+			Some(msats) => Ok(msats),
+			None => self.inner.offer
+				.resolve_offer_amount(currency_conversion)?
+				.map(|unit_msats| {
+					unit_msats
+						.checked_mul(quantity)
+						.ok_or(Bolt12SemanticError::InvalidAmount)
+				})
+				.transpose()?
+				.ok_or(Bolt12SemanticError::MissingAmount),
 		}
-
-		Ok(amount)
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {

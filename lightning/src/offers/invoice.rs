@@ -121,7 +121,7 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
@@ -410,7 +410,25 @@ macro_rules! invoice_builder_methods {
 		where
 			CC::Target: CurrencyConversion,
 		{
-			invoice_request.payable_amount_msats(currency_conversion)
+			let quantity = invoice_request.quantity().unwrap_or(1);
+			let requested_msats = invoice_request.payable_amount_msats(currency_conversion)?;
+
+			let offer_amount_msats = invoice_request
+				.resolve_offer_amount(currency_conversion)?
+				.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
+				.transpose()?;
+
+			if let Some(minimum) = offer_amount_msats {
+				if requested_msats < minimum {
+					return Err(Bolt12SemanticError::InsufficientAmount)
+				}
+			}
+
+			if requested_msats > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
+			}
+
+			Ok(requested_msats)
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
@@ -1750,7 +1768,7 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 			// Note:
 			// It is safe to use `DefaultCurrencyConversion` here.
 			//
-			// `payable_amount_msats` can only fail in two cases:
+			// `payable_amount_msats` can fail in two cases:
 			// 1. The computed payable amount is semantically invalid.
 			// 2. The invoice request does not specify an amount and the original offer
 			//    is currency-denominated.
