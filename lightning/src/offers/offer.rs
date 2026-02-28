@@ -801,20 +801,25 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 	pub fn request_invoice<
 		'a, 'b,
 		#[cfg(not(c_bindings))]
-		T: secp256k1::Signing
+		T: secp256k1::Signing,
+		CC: Deref,
 	>(
 		&'a $self, expanded_key: &ExpandedKey, nonce: Nonce,
 		#[cfg(not(c_bindings))]
 		secp_ctx: &'b Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &'b Secp256k1<secp256k1::All>,
-		payment_id: PaymentId
-	) -> Result<$builder, Bolt12SemanticError> {
+		payment_id: PaymentId,
+		currency_conversion: &'a CC,
+	) -> Result<$builder, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
 		if $offer.offer_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
 
-		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id);
+		let mut builder = <$builder>::deriving_signing_pubkey(&$offer, expanded_key, nonce, secp_ctx, payment_id, currency_conversion);
 		if let Some(hrn) = $hrn {
 			#[cfg(c_bindings)]
 			{
@@ -831,7 +836,7 @@ macro_rules! request_invoice_derived_signing_pubkey { ($self: ident, $offer: exp
 
 #[cfg(not(c_bindings))]
 impl Offer {
-	request_invoice_derived_signing_pubkey!(self, self, InvoiceRequestBuilder<'a, 'b, T>, None);
+	request_invoice_derived_signing_pubkey!(self, self, InvoiceRequestBuilder<'a, 'b, T, CC>, None);
 }
 
 #[cfg(not(c_bindings))]
@@ -839,7 +844,7 @@ impl OfferFromHrn {
 	request_invoice_derived_signing_pubkey!(
 		self,
 		self.offer,
-		InvoiceRequestBuilder<'a, 'b, T>,
+		InvoiceRequestBuilder<'a, 'b, T, CC>,
 		Some(self.hrn)
 	);
 }
@@ -849,7 +854,7 @@ impl Offer {
 	request_invoice_derived_signing_pubkey!(
 		self,
 		self,
-		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b>,
+		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b, CC>,
 		None
 	);
 }
@@ -859,7 +864,7 @@ impl OfferFromHrn {
 	request_invoice_derived_signing_pubkey!(
 		self,
 		self.offer,
-		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b>,
+		InvoiceRequestWithDerivedPayerSigningPubkeyBuilder<'a, 'b, CC>,
 		Some(self.hrn)
 	);
 }
@@ -1559,6 +1564,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
 
 		#[cfg(c_bindings)]
 		use super::OfferWithDerivedMetadataBuilder as OfferBuilder;
@@ -1572,7 +1578,7 @@ mod tests {
 		assert_eq!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1583,7 +1589,7 @@ mod tests {
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1600,7 +1606,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1616,7 +1622,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1631,6 +1637,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
 
 		let blinded_path = BlindedMessagePath::from_blinded_path(
 			pubkey(40),
@@ -1654,7 +1661,7 @@ mod tests {
 		assert_ne!(offer.issuer_signing_pubkey(), Some(node_id));
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1665,7 +1672,7 @@ mod tests {
 
 		// Fails verification when using the wrong method
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1680,7 +1687,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1698,7 +1705,7 @@ mod tests {
 
 		let invoice_request = Offer::try_from(encoded_offer)
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1918,12 +1925,13 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
 
 		match OfferBuilder::new(pubkey(42))
 			.features_unchecked(OfferFeatures::unknown())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),
