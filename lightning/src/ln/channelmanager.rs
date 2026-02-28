@@ -5685,6 +5685,7 @@ where
 			let features = self.bolt12_invoice_features();
 			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
 				invoice,
+				&self.flow.currency_conversion,
 				payment_id,
 				features,
 				best_block_height,
@@ -7960,7 +7961,9 @@ where
 								});
 								let verified_invreq = match verify_opt {
 									Some(verified_invreq) => {
-										match verified_invreq.amount_msats(&self.flow.currency_conversion) {
+										match verified_invreq
+											.amount_msats(&self.flow.currency_conversion)
+										{
 											Ok(invreq_amt_msat) => {
 												if payment_data.total_msat < invreq_amt_msat {
 													fail_htlc!(claimable_htlc, payment_hash);
@@ -7976,7 +7979,7 @@ where
 												// Therefore, amount resolution must succeed here. Reaching this branch indicates
 												// an internal logic error.
 												debug_assert!(false);
-											}
+											},
 										}
 										verified_invreq
 									},
