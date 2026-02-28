@@ -2329,6 +2329,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 		.build().unwrap();
 
 	let payment_id = PaymentId([1; 32]);
+	let conversion = TestCurrencyConversion;
 	david.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 
 	connect_peers(david, bob);
@@ -2363,7 +2364,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-			request.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+			request.respond_using_derived_keys_no_std(&conversion, payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
