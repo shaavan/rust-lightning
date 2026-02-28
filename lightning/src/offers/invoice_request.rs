@@ -738,12 +738,23 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.chain()
 	}
 
-	/// The amount to pay in msats (i.e., the minimum lightning-payable unit for [`chain`]), which
-	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
+	/// Returns the total amount requested by this invoice request, in millisatoshis.
 	///
-	/// [`chain`]: Self::chain
-	pub fn amount_msats(&$self) -> Option<u64> {
-		$contents.amount_msats()
+	/// If the invoice request explicitly sets an amount, that value is returned.
+	/// Otherwise, the amount is derived from [`Offer::amount`], multiplied by the
+	/// requested [`quantity`], and converted to millisatoshis if the offer amount
+	/// is currency-denominated.
+	///
+	/// This returns an error if the effective amount is semantically invalid
+	/// (for example due to unsupported currency conversion or arithmetic overflow).
+	///
+	/// [`amount_msats`]: Self::amount_msats
+	/// [`quantity`]: Self::quantity
+	pub fn amount_msats<CC: Deref>(&$self, currency_conversion: &CC) -> Result<u64, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
+		$contents.amount_msats(currency_conversion)
 	}
 
 	/// Returns whether an amount was set in the request; otherwise, if [`amount_msats`] is `Some`
@@ -1176,17 +1187,25 @@ impl InvoiceRequestContents {
 		self.inner.chain()
 	}
 
-	pub(super) fn amount_msats(&self) -> Option<u64> {
-		self.inner.amount_msats().or_else(|| match self.inner.offer.amount() {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
-			},
-			Some(Amount::Currency { .. }) => None,
-			None => {
-				debug_assert!(false);
-				None
-			},
-		})
+	pub(super) fn amount_msats<CC: Deref>(
+		&self, currency_conversion: &CC,
+	) -> Result<u64, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		let quantity = self.quantity().unwrap_or(1);
+		match self.inner.amount_msats {
+			Some(msats) => Ok(msats),
+			None => self
+				.inner
+				.offer
+				.resolve_offer_amount(currency_conversion)?
+				.map(|unit_msats| {
+					unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
+				})
+				.transpose()?
+				.ok_or(Bolt12SemanticError::MissingAmount),
+		}
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {
@@ -1666,7 +1685,7 @@ mod tests {
 		assert_eq!(invoice_request.supported_quantity(), Quantity::One);
 		assert_eq!(invoice_request.issuer_signing_pubkey(), Some(recipient_pubkey()));
 		assert_eq!(invoice_request.chain(), ChainHash::using_genesis_block(Network::Bitcoin));
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(1000));
 		assert_eq!(invoice_request.invoice_request_features(), &InvoiceRequestFeatures::empty());
 		assert_eq!(invoice_request.quantity(), None);
 		assert_eq!(invoice_request.payer_note(), None);
@@ -2001,7 +2020,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2019,7 +2038,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2035,7 +2054,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1001));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(1001));
 		assert_eq!(tlv_stream.amount, Some(1001));
 
 		match OfferBuilder::new(recipient_pubkey())
@@ -2147,7 +2166,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(1000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2164,7 +2183,7 @@ mod tests {
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(2000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(2000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2174,12 +2193,16 @@ mod tests {
 			)
 			.unwrap()
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &supported_conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), None);
+		assert!(matches!(
+			invoice_request.amount_msats(&conversion),
+			Err(Bolt12SemanticError::UnsupportedCurrency)
+		));
+		assert_eq!(invoice_request.amount_msats(&supported_conversion), Ok(10_000));
 		assert_eq!(tlv_stream.amount, None);
 	}
 
@@ -2279,7 +2302,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert_eq!(invoice_request.amount_msats(), Some(10_000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000));
 		assert_eq!(tlv_stream.amount, Some(10_000));
 
 		match OfferBuilder::new(recipient_pubkey())
@@ -2313,7 +2336,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert_eq!(invoice_request.amount_msats(), Some(2_000));
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(2_000));
 		assert_eq!(tlv_stream.amount, Some(2_000));
 
 		match OfferBuilder::new(recipient_pubkey())
