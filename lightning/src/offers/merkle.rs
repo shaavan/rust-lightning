@@ -287,7 +287,7 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::offers::currency::DefaultCurrencyConversion;
-use crate::offers::invoice_request::{InvoiceRequest, UnsignedInvoiceRequest};
+	use crate::offers::invoice_request::{InvoiceRequest, UnsignedInvoiceRequest};
 	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
 	use crate::offers::parse::Bech32Encode;

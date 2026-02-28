@@ -478,7 +478,7 @@ fn check_dummy_hop_pattern_in_offer() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 
@@ -500,7 +500,7 @@ fn check_dummy_hop_pattern_in_offer() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 }
@@ -685,7 +685,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, bob, charlie_id));
 
@@ -843,7 +843,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 
@@ -1231,7 +1231,7 @@ fn creates_and_pays_for_offer_with_retry() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
@@ -1532,7 +1532,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(david_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
@@ -1561,7 +1561,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
@@ -1661,7 +1661,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
