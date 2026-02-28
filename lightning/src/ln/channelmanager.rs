@@ -12914,9 +12914,9 @@ where
 	create_refund_builder!(self, RefundBuilder<'_, secp256k1::All>);
 
 	#[cfg(c_bindings)]
-	create_offer_builder!(self, OfferWithDerivedMetadataBuilder);
+	create_offer_builder!(self, OfferWithDerivedMetadataBuilder<'_>);
 	#[cfg(c_bindings)]
-	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder);
+	create_refund_builder!(self, RefundMaybeWithDerivedMetadataBuilder<'_>);
 
 	/// Retrieve an [`Offer`] for receiving async payments as an often-offline recipient. Will only
 	/// return an offer if [`Self::set_paths_to_static_invoice_server`] was called and we succeeded in
