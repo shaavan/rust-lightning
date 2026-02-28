@@ -28,6 +28,7 @@
 //! use lightning::ln::channelmanager::PaymentId;
 //! use lightning::ln::inbound_payment::ExpandedKey;
 //! use lightning::types::features::OfferFeatures;
+//! use lightning::offers::currency::DefaultCurrencyConversion;
 //! use lightning::offers::invoice_request::UnsignedInvoiceRequest;
 //! # use lightning::offers::nonce::Nonce;
 //! use lightning::offers::offer::Offer;
@@ -46,13 +47,14 @@
 //! # let nonce = Nonce::from_entropy_source(&entropy);
 //! let secp_ctx = Secp256k1::new();
 //! let payment_id = PaymentId([1; 32]);
+//!	let conversion = DefaultCurrencyConversion;
 //! let mut buffer = Vec::new();
 //!
 //! # use lightning::offers::invoice_request::InvoiceRequestBuilder;
 //! # <InvoiceRequestBuilder<_>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
-//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)?
+//!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)?
 //! # )
 //!     .chain(Network::Testnet)?
 //!     .amount_msats(1000)?
@@ -71,6 +73,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
@@ -95,6 +98,7 @@ use bitcoin::constants::ChainHash;
 use bitcoin::network::Network;
 use bitcoin::secp256k1::schnorr::Signature;
 use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
+use core::ops::Deref;
 
 #[cfg(not(c_bindings))]
 use crate::offers::invoice::InvoiceBuilder;
@@ -118,11 +122,15 @@ pub(super) const IV_BYTES: &[u8; IV_LEN] = b"LDK Invreq ~~~~~";
 /// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 ///
 /// [module-level documentation]: self
-pub struct InvoiceRequestBuilder<'a, 'b, T: secp256k1::Signing> {
+pub struct InvoiceRequestBuilder<'a, 'b, T: secp256k1::Signing, CC: Deref>
+where
+	CC::Target: CurrencyConversion,
+{
 	offer: &'a Offer,
 	invoice_request: InvoiceRequestContentsWithoutPayerSigningPubkey,
 	payer_signing_pubkey: Option<PublicKey>,
 	secp_ctx: Option<&'b Secp256k1<T>>,
+	currency_conversion: &'a CC,
 }
 
 /// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
@@ -146,6 +154,7 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 		pub(super) fn deriving_signing_pubkey(
 			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce,
 			secp_ctx: &'b Secp256k1<$secp_context>, payment_id: PaymentId,
+			currency_conversion: &'a CC,
 		) -> Self {
 			let payment_id = Some(payment_id);
 			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
@@ -155,6 +164,7 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 				invoice_request: Self::create_contents(offer, metadata),
 				payer_signing_pubkey: None,
 				secp_ctx: Some(secp_ctx),
+				currency_conversion,
 			}
 		}
 
@@ -400,7 +410,10 @@ macro_rules! invoice_request_builder_test_methods { (
 	}
 } }
 
-impl<'a, 'b, T: secp256k1::Signing> InvoiceRequestBuilder<'a, 'b, T> {
+impl<'a, 'b, T: secp256k1::Signing, CC: Deref> InvoiceRequestBuilder<'a, 'b, T, CC>
+where
+	CC::Target: CurrencyConversion,
+{
 	invoice_request_derived_payer_signing_pubkey_builder_methods!(self, Self, T);
 	invoice_request_builder_methods!(self, Self, Self, self, T, mut);
 
@@ -1556,6 +1569,7 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+	use crate::offers::currency::DefaultCurrencyConversion;
 	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
 	use crate::offers::invoice_request::string_truncate_safe;
 	use crate::offers::merkle::{self, SignatureTlvStreamRef, TaggedHash, TlvStream};
@@ -1588,6 +1602,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 		let encrypted_payment_id = expanded_key.crypt_for_offer(payment_id.0, nonce);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -1595,7 +1610,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -1679,6 +1694,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let future_expiry = Duration::from_secs(u64::max_value());
 		let past_expiry = Duration::from_secs(0);
@@ -1689,7 +1705,7 @@ mod tests {
 			.absolute_expiry(future_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1702,7 +1718,7 @@ mod tests {
 			.absolute_expiry(past_expiry)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1718,6 +1734,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let offer = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
@@ -1726,7 +1743,7 @@ mod tests {
 			.build()
 			.unwrap();
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.experimental_bar(42)
 			.build_and_sign()
@@ -1829,6 +1846,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let mainnet = ChainHash::using_genesis_block(Network::Bitcoin);
 		let testnet = ChainHash::using_genesis_block(Network::Testnet);
@@ -1838,7 +1856,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1854,7 +1872,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()
@@ -1871,7 +1889,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1888,7 +1906,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -1906,7 +1924,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Bitcoin)
 		{
@@ -1920,7 +1938,7 @@ mod tests {
 			.chain(Network::Testnet)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -1936,13 +1954,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -1958,7 +1977,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(1001)
 			.unwrap()
@@ -1976,7 +1995,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(1001)
 			.unwrap()
@@ -1992,7 +2011,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(999)
 		{
@@ -2006,7 +2025,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2021,7 +2040,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(MAX_VALUE_MSAT + 1)
 		{
@@ -2035,7 +2054,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -2050,7 +2069,7 @@ mod tests {
 		match OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2064,7 +2083,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2082,6 +2101,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 		let supported_conversion = TestCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2089,7 +2109,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2104,7 +2124,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.quantity(2)
 			.unwrap()
@@ -2122,7 +2142,7 @@ mod tests {
 			)
 			.unwrap()
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
@@ -2138,13 +2158,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2158,7 +2179,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.features_unchecked(InvoiceRequestFeatures::empty())
@@ -2176,6 +2197,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let one = NonZeroU64::new(1).unwrap();
 		let ten = NonZeroU64::new(10).unwrap();
@@ -2186,7 +2208,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2200,7 +2222,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2216,7 +2238,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(10_000)
 			.unwrap()
@@ -2234,7 +2256,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(11_000)
 			.unwrap()
@@ -2250,7 +2272,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2268,7 +2290,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2282,7 +2304,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 		{
@@ -2298,13 +2320,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.payer_note("bar".into())
 			.build_and_sign()
@@ -2318,7 +2341,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.payer_note("bar".into())
 			.payer_note("baz".into())
@@ -2336,13 +2359,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		match OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.features_unchecked(InvoiceRequestFeatures::unknown())
 			.build_and_sign()
@@ -2361,13 +2385,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2387,13 +2412,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Bitcoin)
 			.unwrap()
@@ -2412,7 +2438,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain_unchecked(Network::Testnet)
 			.build_unchecked_and_sign();
@@ -2436,6 +2462,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 		let supported_conversion = TestCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2443,7 +2470,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2458,7 +2485,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(1000)
 			.unwrap()
@@ -2475,7 +2502,7 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2495,7 +2522,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats_unchecked(999)
 			.build_unchecked_and_sign();
@@ -2522,7 +2549,7 @@ mod tests {
 			)
 			.unwrap()
 			.build_unchecked()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2545,7 +2572,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.quantity(u64::max_value())
 			.unwrap()
@@ -2570,6 +2597,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let one = NonZeroU64::new(1).unwrap();
 		let ten = NonZeroU64::new(10).unwrap();
@@ -2580,7 +2608,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2598,7 +2626,7 @@ mod tests {
 			.supported_quantity(Quantity::One)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2624,7 +2652,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(10_000)
 			.unwrap()
@@ -2646,7 +2674,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(ten))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(11_000)
 			.unwrap()
@@ -2670,7 +2698,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.amount_msats(2_000)
 			.unwrap()
@@ -2692,7 +2720,7 @@ mod tests {
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2713,7 +2741,7 @@ mod tests {
 			.supported_quantity(Quantity::Bounded(one))
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign();
 
@@ -2736,13 +2764,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let unsigned_invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2769,13 +2798,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let unsigned_invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2800,13 +2830,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let unsigned_invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked();
 		let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
@@ -2835,6 +2866,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let mut buffer = Vec::new();
 		OfferBuilder::new(recipient_pubkey())
@@ -2842,7 +2874,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked()
 			.contents
@@ -2865,13 +2897,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let mut invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -2898,6 +2931,7 @@ mod tests {
 		let entropy = FixedEntropy {};
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		const UNKNOWN_ODD_TYPE: u64 = INVOICE_REQUEST_TYPES.end - 1;
 		assert!(UNKNOWN_ODD_TYPE % 2 == 1);
@@ -2909,7 +2943,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_without_checks();
 
@@ -2945,7 +2979,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_without_checks();
 
@@ -2980,6 +3014,7 @@ mod tests {
 		let entropy = FixedEntropy {};
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		const UNKNOWN_ODD_TYPE: u64 = EXPERIMENTAL_INVOICE_REQUEST_TYPES.start + 1;
 		assert!(UNKNOWN_ODD_TYPE % 2 == 1);
@@ -2991,7 +3026,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_without_checks();
 
@@ -3030,7 +3065,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_without_checks();
 
@@ -3066,7 +3101,7 @@ mod tests {
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -3094,13 +3129,14 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
 			.unwrap()
 			.build()
 			.unwrap()
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_and_sign()
 			.unwrap();
@@ -3138,6 +3174,7 @@ mod tests {
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
+		let conversion = DefaultCurrencyConversion;
 
 		#[cfg(c_bindings)]
 		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
@@ -3157,7 +3194,7 @@ mod tests {
 		let expected_payer_note = "❤️".repeat(85);
 
 		let invoice_request = offer
-			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.chain(Network::Testnet)
 			.unwrap()
