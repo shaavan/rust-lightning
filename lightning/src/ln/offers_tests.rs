@@ -473,12 +473,14 @@ fn check_dummy_hop_pattern_in_offer() {
 	}
 
 	let payment_id = PaymentId([1; 32]);
+	let conversion = bob.node.flow.currency_conversion;
+
 	bob.node.pay_for_offer(&compact_offer, None, payment_id, Default::default()).unwrap();
 
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 
@@ -500,7 +502,7 @@ fn check_dummy_hop_pattern_in_offer() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 }
@@ -662,6 +664,8 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	}
 
 	let payment_id = PaymentId([1; 32]);
+	let conversion = david.node.flow.currency_conversion;
+
 	david.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
@@ -685,7 +689,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, bob, charlie_id));
 
@@ -827,6 +831,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	}
 
 	let payment_id = PaymentId([1; 32]);
+	let conversion = bob.node.flow.currency_conversion;
 	bob.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
@@ -843,7 +848,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 
@@ -1208,6 +1213,7 @@ fn creates_and_pays_for_offer_with_retry() {
 		assert!(check_compact_path_introduction_node(&path, bob, alice_id));
 	}
 	let payment_id = PaymentId([1; 32]);
+	let conversion = bob.node.flow.currency_conversion;
 	bob.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(bob, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
@@ -1231,7 +1237,7 @@ fn creates_and_pays_for_offer_with_retry() {
 			human_readable_name: None,
 		},
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_compact_path_introduction_node(&reply_path, alice, bob_id));
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
@@ -1518,6 +1524,8 @@ fn fails_authentication_when_handling_invoice_request() {
 
 	// Send the invoice request directly to Alice instead of using a blinded path.
 	let payment_id = PaymentId([1; 32]);
+	let conversion = david.node.flow.currency_conversion;
+
 	david.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
@@ -1532,7 +1540,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(david_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
@@ -1561,7 +1569,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
@@ -1635,6 +1643,8 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	};
 
 	let payment_id = PaymentId([2; 32]);
+	let conversion = david.node.flow.currency_conversion;
+
 	david.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 	expect_recent_payment!(david, RecentPaymentDetails::AwaitingInvoice, payment_id);
 
@@ -1661,7 +1671,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_compact_path_introduction_node(&reply_path, david, charlie_id));
 
