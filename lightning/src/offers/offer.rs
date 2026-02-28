@@ -913,6 +913,10 @@ impl OfferContents {
 		self.amount
 	}
 
+	pub(super) fn is_currency_denominated(&self) -> bool {
+		matches!(self.amount(), Some(Amount::Currency { .. }))
+	}
+
 	pub fn description(&self) -> Option<PrintableString<'_>> {
 		self.description.as_ref().map(|description| PrintableString(description))
 	}

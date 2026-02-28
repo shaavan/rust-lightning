@@ -23,6 +23,7 @@
 //! use bitcoin::hashes::Hash;
 //! use bitcoin::secp256k1::{Keypair, PublicKey, Secp256k1, SecretKey};
 //! use core::convert::TryFrom;
+//! use lightning::offers::currency::DefaultCurrencyConversion;
 //! use lightning::offers::invoice::UnsignedBolt12Invoice;
 //! use lightning::offers::invoice_request::InvoiceRequest;
 //! use lightning::offers::refund::Refund;
@@ -36,6 +37,7 @@
 //! # fn create_payment_hash() -> PaymentHash { unimplemented!() }
 //! #
 //! # fn parse_invoice_request(bytes: Vec<u8>) -> Result<(), lightning::offers::parse::Bolt12ParseError> {
+//! let conversion = DefaultCurrencyConversion;
 //! let payment_paths = create_payment_paths();
 //! let payment_hash = create_payment_hash();
 //! let secp_ctx = Secp256k1::new();
@@ -50,13 +52,13 @@
 #![cfg_attr(
 	feature = "std",
 	doc = "
-    .respond_with(payment_paths, payment_hash)?
+    .respond_with(&conversion, payment_paths, payment_hash)?
 "
 )]
 #![cfg_attr(
 	not(feature = "std"),
 	doc = "
-    .respond_with_no_std(payment_paths, payment_hash, core::time::Duration::from_secs(0))?
+    .respond_with_no_std(&conversion, payment_paths, payment_hash, core::time::Duration::from_secs(0))?
 "
 )]
 //! # )
@@ -120,8 +122,8 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
-use crate::offers::currency::DefaultCurrencyConversion;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
@@ -242,11 +244,12 @@ impl SigningPubkeyStrategy for DerivedSigningPubkey {}
 macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
-		pub(super) fn for_offer(
-			invoice_request: &'a InvoiceRequest, payment_paths: Vec<BlindedPaymentPath>,
-			created_at: Duration, payment_hash: PaymentHash, signing_pubkey: PublicKey,
+		pub(super) fn for_offer<CC: CurrencyConversion>(
+			invoice_request: &'a InvoiceRequest, currency_conversion: &CC,
+			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
+			payment_hash: PaymentHash, signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError> {
-			let amount_msats = Self::amount_msats(invoice_request)?;
+			let amount_msats = Self::amount_msats(invoice_request, currency_conversion)?;
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
 				fields: Self::fields(
@@ -314,11 +317,12 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	($self: ident, $self_type: ty) => {
 		#[cfg_attr(c_bindings, allow(dead_code))]
-		pub(super) fn for_offer_using_keys(
-			invoice_request: &'a InvoiceRequest, payment_paths: Vec<BlindedPaymentPath>,
-			created_at: Duration, payment_hash: PaymentHash, keys: Keypair,
+		pub(super) fn for_offer_using_keys<CC: CurrencyConversion>(
+			invoice_request: &'a InvoiceRequest, currency_conversion: &CC,
+			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
+			payment_hash: PaymentHash, keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {
-			let amount_msats = Self::amount_msats(invoice_request)?;
+			let amount_msats = Self::amount_msats(invoice_request, currency_conversion)?;
 			let signing_pubkey = keys.public_key();
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
@@ -394,19 +398,40 @@ macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
-		pub(crate) fn amount_msats(
-			invoice_request: &InvoiceRequest,
+		pub(crate) fn amount_msats<CC: CurrencyConversion>(
+			invoice_request: &InvoiceRequest, currency_conversion: &CC,
 		) -> Result<u64, Bolt12SemanticError> {
-			match invoice_request.contents.inner.amount_msats() {
-				Some(amount_msats) => Ok(amount_msats),
-				None => match invoice_request.contents.inner.offer.amount() {
-					Some(Amount::Bitcoin { amount_msats }) => amount_msats
-						.checked_mul(invoice_request.quantity().unwrap_or(1))
-						.ok_or(Bolt12SemanticError::InvalidAmount),
-					Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
-					None => Err(Bolt12SemanticError::MissingAmount),
-				},
+			let requested_msats = invoice_request.amount_msats(currency_conversion)?;
+
+			// Only requests with an explicit `amount_msats` need a separate minimum check.
+			// When the request omits the amount, `invoice_request.amount_msats(...)` has
+			// already resolved the offer amount for this quantity, so checking the minimum
+			// here would repeat the currency conversion and could observe a different
+			// conversion snapshot.
+			if invoice_request.has_amount_msats() {
+				let quantity = invoice_request.quantity().unwrap_or(1);
+				let minimum_offer_msats =
+					match invoice_request.resolve_offer_amount(currency_conversion)? {
+						Some(unit_msats) => Some(
+							unit_msats
+								.checked_mul(quantity)
+								.ok_or(Bolt12SemanticError::InvalidAmount)?,
+						),
+						None => None,
+					};
+
+				if let Some(minimum) = minimum_offer_msats {
+					if requested_msats < minimum {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
+				}
 			}
+
+			if requested_msats > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
+			}
+
+			Ok(requested_msats)
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
@@ -628,9 +653,22 @@ impl UnsignedBolt12Invoice {
 		const NON_EXPERIMENTAL_TYPES: core::ops::Range<u64> = 0..INVOICE_REQUEST_TYPES.end;
 		const EXPERIMENTAL_TYPES: core::ops::Range<u64> =
 			EXPERIMENTAL_OFFER_TYPES.start..EXPERIMENTAL_INVOICE_REQUEST_TYPES.end;
+		const INVOICE_REQUEST_AMOUNT_TYPE: u64 = 82;
 
 		let (_, _, _, invoice_tlv_stream, _, _, experimental_invoice_tlv_stream) =
 			contents.as_tlv_stream();
+		// If a fiat-denominated offer request omitted an explicit msat amount, serialize the
+		// resolved invoice amount into the embedded invoice_request so the invoice can be parsed
+		// again without needing currency conversion context.
+		let invoice_request_amount_msats = match &contents {
+			InvoiceContents::ForOffer { invoice_request, fields }
+				if !invoice_request.has_amount_msats()
+					&& invoice_request.inner.offer.is_currency_denominated() =>
+			{
+				Some(fields.amount_msats)
+			},
+			_ => None,
+		};
 
 		const INVOICE_ALLOCATION_SIZE: usize = 1024;
 		let mut bytes = Vec::with_capacity(INVOICE_ALLOCATION_SIZE);
@@ -638,18 +676,42 @@ impl UnsignedBolt12Invoice {
 		// Use the invoice_request bytes instead of the invoice_request TLV stream as the latter may
 		// have contained unknown TLV records, which are not stored in `InvoiceRequestContents` or
 		// `RefundContents`.
+		let mut invoice_request_amount_serialized = invoice_request_amount_msats.is_none();
 		for record in TlvStream::new(invreq_bytes).range(NON_EXPERIMENTAL_TYPES) {
+			if let Some(amount_msats) = invoice_request_amount_msats {
+				// Keep the TLV stream ordered by inserting the amount before the first later record.
+				if !invoice_request_amount_serialized && record.r#type > INVOICE_REQUEST_AMOUNT_TYPE
+				{
+					Self::write_invoice_request_amount(&mut bytes, amount_msats);
+					invoice_request_amount_serialized = true;
+				}
+
+				// Replace any serialized amount with the resolved invoice_request amount.
+				if record.r#type == INVOICE_REQUEST_AMOUNT_TYPE {
+					if !invoice_request_amount_serialized {
+						Self::write_invoice_request_amount(&mut bytes, amount_msats);
+						invoice_request_amount_serialized = true;
+					}
+					continue;
+				}
+			}
 			record.write(&mut bytes).unwrap();
 		}
 
-		let remaining_bytes = &invreq_bytes[bytes.len()..];
+		// Append the amount if the copied invoice_request had no amount TLV and no later
+		// non-experimental TLV where it could be inserted in order.
+		if let Some(amount_msats) = invoice_request_amount_msats {
+			if !invoice_request_amount_serialized {
+				Self::write_invoice_request_amount(&mut bytes, amount_msats);
+			}
+		}
 
 		invoice_tlv_stream.write(&mut bytes).unwrap();
 
 		const EXPERIMENTAL_TLV_ALLOCATION_SIZE: usize = 0;
 		let mut experimental_bytes = Vec::with_capacity(EXPERIMENTAL_TLV_ALLOCATION_SIZE);
 
-		let experimental_tlv_stream = TlvStream::new(remaining_bytes).range(EXPERIMENTAL_TYPES);
+		let experimental_tlv_stream = TlvStream::new(invreq_bytes).range(EXPERIMENTAL_TYPES);
 		for record in experimental_tlv_stream {
 			record.write(&mut experimental_bytes).unwrap();
 		}
@@ -660,6 +722,21 @@ impl UnsignedBolt12Invoice {
 		let tagged_hash = TaggedHash::from_tlv_stream(SIGNATURE_TAG, tlv_stream);
 
 		Self { bytes, experimental_bytes, contents, tagged_hash }
+	}
+
+	fn write_invoice_request_amount(bytes: &mut Vec<u8>, amount_msats: u64) {
+		InvoiceRequestTlvStreamRef {
+			chain: None,
+			amount: Some(amount_msats),
+			features: None,
+			quantity: None,
+			payer_id: None,
+			payer_note: None,
+			paths: None,
+			offer_from_hrn: None,
+		}
+		.write(bytes)
+		.unwrap();
 	}
 
 	/// Returns the [`TaggedHash`] of the invoice to sign.
@@ -1932,7 +2009,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths.clone(), payment_hash, now)
+			.respond_with_no_std(&conversion, payment_paths.clone(), payment_hash, now)
 			.unwrap()
 			.build()
 			.unwrap();
@@ -2204,7 +2281,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with(payment_paths(), payment_hash())
+			.respond_with(&conversion, payment_paths(), payment_hash())
 			.unwrap()
 			.build()
 		{
@@ -2219,7 +2296,7 @@ mod tests {
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
 			.unwrap()
 			.build_unchecked_and_sign()
-			.respond_with(payment_paths(), payment_hash())
+			.respond_with(&conversion, payment_paths(), payment_hash())
 			.unwrap()
 			.build()
 		{
@@ -2301,7 +2378,12 @@ mod tests {
 		match verified_request {
 			InvoiceRequestVerifiedFromOffer::DerivedKeys(req) => {
 				let invoice = req
-					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), now())
+					.respond_using_derived_keys_no_std(
+						&conversion,
+						payment_paths(),
+						payment_hash(),
+						now(),
+					)
 					.unwrap()
 					.build_and_sign(&secp_ctx);
 
@@ -2404,7 +2486,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now)
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now)
 			.unwrap()
 			.relative_expiry(one_hour.as_secs() as u32)
 			.build()
@@ -2425,7 +2507,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now - one_hour)
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now - one_hour)
 			.unwrap()
 			.relative_expiry(one_hour.as_secs() as u32 - 1)
 			.build()
@@ -2458,7 +2540,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2489,7 +2571,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2509,7 +2591,7 @@ mod tests {
 			.quantity(u64::max_value())
 			.unwrap()
 			.build_unchecked_and_sign()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 		{
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
@@ -2538,7 +2620,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.fallback_v0_p2wsh(&script.wscript_hash())
 			.fallback_v0_p2wpkh(&pubkey.wpubkey_hash().unwrap())
@@ -2595,7 +2677,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.allow_mpp()
 			.build()
@@ -2624,7 +2706,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2642,7 +2724,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2670,7 +2752,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2748,7 +2830,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2793,7 +2875,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.relative_expiry(3600)
 			.build()
@@ -2827,7 +2909,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2872,7 +2954,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -2915,7 +2997,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.allow_mpp()
 			.build()
@@ -2959,11 +3041,13 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		#[cfg(not(c_bindings))]
-		let invoice_builder =
-			invoice_request.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap();
+		let invoice_builder = invoice_request
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap();
 		#[cfg(c_bindings)]
-		let mut invoice_builder =
-			invoice_request.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap();
+		let mut invoice_builder = invoice_request
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap();
 		let invoice_builder = invoice_builder
 			.fallback_v0_p2wsh(&script.wscript_hash())
 			.fallback_v0_p2wpkh(&pubkey.wpubkey_hash().unwrap())
@@ -3023,7 +3107,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3112,6 +3196,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap()
 			.respond_with_no_std_using_signing_pubkey(
+				&conversion,
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -3142,6 +3227,7 @@ mod tests {
 			.build_and_sign()
 			.unwrap()
 			.respond_with_no_std_using_signing_pubkey(
+				&conversion,
 				payment_paths(),
 				payment_hash(),
 				now(),
@@ -3184,7 +3270,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.amount_msats_unchecked(2000)
 			.build()
@@ -3213,7 +3299,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.amount_msats_unchecked(2000)
 			.build()
@@ -3278,7 +3364,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3312,7 +3398,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3356,7 +3442,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3395,7 +3481,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3442,7 +3528,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.experimental_baz(42)
 			.build()
@@ -3468,7 +3554,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3509,7 +3595,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap();
@@ -3547,7 +3633,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3589,7 +3675,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3625,7 +3711,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3674,7 +3760,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
@@ -3721,7 +3807,7 @@ mod tests {
 			.unwrap();
 
 		let invoice = invoice_request
-			.respond_with_no_std(payment_paths, payment_hash(), now)
+			.respond_with_no_std(&conversion, payment_paths, payment_hash(), now)
 			.unwrap()
 			.build()
 			.unwrap()
