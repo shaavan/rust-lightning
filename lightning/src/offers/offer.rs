@@ -954,14 +954,16 @@ impl OfferContents {
 		// the implied total amount cannot be determined. Defer amount
 		// validation until the quantity is known.
 		if self.expects_quantity() && requested_quantity.is_none() {
-			return Ok(())
+			return Ok(());
 		}
 
 		let quantity = requested_quantity.unwrap_or(1);
 
 		// Expected offer amount defaults to zero if unspecified
 		let expected_amount_msats = offer_amount_msats
-			.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
+			.map(|unit_msats| {
+				unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
+			})
 			.transpose()?;
 
 		let total_amount_msats = match (requested_total_amount_msats, expected_amount_msats) {
@@ -1027,8 +1029,9 @@ impl OfferContents {
 		self.issuer_signing_pubkey
 	}
 
-	pub(super) fn resolve_offer_amount<'a, CC: Deref>
-		(&self, currency_conversion: &'a CC) -> Result<Option<u64>, Bolt12SemanticError>
+	pub(super) fn resolve_offer_amount<'a, CC: Deref>(
+		&self, currency_conversion: &'a CC,
+	) -> Result<Option<u64>, Bolt12SemanticError>
 	where
 		CC::Target: CurrencyConversion,
 	{

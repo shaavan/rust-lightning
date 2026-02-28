@@ -1191,19 +1191,21 @@ impl InvoiceRequestContents {
 		self.inner.amount_msats()
 	}
 
-	pub(super) fn payable_amount_msats<CC: Deref>(&self, currency_conversion: &CC) -> Result<u64, Bolt12SemanticError>
+	pub(super) fn payable_amount_msats<CC: Deref>(
+		&self, currency_conversion: &CC,
+	) -> Result<u64, Bolt12SemanticError>
 	where
-		CC::Target: CurrencyConversion
+		CC::Target: CurrencyConversion,
 	{
 		let quantity = self.quantity().unwrap_or(1);
 		match self.amount_msats() {
 			Some(msats) => Ok(msats),
-			None => self.inner.offer
+			None => self
+				.inner
+				.offer
 				.resolve_offer_amount(currency_conversion)?
 				.map(|unit_msats| {
-					unit_msats
-						.checked_mul(quantity)
-						.ok_or(Bolt12SemanticError::InvalidAmount)
+					unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
 				})
 				.transpose()?
 				.ok_or(Bolt12SemanticError::MissingAmount),
@@ -1515,7 +1517,9 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 
 		match offer.amount() {
 			None => offer.check_amount_msats_for_quantity(None, amount, quantity)?,
-			Some(Amount::Bitcoin { amount_msats }) => offer.check_amount_msats_for_quantity(Some(amount_msats), amount, quantity)?,
+			Some(Amount::Bitcoin { amount_msats }) => {
+				offer.check_amount_msats_for_quantity(Some(amount_msats), amount, quantity)?
+			},
 			// If the offer amount is in currency, we don't have access to currency conversion at this point.
 			// The following check will be perfomed at the time of handling the Invoice Request
 			Some(Amount::Currency { .. }) => (),
@@ -1636,7 +1640,7 @@ mod tests {
 	use crate::types::features::{InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::{PrintableString, UntrustedString};
 	use crate::util::ser::{BigSize, Readable, Writeable};
-use crate::util::test_utils::TestCurrencyConversion;
+	use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{self, Keypair, Secp256k1, SecretKey};
@@ -2300,12 +2304,10 @@ use crate::util::test_utils::TestCurrencyConversion;
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
 		assert!(!invoice_request.has_amount_msats());
-		assert!(
-			matches!(
-				invoice_request.payable_amount_msats(&DefaultCurrencyConversion),
-				Err(Bolt12SemanticError::UnsupportedCurrency)
-			)
-		);
+		assert!(matches!(
+			invoice_request.payable_amount_msats(&DefaultCurrencyConversion),
+			Err(Bolt12SemanticError::UnsupportedCurrency)
+		));
 		assert_eq!(invoice_request.payable_amount_msats(&TestCurrencyConversion), Ok(10_000));
 		assert_eq!(tlv_stream.amount, None);
 	}

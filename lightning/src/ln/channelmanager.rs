@@ -13115,7 +13115,7 @@ where
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
 		};
-		
+
 		let builder = builder.amount_msats(amount_msats)?;
 
 		let builder = match payer_note {

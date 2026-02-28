@@ -415,12 +415,14 @@ macro_rules! invoice_builder_methods {
 
 			let offer_amount_msats = invoice_request
 				.resolve_offer_amount(currency_conversion)?
-				.map(|unit_msats| unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount))
+				.map(|unit_msats| {
+					unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
+				})
 				.transpose()?;
 
 			if let Some(minimum) = offer_amount_msats {
 				if requested_msats < minimum {
-					return Err(Bolt12SemanticError::InsufficientAmount)
+					return Err(Bolt12SemanticError::InsufficientAmount);
 				}
 			}
 

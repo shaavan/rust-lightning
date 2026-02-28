@@ -91,11 +91,11 @@ use crate::sync::{Arc, Mutex};
 use alloc::boxed::Box;
 use core::future::Future;
 use core::mem;
+use core::ops::Deref;
 use core::pin::Pin;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::task::{Context, Poll, Waker};
 use core::time::Duration;
-use core::ops::Deref;
 
 use bitcoin::psbt::Psbt;
 use bitcoin::Sequence;
