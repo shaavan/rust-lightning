@@ -981,9 +981,12 @@ where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let conversion = &self.currency_conversion;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1041,9 +1044,12 @@ where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let conversion = &self.currency_conversion;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
