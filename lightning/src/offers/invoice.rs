@@ -1949,7 +1949,7 @@ mod tests {
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::{
-		Amount, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
+		Amount, CurrencyCode, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
