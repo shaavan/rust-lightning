@@ -27,6 +27,7 @@ use crate::blinded_path::payment::{
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
 
+use crate::offers::currency::DefaultCurrencyConversion;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -806,12 +807,15 @@ where
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	pub fn create_invoice_request_builder<'a>(
 		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
-	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Bolt12SemanticError> {
+	) -> Result<InvoiceRequestBuilder<'a, 'a, secp256k1::All, CC>, Bolt12SemanticError> {
 		let expanded_key = &self.inbound_payment_key;
 		let secp_ctx = &self.secp_ctx;
+		let conversion = &DefaultCurrencyConversion;
 
-		let builder: InvoiceRequestBuilder<secp256k1::All> =
-			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id)?.into();
+		let builder: InvoiceRequestBuilder<secp256k1::All, CC> = offer
+			.request_invoice(expanded_key, nonce, secp_ctx, payment_id, conversion)?
+			.into();
+
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)
