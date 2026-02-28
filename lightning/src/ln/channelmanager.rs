@@ -5790,6 +5790,7 @@ impl<
 			channels,
 			router,
 			timer_tick_occurred,
+			&self.currency_conversion,
 		);
 		match refresh_res {
 			Err(()) => {
@@ -5839,6 +5840,7 @@ impl<
 			let features = self.bolt12_invoice_features();
 			let outbound_pmts_res = self.pending_outbound_payments.static_invoice_received(
 				invoice,
+				&self.currency_conversion,
 				payment_id,
 				features,
 				best_block_height,
@@ -8552,15 +8554,24 @@ impl<
 								});
 								let verified_invreq = match verify_opt {
 									Some(verified_invreq) => {
-										match verified_invreq.payable_amount_msats() {
+										match verified_invreq
+											.payable_amount_msats(&self.currency_conversion)
+										{
 											Ok(invreq_amt_msat) => {
 												if payment_data.total_msat < invreq_amt_msat {
 													fail_htlc!(claimable_htlc, payment_hash);
 												}
 											},
-											Err(Bolt12SemanticError::UnsupportedCurrency)
-											| Err(Bolt12SemanticError::MissingAmount) => {},
 											Err(_) => {
+												// `payable_amount_msats()` can only fail if the invoice request does not specify an amount
+												// and the underlying offer's amount cannot be resolved.
+												//
+												// This invoice request corresponds to an offer we constructed, and we only allow
+												// creating offers with currency amounts that the node explicitly supports.
+												//
+												// Therefore, amount resolution must succeed here. Reaching this branch indicates
+												// an internal logic error.
+												debug_assert!(false);
 												fail_htlc!(claimable_htlc, payment_hash);
 											},
 										}
@@ -9647,7 +9658,8 @@ impl<
 		ComplFunc: FnOnce(
 			Option<u64>,
 			bool,
-		) -> (Option<MonitorUpdateCompletionAction>, Option<RAAMonitorUpdateBlockingAction>),
+		)
+			-> (Option<MonitorUpdateCompletionAction>, Option<RAAMonitorUpdateBlockingAction>),
 	>(
 		&self, prev_hop: HTLCPreviousHopData, payment_preimage: PaymentPreimage,
 		payment_info: Option<PaymentClaimDetails>, attribution_data: Option<AttributionData>,
@@ -9685,7 +9697,8 @@ impl<
 		ComplFunc: FnOnce(
 			Option<u64>,
 			bool,
-		) -> (Option<MonitorUpdateCompletionAction>, Option<RAAMonitorUpdateBlockingAction>),
+		)
+			-> (Option<MonitorUpdateCompletionAction>, Option<RAAMonitorUpdateBlockingAction>),
 	>(
 		&self, prev_hop: HTLCClaimSource, payment_preimage: PaymentPreimage,
 		payment_info: Option<PaymentClaimDetails>, attribution_data: Option<AttributionData>,
@@ -14714,17 +14727,19 @@ impl<
 		let nonce = Nonce::from_entropy_source(entropy);
 
 		let builder = self.flow.create_invoice_request_builder(
-			offer, nonce, payment_id,
+			offer, nonce, payment_id, &self.currency_conversion,
 		)?;
 
 		let builder = match quantity {
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
 		};
+
 		let builder = match amount_msats {
 			None => builder,
 			Some(amount_msats) => builder.amount_msats(amount_msats)?,
 		};
+
 		let builder = match payer_note {
 			None => builder,
 			Some(payer_note) => builder.payer_note(payer_note),
@@ -16981,6 +16996,7 @@ impl<
 							&request,
 							self.list_usable_channels(),
 							get_payment_info,
+							&self.currency_conversion,
 						);
 
 						match result {
@@ -17005,6 +17021,7 @@ impl<
 							&request,
 							self.list_usable_channels(),
 							get_payment_info,
+							&self.currency_conversion,
 						);
 
 						match result {
@@ -17146,6 +17163,7 @@ impl<
 			self.list_usable_channels(),
 			&self.entropy_source,
 			&self.router,
+			&self.currency_conversion,
 		) {
 			Some((msg, ctx)) => (msg, ctx),
 			None => return None,
