@@ -823,6 +823,11 @@ where
 		let builder: InvoiceRequestBuilder<secp256k1::All, CC> =
 			offer.request_invoice(expanded_key, nonce, secp_ctx, payment_id, conversion)?.into();
 
+		let builder = match offer.resolve_offer_amount(conversion)? {
+			None => builder,
+			Some(amount_msats) => builder.amount_msats(amount_msats)?,
+		};
+
 		let builder = builder.chain_hash(self.chain_hash)?;
 
 		Ok(builder)
