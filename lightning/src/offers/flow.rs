@@ -981,9 +981,12 @@ where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let conversion = &self.currency_conversion;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1004,9 +1007,10 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+		let builder = invoice_request.respond_using_derived_keys(conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_using_derived_keys_no_std(
+			conversion,
 			payment_paths,
 			payment_hash,
 			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
@@ -1041,9 +1045,12 @@ where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
+		let conversion = &self.currency_conversion;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			conversion,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1064,9 +1071,10 @@ where
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(feature = "std")]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
+		let builder = invoice_request.respond_with(conversion, payment_paths, payment_hash);
 		#[cfg(not(feature = "std"))]
 		let builder = invoice_request.respond_with_no_std(
+			conversion,
 			payment_paths,
 			payment_hash,
 			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
