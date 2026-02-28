@@ -37,6 +37,7 @@ use crate::offers::async_receive_offer_cache::{
 	TEST_INVOICE_REFRESH_THRESHOLD, TEST_MAX_CACHED_OFFERS_TARGET, TEST_MAX_UPDATE_ATTEMPTS,
 	TEST_MIN_OFFER_PATHS_RELATIVE_EXPIRY_SECS, TEST_OFFER_REFRESH_THRESHOLD,
 };
+use crate::offers::currency::DefaultCurrencyConversion;
 use crate::offers::flow::{
 	TEST_DEFAULT_ASYNC_RECEIVE_OFFER_EXPIRY, TEST_OFFERS_MESSAGE_REQUEST_LIMIT,
 	TEST_TEMP_REPLY_PATH_RELATIVE_EXPIRY,
@@ -1445,6 +1446,8 @@ fn amount_doesnt_match_invreq() {
 
 	let amt_msat = 5000;
 	let payment_id = PaymentId([1; 32]);
+	let conversion = DefaultCurrencyConversion;
+
 	nodes[0].node.pay_for_offer(&offer, Some(amt_msat), payment_id, Default::default()).unwrap();
 	let release_held_htlc_om_3_0 = pass_async_payments_oms(
 		static_invoice,
@@ -1468,6 +1471,7 @@ fn amount_doesnt_match_invreq() {
 					Nonce::from_entropy_source(nodes[0].keys_manager),
 					&secp_ctx,
 					payment_id,
+					&conversion,
 				)
 				.unwrap()
 				.amount_msats(amt_msat + 1)
