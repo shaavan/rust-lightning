@@ -1931,6 +1931,7 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 		.create_offer_builder().unwrap()
 		.clear_chains()
 		.chain(Network::Signet)
+		.amount_msats(1_000)
 		.build().unwrap();
 
 	match bob.node.pay_for_offer(&offer, None, PaymentId([1; 32]), Default::default()) {
