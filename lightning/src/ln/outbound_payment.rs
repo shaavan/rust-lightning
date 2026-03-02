@@ -3208,7 +3208,7 @@ mod tests {
 		assert!(outbound_payments.has_pending_payments());
 
 		let created_at = now() - DEFAULT_RELATIVE_EXPIRY;
-		let invoice = OfferBuilder::new(recipient_pubkey())
+		let invoice = OfferBuilder::new(recipient_pubkey(), &conversion)
 			.amount_msats(1000)
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion).unwrap()
@@ -3256,7 +3256,7 @@ mod tests {
 		let conversion = DefaultCurrencyConversion;
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
-		let invoice = OfferBuilder::new(recipient_pubkey())
+		let invoice = OfferBuilder::new(recipient_pubkey(), &conversion)
 			.amount_msats(1000)
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion).unwrap()
@@ -3320,7 +3320,7 @@ mod tests {
 		let conversion = DefaultCurrencyConversion;
 		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
 
-		let invoice = OfferBuilder::new(recipient_pubkey())
+		let invoice = OfferBuilder::new(recipient_pubkey(), &conversion)
 			.amount_msats(1000)
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion).unwrap()
@@ -3410,7 +3410,7 @@ mod tests {
 		let payment_id = PaymentId([1; 32]);
 		let conversion = DefaultCurrencyConversion;
 
-		OfferBuilder::new(recipient_pubkey())
+		OfferBuilder::new(recipient_pubkey(), &conversion)
 			.amount_msats(1000)
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)

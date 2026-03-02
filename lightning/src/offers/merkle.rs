@@ -356,7 +356,7 @@ mod tests {
 		};
 
 		// BOLT 12 test vectors
-		let invoice_request = OfferBuilder::new(recipient_pubkey)
+		let invoice_request = OfferBuilder::new(recipient_pubkey, &conversion)
 			.description("A Mathematical Treatise".into())
 			.amount(Amount::Currency {
 				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
@@ -398,7 +398,7 @@ mod tests {
 		let payment_id = PaymentId([1; 32]);
 		let conversion = DefaultCurrencyConversion;
 
-		let unsigned_invoice_request = OfferBuilder::new(recipient_pubkey())
+		let unsigned_invoice_request = OfferBuilder::new(recipient_pubkey(), &conversion)
 			.amount_msats(1000)
 			.build()
 			.unwrap()
@@ -431,7 +431,7 @@ mod tests {
 			Keypair::from_secret_key(&secp_ctx, &secret_key).public_key()
 		};
 
-		let invoice_request = OfferBuilder::new(recipient_pubkey)
+		let invoice_request = OfferBuilder::new(recipient_pubkey, &conversion)
 			.amount_msats(100)
 			.build_unchecked()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
@@ -466,7 +466,7 @@ mod tests {
 			Keypair::from_secret_key(&secp_ctx, &secret_key).public_key()
 		};
 
-		let invoice_request = OfferBuilder::new(recipient_pubkey)
+		let invoice_request = OfferBuilder::new(recipient_pubkey, &conversion)
 			.amount_msats(100)
 			.build_unchecked()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)

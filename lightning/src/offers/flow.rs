@@ -549,7 +549,7 @@ where
 
 	fn create_offer_builder_intern<ES: Deref, PF, I>(
 		&self, entropy_source: ES, make_paths: PF,
-	) -> Result<(OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Nonce), Bolt12SemanticError>
+	) -> Result<(OfferBuilder<'_, DerivedMetadata, secp256k1::All, CC>, Nonce), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 		PF: FnOnce(
@@ -567,9 +567,14 @@ where
 		let nonce = Nonce::from_entropy_source(entropy);
 		let context = MessageContext::Offers(OffersContext::InvoiceRequest { nonce });
 
-		let mut builder =
-			OfferBuilder::deriving_signing_pubkey(node_id, expanded_key, nonce, secp_ctx)
-				.chain_hash(self.chain_hash);
+		let mut builder = OfferBuilder::deriving_signing_pubkey(
+			node_id,
+			expanded_key,
+			nonce,
+			secp_ctx,
+			&self.currency_conversion,
+		)
+		.chain_hash(self.chain_hash);
 
 		for path in make_paths(node_id, context, secp_ctx)? {
 			builder = builder.path(path)
@@ -606,7 +611,7 @@ where
 	/// [`DefaultMessageRouter`]: crate::onion_message::messenger::DefaultMessageRouter
 	pub fn create_offer_builder<ES: Deref>(
 		&self, entropy_source: ES, peers: Vec<MessageForwardNode>,
-	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
+	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All, CC>, Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 	{
@@ -629,7 +634,7 @@ where
 	/// See [`Self::create_offer_builder`] for more details on usage.
 	pub fn create_offer_builder_using_router<ME: Deref, ES: Deref>(
 		&self, router: ME, entropy_source: ES, peers: Vec<MessageForwardNode>,
-	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Bolt12SemanticError>
+	) -> Result<OfferBuilder<'_, DerivedMetadata, secp256k1::All, CC>, Bolt12SemanticError>
 	where
 		ME::Target: MessageRouter,
 		ES::Target: EntropySource,
@@ -656,7 +661,7 @@ where
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	pub fn create_async_receive_offer_builder<ES: Deref>(
 		&self, entropy_source: ES, message_paths_to_always_online_node: Vec<BlindedMessagePath>,
-	) -> Result<(OfferBuilder<'_, DerivedMetadata, secp256k1::All>, Nonce), Bolt12SemanticError>
+	) -> Result<(OfferBuilder<'_, DerivedMetadata, secp256k1::All, CC>, Nonce), Bolt12SemanticError>
 	where
 		ES::Target: EntropySource,
 	{
