@@ -3136,8 +3136,7 @@ mod tests {
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
 			.unwrap()
-			.amount_msats(1000)
-			.unwrap()
+			.amount_msats(1000).unwrap()
 			.build_and_sign()
 			.unwrap()
 			.respond_with_no_std(payment_paths(), payment_hash(), now())
@@ -3583,7 +3582,8 @@ mod tests {
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
 
-		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let offer =
+			OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
 
 		let offer_id = offer.id();
 

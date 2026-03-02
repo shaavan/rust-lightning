@@ -45,7 +45,7 @@
 //! let expiration = SystemTime::now() + Duration::from_secs(24 * 60 * 60);
 //! let offer = OfferBuilder::new(pubkey)
 //!     .description("coffee, large".to_string())
-//!     .amount_msats(20_000)
+//!     .amount_msats(20_000)?
 //!     .supported_quantity(Quantity::Unbounded)
 //!     .absolute_expiry(expiration.duration_since(SystemTime::UNIX_EPOCH).unwrap())
 //!     .issuer("Foo Bar".to_string())
@@ -82,7 +82,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-use crate::offers::currency::CurrencyConversion;
+use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
@@ -341,19 +341,29 @@ macro_rules! offer_builder_methods { (
 		$return_value
 	}
 
-	/// Sets the [`Offer::amount`] as an [`Amount::Bitcoin`].
+	/// Sets the [`Offer::amount`] in millisatoshis.
 	///
-	/// Successive calls to this method will override the previous setting.
+	/// Internally this sets the amount as [`Amount::Bitcoin`].
+	///
+	/// Successive calls to this method override the previously set amount.
 	pub fn amount_msats($self: $self_type, amount_msats: u64) -> $return_type {
-		$self.amount(Amount::Bitcoin { amount_msats })
+		$self.amount(Amount::Bitcoin { amount_msats }, &DefaultCurrencyConversion)
+			.expect("Setting amount in msats cannot fail")
 	}
 
 	/// Sets the [`Offer::amount`].
 	///
 	/// Successive calls to this method will override the previous setting.
-	pub(super) fn amount($($self_mut)* $self: $self_type, amount: Amount) -> $return_type {
+	pub fn amount<CC: Deref>($($self_mut)* $self: $self_type, amount: Amount, currency_conversion: &CC) -> Result<$return_type, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
+		if amount.into_msats(currency_conversion)? > MAX_VALUE_MSAT {
+			return Err(Bolt12SemanticError::InvalidAmount);
+		}
+
 		$self.offer.amount = Some(amount);
-		$return_value
+		Ok($return_value)
 	}
 
 	/// Sets the [`Offer::absolute_expiry`] as seconds since the Unix epoch.
@@ -402,16 +412,6 @@ macro_rules! offer_builder_methods { (
 
 	/// Builds an [`Offer`] from the builder's settings.
 	pub fn build($($self_mut)* $self: $self_type) -> Result<Offer, Bolt12SemanticError> {
-		match $self.offer.amount {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				if amount_msats > MAX_VALUE_MSAT {
-					return Err(Bolt12SemanticError::InvalidAmount);
-				}
-			},
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
-			None => {},
-		}
-
 		if $self.offer.amount.is_some() && $self.offer.description.is_none() {
 			$self.offer.description = Some(String::new());
 		}
@@ -710,6 +710,23 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 	pub fn issuer_signing_pubkey(&$self) -> Option<bitcoin::secp256k1::PublicKey> {
 		$contents.issuer_signing_pubkey()
 	}
+
+	/// Resolves the [`Offer::amount`] into millisatoshis.
+	///
+	/// If the offer amount is denominated in a fiat currency, the provided
+	/// [`CurrencyConversion`] implementation is used to convert it into msats.
+	///
+	/// Returns:
+	/// - `Ok(Some(msats))` if the offer specifies an amount and it can be resolved.
+	/// - `Ok(None)` if the offer does not specify an amount.
+	/// - `Err(_)` if the amount cannot be resolved (e.g., unsupported currency).
+	pub fn resolve_offer_amount<CC: Deref>
+		(&$self, currency_conversion: &CC) -> Result<Option<u64>, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		$contents.resolve_offer_amount(currency_conversion)
+	}
 } }
 
 impl Offer {
@@ -993,6 +1010,15 @@ impl OfferContents {
 
 	pub(super) fn issuer_signing_pubkey(&self) -> Option<PublicKey> {
 		self.issuer_signing_pubkey
+	}
+
+	pub(super) fn resolve_offer_amount<CC: Deref>(
+		&self, currency_conversion: &CC,
+	) -> Result<Option<u64>, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion,
+	{
+		self.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
 	}
 
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(
@@ -1421,6 +1447,7 @@ mod tests {
 	use crate::types::features::OfferFeatures;
 	use crate::types::string::PrintableString;
 	use crate::util::ser::{BigSize, Writeable};
+	use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::Secp256k1;
@@ -1693,24 +1720,26 @@ mod tests {
 		assert_eq!(tlv_stream.0.amount, Some(1000));
 		assert_eq!(tlv_stream.0.currency, None);
 
+		let conversion = TestCurrencyConversion;
+
 		#[cfg(not(c_bindings))]
-		let builder = OfferBuilder::new(pubkey(42)).amount(currency_amount.clone());
+		let builder = OfferBuilder::new(pubkey(42)).amount(currency_amount.clone(), &conversion).unwrap();
 		#[cfg(c_bindings)]
 		let mut builder = OfferBuilder::new(pubkey(42));
 		#[cfg(c_bindings)]
-		builder.amount(currency_amount.clone());
+		let _ = builder.amount(currency_amount.clone(), &conversion);
+
+		// Currency-denominated amounts are now supported, so setting the amount should succeed.
 		let tlv_stream = builder.offer.as_tlv_stream();
 		assert_eq!(builder.offer.amount, Some(currency_amount.clone()));
 		assert_eq!(tlv_stream.0.amount, Some(10));
 		assert_eq!(tlv_stream.0.currency, Some(b"USD"));
-		match builder.build() {
-			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedCurrency),
-		}
 
 		let offer = OfferBuilder::new(pubkey(42))
-			.amount(currency_amount.clone())
-			.amount(bitcoin_amount.clone())
+			.amount(currency_amount.clone(), &conversion)
+			.unwrap()
+			.amount(bitcoin_amount.clone(), &conversion)
+			.unwrap()
 			.build()
 			.unwrap();
 		let tlv_stream = offer.as_tlv_stream();
@@ -1718,7 +1747,7 @@ mod tests {
 		assert_eq!(tlv_stream.0.currency, None);
 
 		let invalid_amount = Amount::Bitcoin { amount_msats: MAX_VALUE_MSAT + 1 };
-		match OfferBuilder::new(pubkey(42)).amount(invalid_amount).build() {
+		match OfferBuilder::new(pubkey(42)).amount(invalid_amount, &conversion) {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
 		}
@@ -1916,8 +1945,10 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_amount() {
+		let conversion = TestCurrencyConversion;
 		let offer = OfferBuilder::new(pubkey(42))
-			.amount(Amount::Bitcoin { amount_msats: 1000 })
+			.amount(Amount::Bitcoin { amount_msats: 1000 }, &conversion)
+			.unwrap()
 			.build()
 			.unwrap();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
