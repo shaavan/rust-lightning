@@ -1898,6 +1898,7 @@ mod tests {
 		let now = now();
 		let unsigned_invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2168,6 +2169,7 @@ mod tests {
 
 		if let Err(e) = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.absolute_expiry(future_expiry)
 			.build()
 			.unwrap()
@@ -2184,6 +2186,7 @@ mod tests {
 
 		match OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.absolute_expiry(past_expiry)
 			.build()
 			.unwrap()
@@ -2254,6 +2257,7 @@ mod tests {
 		let invoice_request =
 			OfferBuilder::deriving_signing_pubkey(node_id, &expanded_key, nonce, &secp_ctx)
 				.amount_msats(1000)
+				.unwrap()
 				.path(blinded_path)
 				.experimental_foo(42)
 				.build()
@@ -2367,6 +2371,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2388,6 +2393,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2418,6 +2424,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2447,6 +2454,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
@@ -2468,6 +2476,7 @@ mod tests {
 
 		match OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.supported_quantity(Quantity::Unbounded)
 			.build()
 			.unwrap()
@@ -2498,6 +2507,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2554,6 +2564,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2582,6 +2593,7 @@ mod tests {
 
 		match OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2600,6 +2612,7 @@ mod tests {
 
 		match OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2627,6 +2640,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2704,6 +2718,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2748,6 +2763,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2781,6 +2797,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2825,6 +2842,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2867,6 +2885,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2909,6 +2928,7 @@ mod tests {
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -2973,6 +2993,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3058,6 +3079,7 @@ mod tests {
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.clear_issuer_signing_pubkey()
 			.amount_msats(1000)
+			.unwrap()
 			.path(paths[0].clone())
 			.path(paths[1].clone())
 			.build()
@@ -3088,6 +3110,7 @@ mod tests {
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.clear_issuer_signing_pubkey()
 			.amount_msats(1000)
+			.unwrap()
 			.path(paths[0].clone())
 			.path(paths[1].clone())
 			.build()
@@ -3132,6 +3155,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3159,6 +3183,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3225,6 +3250,7 @@ mod tests {
 		let mut buffer = Vec::new();
 		OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3258,6 +3284,7 @@ mod tests {
 
 		let mut invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3301,6 +3328,7 @@ mod tests {
 		let keys = Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[42; 32]).unwrap());
 		let mut unsigned_invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3340,6 +3368,7 @@ mod tests {
 
 		let mut unsigned_invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3386,6 +3415,7 @@ mod tests {
 		let keys = Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[42; 32]).unwrap());
 		let invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3412,6 +3442,7 @@ mod tests {
 
 		let mut unsigned_invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3453,6 +3484,7 @@ mod tests {
 
 		let mut unsigned_invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3491,6 +3523,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(keys.public_key())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3532,6 +3565,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3567,6 +3601,7 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
@@ -3610,7 +3645,8 @@ mod tests {
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
 
-		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let offer =
+			OfferBuilder::new(recipient_pubkey()).amount_msats(1000).unwrap().build().unwrap();
 
 		let offer_id = offer.id();
 
@@ -3658,7 +3694,7 @@ mod tests {
 		let now = Duration::from_secs(123456);
 		let payment_id = PaymentId([1; 32]);
 
-		let offer = OfferBuilder::new(node_id).amount_msats(1000).build().unwrap();
+		let offer = OfferBuilder::new(node_id).amount_msats(1000).unwrap().build().unwrap();
 
 		let invoice_request = offer
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
