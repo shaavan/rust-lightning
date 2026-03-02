@@ -45,7 +45,7 @@
 //! let expiration = SystemTime::now() + Duration::from_secs(24 * 60 * 60);
 //! let offer = OfferBuilder::new(pubkey)
 //!     .description("coffee, large".to_string())
-//!     .amount_msats(20_000)
+//!     .amount_msats(20_000)?
 //!     .supported_quantity(Quantity::Unbounded)
 //!     .absolute_expiry(expiration.duration_since(SystemTime::UNIX_EPOCH).unwrap())
 //!     .issuer("Foo Bar".to_string())
@@ -82,7 +82,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-use crate::offers::currency::CurrencyConversion;
+use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 use crate::offers::merkle::{TaggedHash, TlvRecord, TlvStream};
 use crate::offers::nonce::Nonce;
 use crate::offers::parse::{Bech32Encode, Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
@@ -344,16 +344,24 @@ macro_rules! offer_builder_methods { (
 	/// Sets the [`Offer::amount`] as an [`Amount::Bitcoin`].
 	///
 	/// Successive calls to this method will override the previous setting.
-	pub fn amount_msats($self: $self_type, amount_msats: u64) -> $return_type {
-		$self.amount(Amount::Bitcoin { amount_msats })
+	pub fn amount_msats($self: $self_type, amount_msats: u64) -> Result<$return_type, Bolt12SemanticError> {
+		$self.amount(Amount::Bitcoin { amount_msats }, &DefaultCurrencyConversion)
 	}
 
 	/// Sets the [`Offer::amount`].
 	///
 	/// Successive calls to this method will override the previous setting.
-	pub(super) fn amount($($self_mut)* $self: $self_type, amount: Amount) -> $return_type {
+	pub fn amount<CC: Deref>($($self_mut)* $self: $self_type, amount: Amount, currency_conversion: &CC) -> Result<$return_type, Bolt12SemanticError>
+	where
+		CC::Target: CurrencyConversion
+	{
+		// Validate the amount by ensuring it fits within the maximum lightning-payable value.
+		if amount.into_msats(currency_conversion)? > MAX_VALUE_MSAT {
+			return Err(Bolt12SemanticError::InvalidAmount);
+		}
+
 		$self.offer.amount = Some(amount);
-		$return_value
+		Ok($return_value)
 	}
 
 	/// Sets the [`Offer::absolute_expiry`] as seconds since the Unix epoch.
@@ -402,16 +410,6 @@ macro_rules! offer_builder_methods { (
 
 	/// Builds an [`Offer`] from the builder's settings.
 	pub fn build($($self_mut)* $self: $self_type) -> Result<Offer, Bolt12SemanticError> {
-		match $self.offer.amount {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				if amount_msats > MAX_VALUE_MSAT {
-					return Err(Bolt12SemanticError::InvalidAmount);
-				}
-			},
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
-			None => {},
-		}
-
 		if $self.offer.amount.is_some() && $self.offer.description.is_none() {
 			$self.offer.description = Some(String::new());
 		}
@@ -1421,6 +1419,7 @@ mod tests {
 	use crate::types::features::OfferFeatures;
 	use crate::types::string::PrintableString;
 	use crate::util::ser::{BigSize, Writeable};
+	use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::Secp256k1;
@@ -1540,6 +1539,7 @@ mod tests {
 		use super::OfferWithDerivedMetadataBuilder as OfferBuilder;
 		let offer = OfferBuilder::deriving_signing_pubkey(node_id, &expanded_key, nonce, &secp_ctx)
 			.amount_msats(1000)
+			.unwrap()
 			.experimental_foo(42)
 			.build()
 			.unwrap();
@@ -1620,6 +1620,7 @@ mod tests {
 		use super::OfferWithDerivedMetadataBuilder as OfferBuilder;
 		let offer = OfferBuilder::deriving_signing_pubkey(node_id, &expanded_key, nonce, &secp_ctx)
 			.amount_msats(1000)
+			.unwrap()
 			.path(blinded_path)
 			.experimental_foo(42)
 			.build()
@@ -1687,30 +1688,33 @@ mod tests {
 		let currency_amount =
 			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 };
 
-		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build().unwrap();
 		let tlv_stream = offer.as_tlv_stream();
 		assert_eq!(offer.amount(), Some(bitcoin_amount));
 		assert_eq!(tlv_stream.0.amount, Some(1000));
 		assert_eq!(tlv_stream.0.currency, None);
 
+		let conversion = TestCurrencyConversion;
+
 		#[cfg(not(c_bindings))]
-		let builder = OfferBuilder::new(pubkey(42)).amount(currency_amount.clone());
+		let builder = OfferBuilder::new(pubkey(42)).amount(currency_amount.clone(), &conversion);
 		#[cfg(c_bindings)]
-		let mut builder = OfferBuilder::new(pubkey(42));
+		let mut builder = OfferBuilder::new(pubkey(42), &conversion);
 		#[cfg(c_bindings)]
-		builder.amount(currency_amount.clone());
+		builder.amount(currency_amount.clone(), &conversion);
+
+		// Currency-denominated amounts are now supported, so setting the amount should succeed.
+		let builder = builder.unwrap();
 		let tlv_stream = builder.offer.as_tlv_stream();
 		assert_eq!(builder.offer.amount, Some(currency_amount.clone()));
 		assert_eq!(tlv_stream.0.amount, Some(10));
 		assert_eq!(tlv_stream.0.currency, Some(b"USD"));
-		match builder.build() {
-			Ok(_) => panic!("expected error"),
-			Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedCurrency),
-		}
 
 		let offer = OfferBuilder::new(pubkey(42))
-			.amount(currency_amount.clone())
-			.amount(bitcoin_amount.clone())
+			.amount(currency_amount.clone(), &conversion)
+			.unwrap()
+			.amount(bitcoin_amount.clone(), &conversion)
+			.unwrap()
 			.build()
 			.unwrap();
 		let tlv_stream = offer.as_tlv_stream();
@@ -1718,7 +1722,7 @@ mod tests {
 		assert_eq!(tlv_stream.0.currency, None);
 
 		let invalid_amount = Amount::Bitcoin { amount_msats: MAX_VALUE_MSAT + 1 };
-		match OfferBuilder::new(pubkey(42)).amount(invalid_amount).build() {
+		match OfferBuilder::new(pubkey(42)).amount(invalid_amount, &conversion) {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
 		}
@@ -1738,7 +1742,7 @@ mod tests {
 		assert_eq!(offer.description(), Some(PrintableString("bar")));
 		assert_eq!(offer.as_tlv_stream().0.description, Some(&String::from("bar")));
 
-		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build().unwrap();
 		assert_eq!(offer.description(), Some(PrintableString("")));
 		assert_eq!(offer.as_tlv_stream().0.description, Some(&String::from("")));
 	}
@@ -1916,8 +1920,10 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_amount() {
+		let conversion = TestCurrencyConversion;
 		let offer = OfferBuilder::new(pubkey(42))
-			.amount(Amount::Bitcoin { amount_msats: 1000 })
+			.amount(Amount::Bitcoin { amount_msats: 1000 }, &conversion)
+			.unwrap()
 			.build()
 			.unwrap();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
@@ -2006,6 +2012,7 @@ mod tests {
 		let offer = OfferBuilder::new(pubkey(42))
 			.description("foo".to_string())
 			.amount_msats(1000)
+			.unwrap()
 			.build()
 			.unwrap();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
