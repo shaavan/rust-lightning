@@ -51,6 +51,7 @@ use lightning::ln::peer_handler::{
 };
 use lightning::ln::script::ShutdownScript;
 use lightning::ln::types::ChannelId;
+use lightning::offers::currency::CurrencyConversion;
 use lightning::offers::invoice::UnsignedBolt12Invoice;
 use lightning::onion_message::messenger::{Destination, MessageRouter, OnionMessagePath};
 use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
@@ -184,6 +185,18 @@ impl MessageRouter for FuzzRouter {
 	}
 }
 
+struct FuzzCurrencyConversion;
+
+impl CurrencyConversion for FuzzCurrencyConversion {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+		unreachable!()
+	}
+
+	fn tolerance_percent(&self) -> u8 {
+		unreachable!()
+	}
+}
+
 struct TestBroadcaster {
 	txn_broadcasted: Mutex<Vec<Transaction>>,
 }
@@ -239,6 +252,7 @@ type ChannelMan<'a> = ChannelManager<
 	Arc<FuzzEstimator>,
 	&'a FuzzRouter,
 	&'a FuzzRouter,
+	&'a FuzzCurrencyConversion,
 	Arc<dyn Logger + MaybeSend + MaybeSync>,
 >;
 type PeerMan<'a> = PeerManager<
