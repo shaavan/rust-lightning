@@ -402,7 +402,6 @@ mod tests {
 			.amount_msats(1000)
 			.unwrap()
 			.build()
-			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
 			.unwrap()
 			.payer_note("bar".into())

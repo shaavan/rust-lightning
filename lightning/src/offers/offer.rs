@@ -51,7 +51,7 @@
 //!     .issuer("Foo Bar".to_string())
 //!     .path(create_blinded_path())
 //!     .path(create_another_blinded_path())
-//!     .build()?;
+//!     .build();
 //!
 //! // Encode as a bech32 string for use in a QR code.
 //! let encoded_offer = offer.to_string();
@@ -412,7 +412,7 @@ macro_rules! offer_builder_methods { (
 	}
 
 	/// Builds an [`Offer`] from the builder's settings.
-	pub fn build($($self_mut)* $self: $self_type) -> Result<Offer, Bolt12SemanticError> {
+	pub fn build($($self_mut)* $self: $self_type) -> Offer {
 		if $self.offer.amount.is_some() && $self.offer.description.is_none() {
 			$self.offer.description = Some(String::new());
 		}
@@ -423,10 +423,6 @@ macro_rules! offer_builder_methods { (
 			}
 		}
 
-		Ok($self.build_without_checks())
-	}
-
-	fn build_without_checks($($self_mut)* $self: $self_type) -> Offer {
 		if let Some(mut metadata) = $self.offer.metadata.take() {
 			// Create the metadata for stateless verification of an InvoiceRequest.
 			if metadata.has_derivation_material() {
@@ -514,7 +510,7 @@ macro_rules! offer_builder_test_methods { (
 
 	#[cfg_attr(c_bindings, allow(dead_code))]
 	pub(super) fn build_unchecked($self: $self_type) -> Offer {
-		$self.build_without_checks()
+		$self.build()
 	}
 } }
 
@@ -1448,7 +1444,7 @@ mod tests {
 
 	#[test]
 	fn builds_offer_with_defaults() {
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut buffer = Vec::new();
 		offer.write(&mut buffer).unwrap();
@@ -1499,30 +1495,24 @@ mod tests {
 		let mainnet = ChainHash::using_genesis_block(Network::Bitcoin);
 		let testnet = ChainHash::using_genesis_block(Network::Testnet);
 
-		let offer = OfferBuilder::new(pubkey(42)).chain(Network::Bitcoin).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).chain(Network::Bitcoin).build();
 		assert!(offer.supports_chain(mainnet));
 		assert_eq!(offer.chains(), vec![mainnet]);
 		assert_eq!(offer.as_tlv_stream().0.chains, None);
 
-		let offer = OfferBuilder::new(pubkey(42)).chain(Network::Testnet).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).chain(Network::Testnet).build();
 		assert!(offer.supports_chain(testnet));
 		assert_eq!(offer.chains(), vec![testnet]);
 		assert_eq!(offer.as_tlv_stream().0.chains, Some(&vec![testnet]));
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.chain(Network::Testnet)
-			.chain(Network::Testnet)
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).chain(Network::Testnet).chain(Network::Testnet).build();
 		assert!(offer.supports_chain(testnet));
 		assert_eq!(offer.chains(), vec![testnet]);
 		assert_eq!(offer.as_tlv_stream().0.chains, Some(&vec![testnet]));
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.chain(Network::Bitcoin)
-			.chain(Network::Testnet)
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).chain(Network::Bitcoin).chain(Network::Testnet).build();
 		assert!(offer.supports_chain(mainnet));
 		assert!(offer.supports_chain(testnet));
 		assert_eq!(offer.chains(), vec![mainnet, testnet]);
@@ -1531,7 +1521,7 @@ mod tests {
 
 	#[test]
 	fn builds_offer_with_metadata() {
-		let offer = OfferBuilder::new(pubkey(42)).metadata(vec![42; 32]).unwrap().build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).metadata(vec![42; 32]).unwrap().build();
 		assert_eq!(offer.metadata(), Some(&vec![42; 32]));
 		assert_eq!(offer.as_tlv_stream().0.metadata, Some(&vec![42; 32]));
 
@@ -1540,8 +1530,7 @@ mod tests {
 			.unwrap()
 			.metadata(vec![43; 32])
 			.unwrap()
-			.build()
-			.unwrap();
+			.build();
 		assert_eq!(offer.metadata(), Some(&vec![43; 32]));
 		assert_eq!(offer.as_tlv_stream().0.metadata, Some(&vec![43; 32]));
 	}
@@ -1561,8 +1550,7 @@ mod tests {
 			.amount_msats(1000)
 			.unwrap()
 			.experimental_foo(42)
-			.build()
-			.unwrap();
+			.build();
 		assert!(offer.metadata().is_some());
 		assert_eq!(offer.issuer_signing_pubkey(), Some(node_id));
 
@@ -1643,8 +1631,7 @@ mod tests {
 			.unwrap()
 			.path(blinded_path)
 			.experimental_foo(42)
-			.build()
-			.unwrap();
+			.build();
 		assert!(offer.metadata().is_none());
 		assert_ne!(offer.issuer_signing_pubkey(), Some(node_id));
 
@@ -1708,7 +1695,7 @@ mod tests {
 		let currency_amount =
 			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 };
 
-		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert_eq!(offer.amount(), Some(bitcoin_amount));
 		assert_eq!(tlv_stream.0.amount, Some(1000));
@@ -1734,8 +1721,7 @@ mod tests {
 			.unwrap()
 			.amount(bitcoin_amount.clone(), &conversion)
 			.unwrap()
-			.build()
-			.unwrap();
+			.build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert_eq!(tlv_stream.0.amount, Some(1000));
 		assert_eq!(tlv_stream.0.currency, None);
@@ -1749,37 +1735,33 @@ mod tests {
 
 	#[test]
 	fn builds_offer_with_description() {
-		let offer = OfferBuilder::new(pubkey(42)).description("foo".into()).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).description("foo".into()).build();
 		assert_eq!(offer.description(), Some(PrintableString("foo")));
 		assert_eq!(offer.as_tlv_stream().0.description, Some(&String::from("foo")));
 
 		let offer = OfferBuilder::new(pubkey(42))
 			.description("foo".into())
 			.description("bar".into())
-			.build()
-			.unwrap();
+			.build();
 		assert_eq!(offer.description(), Some(PrintableString("bar")));
 		assert_eq!(offer.as_tlv_stream().0.description, Some(&String::from("bar")));
 
-		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1000).unwrap().build();
 		assert_eq!(offer.description(), Some(PrintableString("")));
 		assert_eq!(offer.as_tlv_stream().0.description, Some(&String::from("")));
 	}
 
 	#[test]
 	fn builds_offer_with_features() {
-		let offer = OfferBuilder::new(pubkey(42))
-			.features_unchecked(OfferFeatures::unknown())
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).features_unchecked(OfferFeatures::unknown()).build();
 		assert_eq!(offer.offer_features(), &OfferFeatures::unknown());
 		assert_eq!(offer.as_tlv_stream().0.features, Some(&OfferFeatures::unknown()));
 
 		let offer = OfferBuilder::new(pubkey(42))
 			.features_unchecked(OfferFeatures::unknown())
 			.features_unchecked(OfferFeatures::empty())
-			.build()
-			.unwrap();
+			.build();
 		assert_eq!(offer.offer_features(), &OfferFeatures::empty());
 		assert_eq!(offer.as_tlv_stream().0.features, None);
 	}
@@ -1790,7 +1772,7 @@ mod tests {
 		let past_expiry = Duration::from_secs(0);
 		let now = future_expiry - Duration::from_secs(1_000);
 
-		let offer = OfferBuilder::new(pubkey(42)).absolute_expiry(future_expiry).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).absolute_expiry(future_expiry).build();
 		#[cfg(feature = "std")]
 		assert!(!offer.is_expired());
 		assert!(!offer.is_expired_no_std(now));
@@ -1800,8 +1782,7 @@ mod tests {
 		let offer = OfferBuilder::new(pubkey(42))
 			.absolute_expiry(future_expiry)
 			.absolute_expiry(past_expiry)
-			.build()
-			.unwrap();
+			.build();
 		#[cfg(feature = "std")]
 		assert!(offer.is_expired());
 		assert!(offer.is_expired_no_std(now));
@@ -1830,11 +1811,8 @@ mod tests {
 			),
 		];
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.path(paths[0].clone())
-			.path(paths[1].clone())
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).path(paths[0].clone()).path(paths[1].clone()).build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert_eq!(offer.paths(), paths.as_slice());
 		assert_eq!(offer.issuer_signing_pubkey(), Some(pubkey(42)));
@@ -1845,15 +1823,11 @@ mod tests {
 
 	#[test]
 	fn builds_offer_with_issuer() {
-		let offer = OfferBuilder::new(pubkey(42)).issuer("foo".into()).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).issuer("foo".into()).build();
 		assert_eq!(offer.issuer(), Some(PrintableString("foo")));
 		assert_eq!(offer.as_tlv_stream().0.issuer, Some(&String::from("foo")));
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.issuer("foo".into())
-			.issuer("bar".into())
-			.build()
-			.unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).issuer("foo".into()).issuer("bar".into()).build();
 		assert_eq!(offer.issuer(), Some(PrintableString("bar")));
 		assert_eq!(offer.as_tlv_stream().0.issuer, Some(&String::from("bar")));
 	}
@@ -1863,33 +1837,27 @@ mod tests {
 		let one = NonZeroU64::new(1).unwrap();
 		let ten = NonZeroU64::new(10).unwrap();
 
-		let offer =
-			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::One).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::One).build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert!(!offer.expects_quantity());
 		assert_eq!(offer.supported_quantity(), Quantity::One);
 		assert_eq!(tlv_stream.0.quantity_max, None);
 
-		let offer =
-			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Unbounded).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Unbounded).build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert!(offer.expects_quantity());
 		assert_eq!(offer.supported_quantity(), Quantity::Unbounded);
 		assert_eq!(tlv_stream.0.quantity_max, Some(0));
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.supported_quantity(Quantity::Bounded(ten))
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Bounded(ten)).build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert!(offer.expects_quantity());
 		assert_eq!(offer.supported_quantity(), Quantity::Bounded(ten));
 		assert_eq!(tlv_stream.0.quantity_max, Some(10));
 
-		let offer = OfferBuilder::new(pubkey(42))
-			.supported_quantity(Quantity::Bounded(one))
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Bounded(one)).build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert!(offer.expects_quantity());
 		assert_eq!(offer.supported_quantity(), Quantity::Bounded(one));
@@ -1898,8 +1866,7 @@ mod tests {
 		let offer = OfferBuilder::new(pubkey(42))
 			.supported_quantity(Quantity::Bounded(ten))
 			.supported_quantity(Quantity::One)
-			.build()
-			.unwrap();
+			.build();
 		let tlv_stream = offer.as_tlv_stream();
 		assert!(!offer.expects_quantity());
 		assert_eq!(offer.supported_quantity(), Quantity::One);
@@ -1917,7 +1884,6 @@ mod tests {
 		match OfferBuilder::new(pubkey(42))
 			.features_unchecked(OfferFeatures::unknown())
 			.build()
-			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
 		{
 			Ok(_) => panic!("expected error"),
@@ -1927,11 +1893,8 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_chains() {
-		let offer = OfferBuilder::new(pubkey(42))
-			.chain(Network::Bitcoin)
-			.chain(Network::Testnet)
-			.build()
-			.unwrap();
+		let offer =
+			OfferBuilder::new(pubkey(42)).chain(Network::Bitcoin).chain(Network::Testnet).build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -1943,8 +1906,7 @@ mod tests {
 		let offer = OfferBuilder::new(pubkey(42))
 			.amount(Amount::Bitcoin { amount_msats: 1000 }, &conversion)
 			.unwrap()
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2023,7 +1985,7 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_description() {
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2032,8 +1994,7 @@ mod tests {
 			.description("foo".to_string())
 			.amount_msats(1000)
 			.unwrap()
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2074,8 +2035,7 @@ mod tests {
 					BlindedHop { blinded_node_id: pubkey(46), encrypted_payload: vec![0; 46] },
 				],
 			))
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2090,8 +2050,7 @@ mod tests {
 				],
 			))
 			.clear_issuer_signing_pubkey()
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2100,7 +2059,7 @@ mod tests {
 		builder.offer.issuer_signing_pubkey = None;
 		builder.offer.paths = Some(vec![]);
 
-		let offer = builder.build().unwrap();
+		let offer = builder.build();
 		match offer.to_string().parse::<Offer>() {
 			Ok(_) => panic!("expected error"),
 			Err(e) => {
@@ -2114,30 +2073,26 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_quantity() {
-		let offer =
-			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::One).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::One).build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
 
-		let offer =
-			OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Unbounded).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).supported_quantity(Quantity::Unbounded).build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
 
 		let offer = OfferBuilder::new(pubkey(42))
 			.supported_quantity(Quantity::Bounded(NonZeroU64::new(10).unwrap()))
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
 
 		let offer = OfferBuilder::new(pubkey(42))
 			.supported_quantity(Quantity::Bounded(NonZeroU64::new(1).unwrap()))
-			.build()
-			.unwrap();
+			.build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2145,7 +2100,7 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_issuer_id() {
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 		if let Err(e) = offer.to_string().parse::<Offer>() {
 			panic!("error parsing offer: {:?}", e);
 		}
@@ -2174,7 +2129,7 @@ mod tests {
 		const UNKNOWN_ODD_TYPE: u64 = OFFER_TYPES.end - 1;
 		assert!(UNKNOWN_ODD_TYPE % 2 == 1);
 
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();
@@ -2190,7 +2145,7 @@ mod tests {
 		const UNKNOWN_EVEN_TYPE: u64 = OFFER_TYPES.end - 2;
 		assert!(UNKNOWN_EVEN_TYPE % 2 == 0);
 
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();
@@ -2206,7 +2161,7 @@ mod tests {
 
 	#[test]
 	fn parses_offer_with_experimental_tlv_records() {
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();
@@ -2219,7 +2174,7 @@ mod tests {
 			Err(e) => panic!("error parsing offer: {:?}", e),
 		}
 
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();
@@ -2235,7 +2190,7 @@ mod tests {
 
 	#[test]
 	fn fails_parsing_offer_with_out_of_range_tlv_records() {
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();
@@ -2248,7 +2203,7 @@ mod tests {
 			Err(e) => assert_eq!(e, Bolt12ParseError::Decode(DecodeError::InvalidValue)),
 		}
 
-		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let offer = OfferBuilder::new(pubkey(42)).build();
 
 		let mut encoded_offer = Vec::new();
 		offer.write(&mut encoded_offer).unwrap();

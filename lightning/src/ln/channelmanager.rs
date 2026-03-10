@@ -2393,7 +2393,7 @@ impl<
 /// # let offer = builder
 ///     .description("coffee".to_string())
 ///     .amount_msats(10_000_000).unwrap()
-///     .build()?;
+///     .build();
 /// let bech32_offer = offer.to_string();
 ///
 /// // On the event processing thread
