@@ -1069,7 +1069,13 @@ fn ignore_duplicate_invoice() {
 	do_pass_along_path(args);
 
 	let payment_preimage = match get_event!(async_recipient, Event::PaymentClaimable) {
-		Event::PaymentClaimable { purpose, .. } => purpose.preimage().unwrap(),
+		Event::PaymentClaimable { purpose, dummy_hops_skimmed_fee_msat, .. } => {
+			assert_eq!(
+				dummy_hops_skimmed_fee_msat,
+				dummy_tlvs.iter().map(|tlv| tlv.payment_relay.fee_base_msat as u64).sum::<u64>()
+			);
+			purpose.preimage().unwrap()
+		},
 		_ => panic!("No Event::PaymentClaimable"),
 	};
 

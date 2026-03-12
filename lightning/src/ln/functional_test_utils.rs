@@ -3673,6 +3673,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 						ref payment_hash,
 						ref purpose,
 						amount_msat,
+						dummy_hops_skimmed_fee_msat,
 						receiver_node_id,
 						ref receiving_channel_ids,
 						claim_deadline,
@@ -3686,6 +3687,15 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 						assert_eq!(
 							onion_fields.as_ref().unwrap().payment_metadata,
 							payment_metadata
+						);
+						let expected_dummy_hops_skimmed_fee_msat = dummy_tlvs
+							.iter()
+							.map(|tlv| tlv.payment_relay.fee_base_msat as u64)
+							.sum::<u64>()
+							* receiving_channel_ids.len() as u64;
+						assert_eq!(
+							*dummy_hops_skimmed_fee_msat,
+							expected_dummy_hops_skimmed_fee_msat
 						);
 						match &purpose {
 							PaymentPurpose::Bolt11InvoicePayment {
@@ -4000,6 +4010,9 @@ macro_rules! single_fulfill_commit_from_ev {
 pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 	let claim_event = args.expected_paths[0].last().unwrap().node.get_and_clear_pending_events();
 	assert_eq!(claim_event.len(), 1, "{claim_event:?}");
+	let expected_dummy_hops_skimmed_fee_msat =
+		args.dummy_tlvs.iter().map(|tlv| tlv.payment_relay.fee_base_msat as u64).sum::<u64>()
+			* args.expected_paths.len() as u64;
 	#[allow(unused)]
 	let mut fwd_amt_msat = 0;
 	match claim_event[0] {
@@ -4010,6 +4023,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 				| PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(preimage), .. }
 				| PaymentPurpose::Bolt12RefundPayment { payment_preimage: Some(preimage), .. },
 			amount_msat,
+			dummy_hops_skimmed_fee_msat,
 			ref htlcs,
 			ref onion_fields,
 			..
@@ -4017,6 +4031,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(preimage, args.payment_preimage);
 			assert_eq!(htlcs.len(), args.expected_paths.len()); // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
+			assert_eq!(dummy_hops_skimmed_fee_msat, expected_dummy_hops_skimmed_fee_msat);
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
@@ -4028,6 +4043,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 				| PaymentPurpose::Bolt12RefundPayment { .. },
 			payment_hash,
 			amount_msat,
+			dummy_hops_skimmed_fee_msat,
 			ref htlcs,
 			ref onion_fields,
 			..
@@ -4035,6 +4051,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(&payment_hash.0, &Sha256::hash(&args.payment_preimage.0)[..]);
 			assert_eq!(htlcs.len(), args.expected_paths.len()); // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
+			assert_eq!(dummy_hops_skimmed_fee_msat, expected_dummy_hops_skimmed_fee_msat);
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
