@@ -1191,6 +1191,7 @@ pub(super) enum ChannelReadyOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ClaimingPayment {
 	amount_msat: u64,
+	dummy_hops_skimmed_fee_msat: u64,
 	payment_purpose: events::PaymentPurpose,
 	receiver_node_id: PublicKey,
 	htlcs: Vec<events::ClaimedHTLC>,
@@ -1217,6 +1218,7 @@ impl_writeable_tlv_based!(ClaimingPayment, {
 	// onion_fields was added (and always set for new payments) in 0.0.124
 	(9, onion_fields, (required: ReadableArgs, amount_msat.0.unwrap())),
 	(11, payment_id, option),
+	(13, dummy_hops_skimmed_fee_msat, (default_value, 0u64)),
 });
 
 struct ClaimablePayment {
@@ -1374,6 +1376,9 @@ impl ClaimablePayments {
 						debug_assert!(durable_preimage_channel.is_some());
 						ClaimingPayment {
 							amount_msat: payment.htlcs.iter().map(|source| source.value).sum(),
+							dummy_hops_skimmed_fee_msat: payment.htlcs.iter()
+								.map(|source| source.dummy_hops_skimmed_fee_msat.unwrap_or(0))
+								.sum(),
 							payment_purpose: payment.purpose,
 							receiver_node_id,
 							htlcs,
@@ -10195,6 +10200,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 						.remove(&payment_hash);
 					if let Some(ClaimingPayment {
 						amount_msat,
+						dummy_hops_skimmed_fee_msat,
 						payment_purpose: purpose,
 						receiver_node_id,
 						htlcs,
@@ -10208,6 +10214,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 							payment_hash,
 							purpose,
 							amount_msat,
+							dummy_hops_skimmed_fee_msat,
 							receiver_node_id: Some(receiver_node_id),
 							htlcs,
 							sender_intended_total_msat,
@@ -20198,12 +20205,18 @@ impl<
 							payment.inbound_payment_id(&inbound_payment_id_secret.unwrap());
 						let htlcs = payment.htlcs.iter().map(events::ClaimedHTLC::from).collect();
 						let sender_intended_total_msat = payment.onion_fields.total_mpp_amount_msat;
+						let dummy_hops_skimmed_fee_msat = payment
+							.htlcs
+							.iter()
+							.map(|htlc| htlc.dummy_hops_skimmed_fee_msat.unwrap_or(0))
+							.sum();
 						pending_events.push_back((
 							events::Event::PaymentClaimed {
 								receiver_node_id,
 								payment_hash,
 								purpose: payment.purpose,
 								amount_msat: claimable_amt_msat,
+								dummy_hops_skimmed_fee_msat,
 								htlcs,
 								sender_intended_total_msat: Some(sender_intended_total_msat),
 								onion_fields: Some(payment.onion_fields),
