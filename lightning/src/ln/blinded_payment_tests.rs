@@ -30,6 +30,7 @@ use crate::offers::invoice::UnsignedBolt12Invoice;
 use crate::prelude::*;
 use crate::routing::router::{
 	BlindedTail, Path, Payee, PaymentParameters, Route, RouteHop, RouteParameters, TrampolineHop,
+	DEFAULT_PAYMENT_DUMMY_HOPS,
 };
 use crate::sign::{NodeSigner, PeerStorageKey, ReceiveAuthKey, Recipient};
 use crate::types::features::{BlindedHopFeatures, ChannelFeatures, NodeFeatures};
@@ -265,6 +266,109 @@ fn one_hop_blinded_path_with_dummy_hops() {
 	let claim_args =
 		ClaimAlongRouteArgs::new(&nodes[0], path, payment_preimage).with_dummy_tlvs(&dummy_tlvs);
 	claim_payment_along_route(claim_args);
+}
+
+#[test]
+fn one_hop_blinded_path_with_dummy_hops_fails_payment_constraints() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let chan_upd =
+		create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0).0.contents;
+
+	let amt_msat = 5000;
+	let (_, payment_hash, payment_secret) =
+		get_payment_preimage_hash(&nodes[1], Some(amt_msat), None);
+	let dummy_tlvs = [DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS];
+	let total_dummy_fee_msat =
+		dummy_tlvs.iter().map(|tlv| tlv.payment_relay.fee_base_msat as u64).sum::<u64>();
+	let payee_tlvs = ReceiveTlvs {
+		payment_secret,
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: u32::max_value(),
+			htlc_minimum_msat: amt_msat + total_dummy_fee_msat + 1,
+		},
+		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
+	};
+	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
+
+	let mut secp_ctx = Secp256k1::new();
+	let mut blinded_path = BlindedPaymentPath::new_with_dummy_hops(
+		&[],
+		nodes[1].node.get_our_node_id(),
+		&dummy_tlvs,
+		receive_auth_key,
+		payee_tlvs,
+		u64::MAX,
+		TEST_FINAL_CLTV as u16,
+		&chanmon_cfgs[1].keys_manager,
+		&secp_ctx,
+	)
+	.unwrap();
+	// Keep pathfinding viable while leaving the encrypted receive payload underpaying.
+	blinded_path.payinfo.htlc_minimum_msat = chan_upd.htlc_minimum_msat;
+
+	let route_params = RouteParameters::from_payment_params_and_value(
+		PaymentParameters::blinded(vec![blinded_path]),
+		amt_msat,
+	);
+	nodes[0]
+		.node
+		.send_payment(
+			payment_hash,
+			RecipientOnionFields::spontaneous_empty(amt_msat),
+			PaymentId(payment_hash.0),
+			route_params,
+			Retry::Attempts(0),
+		)
+		.unwrap();
+	check_added_monitors(&nodes[0], 1);
+
+	let mut events = nodes[0].node.get_and_clear_pending_msg_events();
+	assert_eq!(events.len(), 1);
+	let ev = remove_first_msg_event_to_node(&nodes[1].node.get_our_node_id(), &mut events);
+	let payment_event = SendEvent::from_event(ev);
+
+	nodes[1].node.handle_update_add_htlc(nodes[0].node.get_our_node_id(), &payment_event.msgs[0]);
+	check_added_monitors(&nodes[1], 0);
+	do_commitment_signed_dance(&nodes[1], &nodes[0], &payment_event.commitment_msg, true, true);
+	assert!(nodes[1].node.needs_pending_htlc_processing());
+	nodes[1].node.process_pending_htlc_forwards();
+	for _ in 0..DEFAULT_PAYMENT_DUMMY_HOPS {
+		assert!(nodes[1].node.needs_pending_htlc_processing());
+		nodes[1].node.process_pending_htlc_forwards();
+	}
+	expect_htlc_handling_failed_destinations!(
+		nodes[1].node.get_and_clear_pending_events(),
+		&[HTLCHandlingFailureType::Receive { payment_hash }]
+	);
+	check_added_monitors(&nodes[1], 1);
+
+	let updates = get_htlc_update_msgs(&nodes[1], &nodes[0].node.get_our_node_id());
+	assert_eq!(updates.update_fail_malformed_htlcs.len(), 1);
+	let update_malformed = &updates.update_fail_malformed_htlcs[0];
+	assert_eq!(update_malformed.sha256_of_onion, [0; 32]);
+	assert_eq!(
+		update_malformed.failure_code,
+		LocalHTLCFailureReason::InvalidOnionBlinding.failure_code()
+	);
+	nodes[0]
+		.node
+		.handle_update_fail_malformed_htlc(nodes[1].node.get_our_node_id(), update_malformed);
+	do_commitment_signed_dance(&nodes[0], &nodes[1], &updates.commitment_signed, false, false);
+	expect_payment_failed_conditions(
+		&nodes[0],
+		payment_hash,
+		false,
+		PaymentFailedConditions::new()
+			.expected_htlc_error_data(LocalHTLCFailureReason::InvalidOnionBlinding, &[0; 32]),
+	);
+	nodes[1].logger.assert_log_contains(
+		"lightning::ln::channelmanager",
+		"violated blinded payment constraints",
+		1,
+	);
 }
 
 #[test]
