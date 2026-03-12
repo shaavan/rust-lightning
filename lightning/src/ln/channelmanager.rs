@@ -427,6 +427,13 @@ pub struct PendingHTLCInfo {
 	/// This is used to allow LSPs to take fees as a part of payments, without the sender having to
 	/// shoulder them.
 	pub skimmed_fee_msat: Option<u64>,
+	/// The fee skimmed by the [`DummyTlvs`] preceeding it.
+	/// In LDK x.0 Dummy hops preceeds only the received payments.
+	/// This fees is the extra fees earned by the receiver, and is represented separately
+	/// in the corresponding [`Event::PaymentClaimable`].
+	///
+	/// [`DummyTlvs`]: crate::blinded_path::payment::DummyTlvs
+	pub dummy_hops_skimmed_fee_msat: Option<u64>,
 	/// An experimental field indicating whether our node's reputation would be held accountable
 	/// for the timely resolution of the received HTLC.
 	pub incoming_accountable: bool,
@@ -540,6 +547,10 @@ struct ClaimableHTLC {
 	/// The total value received for a payment (sum of all MPP parts if the payment is a MPP).
 	/// Gets set to the amount reported when pushing [`Event::PaymentClaimable`].
 	total_value_received: Option<u64>,
+	/// The amount (in msats) skimmed off by the dummy hops preceeding the HTLC.
+	/// This amount is the extra amount that the final receiver earns in addition
+	/// to the [`Self::value`]. And is set as such in [`Event::PaymentClaimable`].
+	dummy_hops_skimmed_fee_msat: Option<u64>,
 	/// The extra fee our counterparty skimmed off the top of this HTLC.
 	counterparty_skimmed_fee_msat: Option<u64>,
 }
@@ -5173,7 +5184,8 @@ impl<
 				// delay) once they've send us a commitment_signed!
 				let current_height: u32 = self.best_block.read().unwrap().height;
 				create_recv_pending_htlc_info(decoded_hop, shared_secret, msg.payment_hash,
-					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
+					msg.amount_msat, msg.cltv_expiry, None, allow_underpay,
+					msg.dummy_hops_skimmed_fee_msat, msg.skimmed_fee_msat,
 					msg.accountable.unwrap_or(false), current_height)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
@@ -7768,6 +7780,7 @@ impl<
 								Some(phantom_shared_secret),
 								false,
 								None,
+								None,
 								incoming_accountable,
 								current_height,
 							);
@@ -7883,6 +7896,7 @@ impl<
 								outgoing_cltv_value,
 								routing,
 								skimmed_fee_msat,
+								dummy_hops_skimmed_fee_msat: _,
 								incoming_accountable,
 								..
 							},
@@ -8123,6 +8137,7 @@ impl<
 								incoming_amt_msat,
 								outgoing_amt_msat,
 								skimmed_fee_msat,
+								dummy_hops_skimmed_fee_msat,
 								..
 							},
 						..
@@ -8217,6 +8232,7 @@ impl<
 						total_value_received: None,
 						cltv_expiry,
 						onion_payload,
+						dummy_hops_skimmed_fee_msat,
 						counterparty_skimmed_fee_msat: skimmed_fee_msat,
 					};
 
@@ -8322,6 +8338,8 @@ impl<
 									claimable_payment.htlcs.iter().map(|htlc| htlc.value).sum();
 								claimable_payment.htlcs.iter_mut()
 									.for_each(|htlc| htlc.total_value_received = Some(amount_msat));
+								let dummy_hops_skimmed_fee_msat = claimable_payment.htlcs.iter()
+									.map(|htlc| htlc.dummy_hops_skimmed_fee_msat.unwrap_or(0)).sum();
 								let counterparty_skimmed_fee_msat = claimable_payment.htlcs.iter()
 									.map(|htlc| htlc.counterparty_skimmed_fee_msat.unwrap_or(0)).sum();
 								debug_assert!(total_intended_recvd_value.saturating_sub(amount_msat)
@@ -8334,6 +8352,7 @@ impl<
 									payment_hash,
 									purpose: $purpose,
 									amount_msat,
+									dummy_hops_skimmed_fee_msat,
 									counterparty_skimmed_fee_msat,
 									receiving_channel_ids: claimable_payment.receiving_channel_ids(),
 									claim_deadline: Some(earliest_expiry - HTLC_FAIL_BACK_BUFFER),
@@ -17316,6 +17335,7 @@ impl_writeable_tlv_based!(PendingHTLCInfo, {
 	(9, incoming_amt_msat, option),
 	(10, skimmed_fee_msat, option),
 	(11, incoming_accountable, (default_value, false)),
+	(12, dummy_hops_skimmed_fee_msat, option),
 });
 
 impl Writeable for HTLCFailureMsg {
@@ -17435,6 +17455,7 @@ fn write_claimable_htlc<W: Writer>(
 		(6, htlc.cltv_expiry, required),
 		(8, keysend_preimage, option),
 		(10, htlc.counterparty_skimmed_fee_msat, option),
+		(12, htlc.dummy_hops_skimmed_fee_msat, option),
 	});
 	Ok(())
 }
@@ -17452,6 +17473,7 @@ impl Readable for (ClaimableHTLC, u64) {
 			(6, cltv_expiry, required),
 			(8, keysend_preimage, option),
 			(10, counterparty_skimmed_fee_msat, option),
+			(12, dummy_hops_skimmed_fee_msat, option),
 		});
 		let payment_data: Option<msgs::FinalOnionHopData> = payment_data_opt;
 		let value = value_ser.0.unwrap();
@@ -17473,6 +17495,7 @@ impl Readable for (ClaimableHTLC, u64) {
 			onion_payload,
 			cltv_expiry: cltv_expiry.0.unwrap(),
 			counterparty_skimmed_fee_msat,
+			dummy_hops_skimmed_fee_msat,
 		}, total_msat.0.expect("required field")))
 	}
 }
@@ -21226,8 +21249,8 @@ mod tests {
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		if let Err(crate::ln::channelmanager::InboundHTLCErr { reason, .. }) =
 			create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
-				sender_intended_amt_msat - extra_fee_msat - 1, 42, None, true, Some(extra_fee_msat),
-				false, current_height)
+				sender_intended_amt_msat - extra_fee_msat - 1, 42, None, true,
+				None, Some(extra_fee_msat), false, current_height)
 		{
 			assert_eq!(reason, LocalHTLCFailureReason::FinalIncorrectHTLCAmount);
 		} else { panic!(); }
@@ -21249,7 +21272,7 @@ mod tests {
 		};
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		assert!(create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
-			sender_intended_amt_msat - extra_fee_msat, 42, None, true, Some(extra_fee_msat),
+			sender_intended_amt_msat - extra_fee_msat, 42, None, true, None, Some(extra_fee_msat),
 			false, current_height).is_ok());
 	}
 
@@ -21275,7 +21298,7 @@ mod tests {
 				custom_tlvs: Vec::new(),
 			},
 			shared_secret: SharedSecret::from_bytes([0; 32]),
-		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, false, current_height);
+		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, None, false, current_height);
 
 		// Should not return an error as this condition:
 		// https://github.com/lightning/bolts/blob/4dcc377209509b13cf89a4b91fde7d478f5b46d8/04-onion-routing.md?plain=1#L334
