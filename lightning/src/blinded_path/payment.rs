@@ -393,25 +393,40 @@ pub struct DummyTlvs {
 }
 
 impl DummyTlvs {
-	/// On Default values:
-	/// These currently match one-to-one with the default ForwardTlvs values set by DefaultRouter
-	/// in test.
-	/// TODO: Figure out the reason behind these values.
+	// Keep these aligned with the `ForwardTlvs` that `DefaultRouter` derives for blinded payment
+	// paths in our functional tests.
+	//
+	// Specifically:
+	// - `fee_base_msat` and `fee_proportional_millionths` come from `ChannelConfig::default()`.
+	// - `htlc_minimum_msat` comes from `test_default_channel_config()`, which pins the legacy
+	//   1000 msat minimum used by most functional tests.
+	// - `cltv_expiry_delta` comes from that same test config's `MIN_CLTV_EXPIRY_DELTA` (48), after
+	//   `PaymentRelay::try_from(CounterpartyForwardingInfo)` rounds it into the blinded-path bucket
+	//   of 80 to avoid exposing more specific relay deltas.
+	pub(crate) const DEFAULT_CLTV_EXPIRY_DELTA: u16 = 80;
+	pub(crate) const DEFAULT_FEE_PROPORTIONAL_MILLIONTHS: u32 = 0;
+	pub(crate) const DEFAULT_FEE_BASE_MSAT: u32 = 1000;
+	pub(crate) const DEFAULT_MAX_CLTV_EXPIRY: u32 = 3000;
+	pub(crate) const DEFAULT_HTLC_MINIMUM_MSAT: u64 = 1000;
+
+	/// Returns dummy-hop relay values chosen to match the blinded `ForwardTlvs` produced by
+	/// `DefaultRouter` in our functional tests.
 	///
-	/// Zero FPM: This is set to 0, to avoid off-by-bit test failures.
-	///
-	/// TODO: Encode it formally.
+	/// These are reasonable defaults because they preserve realistic relay semantics for fees,
+	/// CLTV deltas, and HTLC bounds, while keeping dummy hops indistinguishable from the test
+	/// channels that typically precede them. Notably, the 1000 msat HTLC minimum reflects our test
+	/// channel defaults rather than the production `ChannelHandshakeConfig` default of 1 msat.
 	pub(crate) fn default() -> Self {
 		Self {
 			payment_relay: PaymentRelay {
-				cltv_expiry_delta: 80,
-				fee_proportional_millionths: 0,
-				fee_base_msat: 1000,
+				cltv_expiry_delta: Self::DEFAULT_CLTV_EXPIRY_DELTA,
+				fee_proportional_millionths: Self::DEFAULT_FEE_PROPORTIONAL_MILLIONTHS,
+				fee_base_msat: Self::DEFAULT_FEE_BASE_MSAT,
 			},
 			payment_constraints: PaymentConstraints {
 				// Set to a long time in future, to prevent any payment drops due to arbritary constraints
-				max_cltv_expiry: 3000,
-				htlc_minimum_msat: 1000,
+				max_cltv_expiry: Self::DEFAULT_MAX_CLTV_EXPIRY,
+				htlc_minimum_msat: Self::DEFAULT_HTLC_MINIMUM_MSAT,
 			},
 		}
 	}

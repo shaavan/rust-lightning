@@ -1469,7 +1469,13 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	//
 	// Until the fee-handling trade-off is revisited, we pass an expected extra
 	// fee here so tests can compensate for it.
-	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(1000));
+	claim_bolt12_payment_with_extra_fees(
+		bob,
+		&[alice],
+		payment_context,
+		&invoice,
+		Some(DummyTlvs::DEFAULT_FEE_BASE_MSAT as u64),
+	);
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
