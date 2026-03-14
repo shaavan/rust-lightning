@@ -3688,14 +3688,9 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 							onion_fields.as_ref().unwrap().payment_metadata,
 							payment_metadata
 						);
-						let expected_dummy_hops_skimmed_fee_msat = dummy_tlvs
-							.iter()
-							.map(|tlv| tlv.payment_relay.fee_base_msat as u64)
-							.sum::<u64>()
-							* receiving_channel_ids.len() as u64;
 						assert_eq!(
-							*dummy_hops_skimmed_fee_msat,
-							expected_dummy_hops_skimmed_fee_msat
+							dummy_hops_total_fee_msat(recv_value, &dummy_tlvs),
+							*dummy_hops_skimmed_fee_msat
 						);
 						match &purpose {
 							PaymentPurpose::Bolt11InvoicePayment {
@@ -3978,6 +3973,28 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	}
 }
 
+/// Computes the total fees skimmed by all dummy hops for a single received HTLC.
+///
+/// The provided `final_amount_msat` is the amount that reaches the recipient after all dummy hops
+/// have been traversed. Because dummy hops each charge fees on the amount forwarded through them,
+/// their fees must be accumulated in reverse order, with each hop's fee increasing the amount that
+/// the previous dummy hop forwarded.
+fn dummy_hops_total_fee_msat(final_amount_msat: u64, dummy_tlvs: &[DummyTlvs]) -> u64 {
+	let mut amount_msat = final_amount_msat;
+	let mut total_fee_msat = 0;
+
+	for tlvs in dummy_tlvs {
+		let base_fee_msat = tlvs.payment_relay.fee_base_msat as u64;
+		let proportional_fee_millionths = tlvs.payment_relay.fee_proportional_millionths as u64;
+		let fee_msat = (amount_msat * proportional_fee_millionths / 1_000_000) + base_fee_msat;
+
+		total_fee_msat += fee_msat;
+		amount_msat += fee_msat;
+	}
+
+	total_fee_msat
+}
+
 macro_rules! single_fulfill_commit_from_ev {
 	($ev: expr) => {
 		match $ev {
@@ -4010,9 +4027,6 @@ macro_rules! single_fulfill_commit_from_ev {
 pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 	let claim_event = args.expected_paths[0].last().unwrap().node.get_and_clear_pending_events();
 	assert_eq!(claim_event.len(), 1, "{claim_event:?}");
-	let expected_dummy_hops_skimmed_fee_msat =
-		args.dummy_tlvs.iter().map(|tlv| tlv.payment_relay.fee_base_msat as u64).sum::<u64>()
-			* args.expected_paths.len() as u64;
 	#[allow(unused)]
 	let mut fwd_amt_msat = 0;
 	match claim_event[0] {
@@ -4028,6 +4042,10 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			ref onion_fields,
 			..
 		} => {
+			let expected_dummy_hops_skimmed_fee_msat = htlcs
+				.iter()
+				.map(|htlc| dummy_hops_total_fee_msat(htlc.value_msat, &args.dummy_tlvs))
+				.sum::<u64>();
 			assert_eq!(preimage, args.payment_preimage);
 			assert_eq!(htlcs.len(), args.expected_paths.len()); // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
@@ -4048,6 +4066,10 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			ref onion_fields,
 			..
 		} => {
+			let expected_dummy_hops_skimmed_fee_msat = htlcs
+				.iter()
+				.map(|htlc| dummy_hops_total_fee_msat(htlc.value_msat, &args.dummy_tlvs))
+				.sum::<u64>();
 			assert_eq!(&payment_hash.0, &Sha256::hash(&args.payment_preimage.0)[..]);
 			assert_eq!(htlcs.len(), args.expected_paths.len()); // One per path.
 			assert_eq!(htlcs.iter().map(|h| h.value_msat).sum::<u64>(), amount_msat);
@@ -4112,23 +4134,9 @@ pub fn pass_claimed_payment_along_route_from_ev(
 	for (i, (expected_route, (path_msgs, next_hop))) in
 		expected_paths.iter().zip(per_path_msgs.drain(..)).enumerate()
 	{
-		// Since we traverse the route in reverse (from recipient back to sender),
-		// we must first incorporate the fees charged by dummy hops. Each dummy hop
-		// fee increases the forward amount that upstream hops would have had to send,
-		// so we accumulate these before processing real forwarding nodes.
-		for tlvs in &dummy_tlvs {
-			let fees = {
-				let (base_fee, prop_fee) = (
-					tlvs.payment_relay.fee_base_msat as u64,
-					tlvs.payment_relay.fee_proportional_millionths as u64,
-				);
-
-				(fwd_amt_msat * prop_fee / 1_000_000) + base_fee
-			};
-
-			expected_total_fee_msat += fees;
-			fwd_amt_msat += fees;
-		}
+		let dummy_hops_fee_msat = dummy_hops_total_fee_msat(fwd_amt_msat, &dummy_tlvs);
+		expected_total_fee_msat += dummy_hops_fee_msat;
+		fwd_amt_msat += dummy_hops_fee_msat;
 
 		let mut next_msgs = Some(path_msgs);
 		let mut expected_next_node = next_hop;
