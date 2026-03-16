@@ -1312,6 +1312,24 @@ fn check_claimed_htlcs_match_route<'a, 'b, 'c>(
 	}
 }
 
+fn claimed_htlc_value_msats_for_paths<'a, 'b, 'c>(
+	origin_node: &Node<'a, 'b, 'c>, expected_paths: &[&[&Node<'a, 'b, 'c>]], htlcs: &[ClaimedHTLC],
+) -> Vec<u64> {
+	let mut remaining_htlcs: Vec<&ClaimedHTLC> = htlcs.iter().collect();
+
+	expected_paths
+		.iter()
+		.map(|path| {
+			let idx = remaining_htlcs
+				.iter()
+				.position(|htlc| claimed_htlc_matches_path(origin_node, path, htlc))
+				.expect("each path must have a unique matching claimed HTLC");
+
+			remaining_htlcs.remove(idx).value_msat
+		})
+		.collect()
+}
+
 pub fn _reload_node<'a, 'b, 'c>(
 	node: &'a Node<'a, 'b, 'c>, config: UserConfig, chanman_encoded: &[u8],
 	monitors_encoded: &[&[u8]], _reconstruct_manager_from_monitors: Option<bool>,
@@ -4035,9 +4053,7 @@ macro_rules! single_fulfill_commit_from_ev {
 pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 	let claim_event = args.expected_paths[0].last().unwrap().node.get_and_clear_pending_events();
 	assert_eq!(claim_event.len(), 1, "{claim_event:?}");
-	#[allow(unused)]
-	let mut fwd_amt_msat = 0;
-	match claim_event[0] {
+	let per_path_claim_amt_msats = match claim_event[0] {
 		Event::PaymentClaimed {
 			purpose:
 				PaymentPurpose::SpontaneousPayment(preimage)
@@ -4060,7 +4076,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(dummy_hops_skimmed_fee_msat, expected_dummy_hops_skimmed_fee_msat);
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
-			fwd_amt_msat = amount_msat;
+			claimed_htlc_value_msats_for_paths(args.origin_node, args.expected_paths, htlcs)
 		},
 		Event::PaymentClaimed {
 			purpose:
@@ -4084,10 +4100,10 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(dummy_hops_skimmed_fee_msat, expected_dummy_hops_skimmed_fee_msat);
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
-			fwd_amt_msat = amount_msat;
+			claimed_htlc_value_msats_for_paths(args.origin_node, args.expected_paths, htlcs)
 		},
 		_ => panic!(),
-	}
+	};
 
 	check_added_monitors(args.expected_paths[0].last().unwrap(), args.expected_paths.len());
 
@@ -4116,11 +4132,28 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 		}
 	}
 
-	pass_claimed_payment_along_route_from_ev(fwd_amt_msat, per_path_msgs, args)
+	pass_claimed_payment_along_route_from_ev_with_path_amounts(
+		per_path_claim_amt_msats,
+		per_path_msgs,
+		args,
+	)
 }
 
 pub fn pass_claimed_payment_along_route_from_ev(
 	each_htlc_claim_amt_msat: u64,
+	per_path_msgs: Vec<((msgs::UpdateFulfillHTLC, Vec<msgs::CommitmentSigned>), PublicKey)>,
+	args: ClaimAlongRouteArgs,
+) -> u64 {
+	let per_path_claim_amt_msats = vec![each_htlc_claim_amt_msat; args.expected_paths.len()];
+	pass_claimed_payment_along_route_from_ev_with_path_amounts(
+		per_path_claim_amt_msats,
+		per_path_msgs,
+		args,
+	)
+}
+
+fn pass_claimed_payment_along_route_from_ev_with_path_amounts(
+	per_path_claim_amt_msats: Vec<u64>,
 	mut per_path_msgs: Vec<((msgs::UpdateFulfillHTLC, Vec<msgs::CommitmentSigned>), PublicKey)>,
 	args: ClaimAlongRouteArgs,
 ) -> u64 {
@@ -4136,12 +4169,15 @@ pub fn pass_claimed_payment_along_route_from_ev(
 		..
 	} = args;
 
-	let mut fwd_amt_msat = each_htlc_claim_amt_msat;
 	let mut expected_total_fee_msat = 0;
 
-	for (i, (expected_route, (path_msgs, next_hop))) in
-		expected_paths.iter().zip(per_path_msgs.drain(..)).enumerate()
+	for (i, ((expected_route, path_claim_amt_msat), (path_msgs, next_hop))) in expected_paths
+		.iter()
+		.zip(per_path_claim_amt_msats.into_iter())
+		.zip(per_path_msgs.drain(..))
+		.enumerate()
 	{
+		let mut fwd_amt_msat = path_claim_amt_msat;
 		let dummy_hops_fee_msat = dummy_hops_total_fee_msat(fwd_amt_msat, &dummy_tlvs);
 		expected_total_fee_msat += dummy_hops_fee_msat;
 		fwd_amt_msat += dummy_hops_fee_msat;
