@@ -5423,6 +5423,7 @@ impl<
 							htlc_source,
 							onion_packet,
 							None,
+							None,
 							hold_htlc_at_next_hop,
 							false, // Not accountable by default for sender.
 							&self.fee_estimator,
@@ -7902,7 +7903,7 @@ impl<
 								outgoing_cltv_value,
 								routing,
 								skimmed_fee_msat,
-								dummy_hops_skimmed_fee_msat: _,
+								dummy_hops_skimmed_fee_msat,
 								incoming_accountable,
 								..
 							},
@@ -8011,6 +8012,7 @@ impl<
 						*outgoing_cltv_value,
 						htlc_source.clone(),
 						onion_packet.clone(),
+						*dummy_hops_skimmed_fee_msat,
 						*skimmed_fee_msat,
 						next_blinding_point,
 						*incoming_accountable,
