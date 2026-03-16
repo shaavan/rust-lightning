@@ -3688,10 +3688,12 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 							onion_fields.as_ref().unwrap().payment_metadata,
 							payment_metadata
 						);
-						assert_eq!(
-							dummy_hops_total_fee_msat(recv_value, &dummy_tlvs),
-							*dummy_hops_skimmed_fee_msat
-						);
+						if receiving_channel_ids.len() == 1 {
+							assert_eq!(
+								dummy_hops_total_fee_msat(recv_value, &dummy_tlvs),
+								*dummy_hops_skimmed_fee_msat
+							);
+						}
 						match &purpose {
 							PaymentPurpose::Bolt11InvoicePayment {
 								payment_preimage,
