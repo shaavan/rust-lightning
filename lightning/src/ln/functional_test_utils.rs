@@ -3688,10 +3688,16 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 							onion_fields.as_ref().unwrap().payment_metadata,
 							payment_metadata
 						);
-						assert_eq!(
-							dummy_hops_total_fee_msat(recv_value, &dummy_tlvs),
-							*dummy_hops_skimmed_fee_msat
-						);
+						// Freshly generated `PaymentClaimable` events include one
+						// `receiving_channel_ids` entry per inbound HTLC, without
+						// deduplicating by channel, so `len() == 1` implies a
+						// single-part payment here.
+						if receiving_channel_ids.len() == 1 {
+							assert_eq!(
+								dummy_hops_total_fee_msat(recv_value, &dummy_tlvs),
+								*dummy_hops_skimmed_fee_msat
+							);
+						}
 						match &purpose {
 							PaymentPurpose::Bolt11InvoicePayment {
 								payment_preimage,
