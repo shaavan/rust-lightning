@@ -136,10 +136,7 @@ impl BlindedPaymentPath {
 	///
 	/// This improves privacy by making path-length analysis based on fee and CLTV delta
 	/// values less reliable.
-	///
-	/// TODO: Add end-to-end tests validating fee aggregation, CLTV deltas, and
-	/// HTLC bounds when dummy hops are present, before exposing this API publicly.
-	pub(crate) fn new_with_dummy_hops<
+	pub fn new_with_dummy_hops<
 		ES: EntropySource,
 		T: secp256k1::Signing + secp256k1::Verification,
 	>(
