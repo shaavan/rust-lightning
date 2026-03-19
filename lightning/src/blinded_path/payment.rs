@@ -429,9 +429,9 @@ pub(crate) const DEFAULT_DUMMY_HOP_MAX_CLTV_EXPIRY: u32 = 3000;
 /// admission.
 pub(crate) const DEFAULT_DUMMY_HOP_HTLC_MINIMUM_MSAT: u64 = 1000;
 
-impl DummyTlvs {
+impl Default for DummyTlvs {
 	/// Returns the documented default relay requirements and constraints for synthetic hops.
-	pub(crate) fn default() -> Self {
+	fn default() -> Self {
 		Self {
 			payment_relay: PaymentRelay {
 				cltv_expiry_delta: DEFAULT_DUMMY_HOP_CLTV_EXPIRY_DELTA,
