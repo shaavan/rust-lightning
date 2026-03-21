@@ -189,12 +189,8 @@ impl MessageRouter for FuzzRouter {
 struct FuzzCurrencyConversion;
 
 impl CurrencyConversion for FuzzCurrencyConversion {
-	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
 		Err(())
-	}
-
-	fn tolerance_percent(&self) -> u8 {
-		0
 	}
 }
 
