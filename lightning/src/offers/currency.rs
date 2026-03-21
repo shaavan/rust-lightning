@@ -22,29 +22,18 @@ use core::ops::Deref;
 ///
 /// USD (exponent 2) → per **cent** (0.01 USD), not per dollar.
 ///
-/// This convention ensures amounts remain precise and purely integer-based when parsing and
-/// validating BOLT12 invoice requests.
+/// The returned tolerance percent allows callers to derive validation bounds from
+/// the same lookup used for the conversion factor.
 pub trait CurrencyConversion {
 	/// Returns the conversion rate in **msats per minor unit** for the given
-	/// ISO-4217 currency code.
-	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()>;
-
-	/// Returns the acceptable tolerance, expressed as a percentage, used when
-	/// deriving conversion ranges.
-	///
-	/// This represents a user-level policy (e.g., allowance for exchange-rate
-	/// drift or cached data) and does not directly affect fiat-to-msat conversion
-	/// outside of range computation.
-	fn tolerance_percent(&self) -> u8;
+	/// ISO-4217 currency code together with the acceptable tolerance, expressed
+	/// as a percentage, used when deriving conversion ranges.
+	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()>;
 }
 
 impl<T: CurrencyConversion + ?Sized, CC: Deref<Target = T>> CurrencyConversion for CC {
-	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<u64, ()> {
+	fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
 		self.deref().msats_per_minor_unit(iso4217_code)
-	}
-
-	fn tolerance_percent(&self) -> u8 {
-		self.deref().tolerance_percent()
 	}
 }
 
@@ -53,11 +42,7 @@ impl<T: CurrencyConversion + ?Sized, CC: Deref<Target = T>> CurrencyConversion f
 pub struct DefaultCurrencyConversion;
 
 impl CurrencyConversion for DefaultCurrencyConversion {
-	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<u64, ()> {
+	fn msats_per_minor_unit(&self, _iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
 		Err(())
-	}
-
-	fn tolerance_percent(&self) -> u8 {
-		0
 	}
 }

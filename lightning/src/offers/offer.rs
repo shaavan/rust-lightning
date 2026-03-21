@@ -1132,11 +1132,17 @@ impl Amount {
 	) -> Result<u64, Bolt12SemanticError> {
 		match self {
 			Amount::Bitcoin { amount_msats } => Ok(amount_msats),
-			Amount::Currency { iso4217_code, amount } => currency_conversion
-				.msats_per_minor_unit(iso4217_code)
-				.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?
-				.checked_mul(amount)
-				.ok_or(Bolt12SemanticError::InvalidAmount),
+			Amount::Currency { iso4217_code, amount } => {
+				let (msats_per_minor_unit, _tolerance_percent) = currency_conversion
+					.msats_per_minor_unit(iso4217_code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+				let amount_msats = msats_per_minor_unit * amount as f64;
+				if !amount_msats.is_finite() || amount_msats < 0.0 || amount_msats > u64::MAX as f64
+				{
+					return Err(Bolt12SemanticError::InvalidAmount);
+				}
+				Ok(amount_msats.round() as u64)
+			},
 		}
 	}
 }
