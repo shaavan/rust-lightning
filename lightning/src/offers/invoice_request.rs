@@ -290,6 +290,18 @@ macro_rules! invoice_request_builder_methods { (
 			$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
 
+		if $self.invoice_request.amount_msats.is_none()
+			&& $self.invoice_request.offer.is_currency_denominated()
+		{
+			let quantity = $self.invoice_request.quantity.unwrap_or(1);
+			let (_, _, amount_msats) = $self
+				.invoice_request
+				.offer
+				.resolve_offer_amount_bounds_for_quantity($self.currency_conversion, quantity)?
+				.ok_or(Bolt12SemanticError::MissingAmount)?;
+			$self.invoice_request.amount_msats = Some(amount_msats);
+		}
+
 		Ok($self.build_without_checks())
 	}
 
@@ -1604,7 +1616,7 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-	use crate::offers::currency::DefaultCurrencyConversion;
+	use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
 	use crate::offers::invoice_request::string_truncate_safe;
 	use crate::offers::merkle::{self, SignatureTlvStreamRef, TaggedHash, TlvStream};
@@ -1629,6 +1641,18 @@ mod tests {
 	use core::num::NonZeroU64;
 	#[cfg(feature = "std")]
 	use core::time::Duration;
+
+	struct TolerantTestCurrencyConversion;
+
+	impl CurrencyConversion for TolerantTestCurrencyConversion {
+		fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
+			if iso4217_code.as_str() == "USD" {
+				Ok((1_000.0, 5))
+			} else {
+				Err(())
+			}
+		}
+	}
 
 	#[test]
 	fn builds_invoice_request_with_defaults() {
@@ -2158,6 +2182,29 @@ mod tests {
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
 			.amount(
 				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&TolerantTestCurrencyConversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+				&TolerantTestCurrencyConversion,
+			)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
+		assert!(invoice_request.has_amount_msats());
+		assert_eq!(invoice_request.amount_msats(&unsupported_conversion), Ok(10_500));
+		assert_eq!(invoice_request.amount_msats(&TolerantTestCurrencyConversion), Ok(10_500));
+		assert_eq!(tlv_stream.amount, Some(10_500));
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
 				&conversion,
 			)
 			.unwrap()
@@ -2186,6 +2233,62 @@ mod tests {
 			Err(Bolt12SemanticError::MissingAmount)
 		);
 		assert_eq!(tlv_stream.amount, None);
+	}
+
+	#[test]
+	fn builds_invoice_request_for_fiat_offer_with_tolerance_bounds() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TolerantTestCurrencyConversion;
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
+		assert!(invoice_request.has_amount_msats());
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(10_500));
+		assert_eq!(tlv_stream.amount, Some(10_500));
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats(9_500)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(invoice_request.amount_msats(&conversion), Ok(9_500));
+
+		match OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats(9_499)
+		{
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
+		}
 	}
 
 	#[test]

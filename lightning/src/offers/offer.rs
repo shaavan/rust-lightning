@@ -964,18 +964,14 @@ impl OfferContents {
 
 		let quantity = requested_quantity.unwrap_or(1);
 
-		// Expected offer amount defaults to zero if unspecified
-		let expected_amount_msats = self
-			.resolve_offer_amount(currency_conversion)?
-			.map(|unit_msats| {
-				unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)
-			})
-			.transpose()?;
+		let expected_amount_msats =
+			self.resolve_offer_amount_bounds_for_quantity(currency_conversion, quantity)?;
 
 		let total_amount_msats = match (requested_amount_msats, expected_amount_msats) {
 			// The payer specified an amount and the offer defines a minimum.
-			// Enforce that the requested amount satisfies the minimum.
-			(Some(requested), Some(minimum)) if requested < minimum => {
+			// Enforce that the requested amount does not fall below the tolerated
+			// lower bound derived from the offer's resolved amount.
+			(Some(requested), Some((minimum, _, _))) if requested < minimum => {
 				Err(Bolt12SemanticError::InsufficientAmount)
 			},
 
@@ -985,7 +981,7 @@ impl OfferContents {
 
 			// The payer did not specify an amount but the offer defines one.
 			// Use the offer-implied amount.
-			(None, Some(amount_msats)) => Ok(amount_msats),
+			(None, Some((_, amount_msats, _))) => Ok(amount_msats),
 
 			// Neither the payer nor the offer defines an amount.
 			(None, None) => Err(Bolt12SemanticError::MissingAmount),
@@ -1039,6 +1035,25 @@ impl OfferContents {
 		&self, currency_conversion: &CC,
 	) -> Result<Option<u64>, Bolt12SemanticError> {
 		self.amount().map(|amt| amt.into_msats(currency_conversion)).transpose()
+	}
+
+	pub(super) fn resolve_offer_amount_bounds_for_quantity<CC: CurrencyConversion>(
+		&self, currency_conversion: &CC, quantity: u64,
+	) -> Result<Option<(u64, u64, u64)>, Bolt12SemanticError> {
+		self.amount()
+			.map(|amount| amount.into_msats_with_tolerance(currency_conversion))
+			.transpose()?
+			.map(|(unit_msats, tolerance_pct)| {
+				let amount_msats =
+					unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)?;
+				let tolerance_msats = amount_msats_tolerance(amount_msats, tolerance_pct)?;
+				let minimum_amount_msats = amount_msats.saturating_sub(tolerance_msats);
+				let maximum_amount_msats = amount_msats
+					.checked_add(tolerance_msats)
+					.ok_or(Bolt12SemanticError::InvalidAmount)?;
+				Ok((minimum_amount_msats, amount_msats, maximum_amount_msats))
+			})
+			.transpose()
 	}
 
 	pub(super) fn verify_using_metadata<T: secp256k1::Signing>(
@@ -1177,10 +1192,16 @@ impl Amount {
 	pub(crate) fn into_msats<CC: CurrencyConversion>(
 		self, currency_conversion: &CC,
 	) -> Result<u64, Bolt12SemanticError> {
+		self.into_msats_with_tolerance(currency_conversion).map(|(amount_msats, _)| amount_msats)
+	}
+
+	pub(crate) fn into_msats_with_tolerance<CC: CurrencyConversion>(
+		self, currency_conversion: &CC,
+	) -> Result<(u64, u8), Bolt12SemanticError> {
 		match self {
-			Amount::Bitcoin { amount_msats } => Ok(amount_msats),
+			Amount::Bitcoin { amount_msats } => Ok((amount_msats, 0)),
 			Amount::Currency { iso4217_code, amount } => {
-				let (msats_per_minor_unit, _) = currency_conversion
+				let (msats_per_minor_unit, tolerance_pct) = currency_conversion
 					.msats_per_minor_unit(iso4217_code)
 					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
 				let amount_msats = (msats_per_minor_unit * amount as f64).round();
@@ -1189,10 +1210,23 @@ impl Amount {
 					return Err(Bolt12SemanticError::InvalidAmount);
 				}
 
-				u64::try_from(amount_msats as i128).map_err(|_| Bolt12SemanticError::InvalidAmount)
+				let amount_msats = u64::try_from(amount_msats as i128)
+					.map_err(|_| Bolt12SemanticError::InvalidAmount)?;
+				Ok((amount_msats, tolerance_pct))
 			},
 		}
 	}
+}
+
+pub(super) fn amount_msats_tolerance(
+	amount_msats: u64, tolerance_pct: u8,
+) -> Result<u64, Bolt12SemanticError> {
+	let numerator = (amount_msats as u128)
+		.checked_mul(tolerance_pct as u128)
+		.ok_or(Bolt12SemanticError::InvalidAmount)?;
+	let tolerance_msats =
+		numerator.checked_add(99).ok_or(Bolt12SemanticError::InvalidAmount)? / 100;
+	u64::try_from(tolerance_msats).map_err(|_| Bolt12SemanticError::InvalidAmount)
 }
 
 /// An ISO 4217 three-letter currency code (e.g., USD).
