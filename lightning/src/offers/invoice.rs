@@ -401,21 +401,24 @@ macro_rules! invoice_builder_methods {
 		pub(crate) fn amount_msats<CC: CurrencyConversion>(
 			invoice_request: &InvoiceRequest, currency_conversion: &CC,
 		) -> Result<u64, Bolt12SemanticError> {
-			let quantity = invoice_request.quantity().unwrap_or(1);
 			let requested_msats = invoice_request.amount_msats(currency_conversion)?;
 
-			let minimum_offer_msats = match invoice_request
-				.resolve_offer_amount(currency_conversion)?
-			{
-				Some(unit_msats) => Some(
-					unit_msats.checked_mul(quantity).ok_or(Bolt12SemanticError::InvalidAmount)?,
-				),
-				None => None,
-			};
+			if invoice_request.has_amount_msats() {
+				let quantity = invoice_request.quantity().unwrap_or(1);
+				let minimum_offer_msats =
+					match invoice_request.resolve_offer_amount(currency_conversion)? {
+						Some(unit_msats) => Some(
+							unit_msats
+								.checked_mul(quantity)
+								.ok_or(Bolt12SemanticError::InvalidAmount)?,
+						),
+						None => None,
+					};
 
-			if let Some(minimum) = minimum_offer_msats {
-				if requested_msats < minimum {
-					return Err(Bolt12SemanticError::InsufficientAmount);
+				if let Some(minimum) = minimum_offer_msats {
+					if requested_msats < minimum {
+						return Err(Bolt12SemanticError::InsufficientAmount);
+					}
 				}
 			}
 
