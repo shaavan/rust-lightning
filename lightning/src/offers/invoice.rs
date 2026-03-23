@@ -640,14 +640,39 @@ where
 }
 
 impl UnsignedBolt12Invoice {
+	fn write_invoice_request_amount(bytes: &mut Vec<u8>, amount_msats: u64) {
+		InvoiceRequestTlvStreamRef {
+			chain: None,
+			amount: Some(amount_msats),
+			features: None,
+			quantity: None,
+			payer_id: None,
+			payer_note: None,
+			paths: None,
+			offer_from_hrn: None,
+		}
+		.write(bytes)
+		.unwrap();
+	}
+
 	fn new(invreq_bytes: &[u8], contents: InvoiceContents) -> Self {
 		// TLV record ranges applicable to invreq_bytes.
 		const NON_EXPERIMENTAL_TYPES: core::ops::Range<u64> = 0..INVOICE_REQUEST_TYPES.end;
 		const EXPERIMENTAL_TYPES: core::ops::Range<u64> =
 			EXPERIMENTAL_OFFER_TYPES.start..EXPERIMENTAL_INVOICE_REQUEST_TYPES.end;
+		const INVOICE_REQUEST_AMOUNT_TYPE: u64 = 82;
 
 		let (_, _, _, invoice_tlv_stream, _, _, experimental_invoice_tlv_stream) =
 			contents.as_tlv_stream();
+		let explicit_amount_msats = match &contents {
+			InvoiceContents::ForOffer { invoice_request, fields }
+				if !invoice_request.has_amount_msats()
+					&& invoice_request.inner.offer.is_currency_denominated() =>
+			{
+				Some(fields.amount_msats)
+			},
+			_ => None,
+		};
 
 		const INVOICE_ALLOCATION_SIZE: usize = 1024;
 		let mut bytes = Vec::with_capacity(INVOICE_ALLOCATION_SIZE);
@@ -655,18 +680,37 @@ impl UnsignedBolt12Invoice {
 		// Use the invoice_request bytes instead of the invoice_request TLV stream as the latter may
 		// have contained unknown TLV records, which are not stored in `InvoiceRequestContents` or
 		// `RefundContents`.
+		let mut amount_written = explicit_amount_msats.is_none();
 		for record in TlvStream::new(invreq_bytes).range(NON_EXPERIMENTAL_TYPES) {
+			if let Some(amount_msats) = explicit_amount_msats {
+				if !amount_written && record.r#type > INVOICE_REQUEST_AMOUNT_TYPE {
+					Self::write_invoice_request_amount(&mut bytes, amount_msats);
+					amount_written = true;
+				}
+
+				if record.r#type == INVOICE_REQUEST_AMOUNT_TYPE {
+					if !amount_written {
+						Self::write_invoice_request_amount(&mut bytes, amount_msats);
+						amount_written = true;
+					}
+					continue;
+				}
+			}
 			record.write(&mut bytes).unwrap();
 		}
 
-		let remaining_bytes = &invreq_bytes[bytes.len()..];
+		if let Some(amount_msats) = explicit_amount_msats {
+			if !amount_written {
+				Self::write_invoice_request_amount(&mut bytes, amount_msats);
+			}
+		}
 
 		invoice_tlv_stream.write(&mut bytes).unwrap();
 
 		const EXPERIMENTAL_TLV_ALLOCATION_SIZE: usize = 0;
 		let mut experimental_bytes = Vec::with_capacity(EXPERIMENTAL_TLV_ALLOCATION_SIZE);
 
-		let experimental_tlv_stream = TlvStream::new(remaining_bytes).range(EXPERIMENTAL_TYPES);
+		let experimental_tlv_stream = TlvStream::new(invreq_bytes).range(EXPERIMENTAL_TYPES);
 		for record in experimental_tlv_stream {
 			record.write(&mut experimental_bytes).unwrap();
 		}
@@ -2094,6 +2138,43 @@ mod tests {
 		if let Err(e) = Bolt12Invoice::try_from(buffer) {
 			panic!("error parsing invoice: {:?}", e);
 		}
+	}
+
+	fn parses_invoice_for_fiat_offer_without_explicit_request_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
+
+		let invoice = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		let mut encoded_invoice = Vec::new();
+		invoice.write(&mut encoded_invoice).unwrap();
+
+		let parsed_invoice = Bolt12Invoice::try_from(encoded_invoice).unwrap();
+		let (_, _, invoice_request_tlv_stream, invoice_tlv_stream, _, _, _, _) =
+			parsed_invoice.as_tlv_stream();
+		assert_eq!(invoice_request_tlv_stream.amount, Some(10_000));
+		assert_eq!(invoice_tlv_stream.amount, Some(10_000));
+		assert_eq!(parsed_invoice.amount_msats(), 10_000);
 	}
 
 	#[test]
