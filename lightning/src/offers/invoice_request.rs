@@ -1491,13 +1491,15 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 
 		offer.check_quantity(quantity)?;
 
-		match offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity) {
+		if offer.is_currency_denominated() {
 			// If the offer amount is currency-denominated, we intentionally skip the
 			// amount check here, as currency conversion is not available at this stage.
 			// The corresponding validation is performed when handling the Invoice Request,
 			// i.e., during InvoiceBuilder creation.
-			Ok(()) | Err(Bolt12SemanticError::UnsupportedCurrency) => (),
-			Err(err) => return Err(err),
+		} else if let Err(err) =
+			offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity)
+		{
+			return Err(err);
 		}
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
@@ -2569,6 +2571,32 @@ mod tests {
 		// Parsing must succeed now that LDK supports Offers with currency-denominated amounts.
 		if let Err(e) = InvoiceRequest::try_from(buffer) {
 			panic!("error parsing invoice_request: {:?}", e);
+		}
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.description("foo".to_string())
+			.amount(
+				Amount::Currency {
+					iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+					amount: 1000,
+				},
+				&conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats(1_000_000)
+			.unwrap()
+			.build_unchecked_and_sign();
+
+		let mut buffer = Vec::new();
+		invoice_request.write(&mut buffer).unwrap();
+
+		// Parsing defers validation for currency-denominated offers until a real
+		// `CurrencyConversion` is available when responding to the request.
+		if let Err(e) = InvoiceRequest::try_from(buffer) {
+			panic!("error parsing invoice_request with explicit amount: {:?}", e);
 		}
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
