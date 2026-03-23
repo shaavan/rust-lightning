@@ -2140,6 +2140,7 @@ mod tests {
 		}
 	}
 
+	#[test]
 	fn parses_invoice_for_fiat_offer_without_explicit_request_amount() {
 		let expanded_key = ExpandedKey::new([42; 32]);
 		let entropy = FixedEntropy {};
