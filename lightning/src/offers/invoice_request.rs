@@ -1493,14 +1493,18 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 		}
 
 		offer.check_quantity(quantity)?;
-
-		match offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity) {
-			// If the offer amount is currency-denominated, we intentionally skip the
-			// amount check here, as currency conversion is not available at this stage.
-			// The corresponding validation is performed when handling the Invoice Request,
-			// i.e., during InvoiceBuilder creation.
-			Ok(()) | Err(Bolt12SemanticError::UnsupportedCurrency) => (),
-			Err(err) => return Err(err),
+		if offer.is_currency_denominated() {
+			// Currency conversion is not available at this stage, so checks against the
+			// offer-defined amount are deferred until the request is handled. However, an
+			// explicitly serialized msat amount must still fit within the maximum
+			// lightning-payable amount.
+			if amount.map_or(false, |amount_msats| amount_msats > MAX_VALUE_MSAT) {
+				return Err(Bolt12SemanticError::InvalidAmount);
+			}
+		} else if let Err(err) =
+			offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity)
+		{
+			return Err(err);
 		}
 
 		let features = features.unwrap_or_else(InvoiceRequestFeatures::empty);
@@ -2572,6 +2576,59 @@ mod tests {
 		// Parsing must succeed now that LDK supports Offers with currency-denominated amounts.
 		if let Err(e) = InvoiceRequest::try_from(buffer) {
 			panic!("error parsing invoice_request: {:?}", e);
+		}
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.description("foo".to_string())
+			.amount(
+				Amount::Currency {
+					iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+					amount: 1000,
+				},
+				&conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats(1_000_000)
+			.unwrap()
+			.build_unchecked_and_sign();
+
+		let mut buffer = Vec::new();
+		invoice_request.write(&mut buffer).unwrap();
+
+		// Parsing still accepts explicit amounts for currency-denominated offers when
+		// the serialized msat amount itself is well-formed.
+		if let Err(e) = InvoiceRequest::try_from(buffer) {
+			panic!("error parsing invoice_request with explicit amount: {:?}", e);
+		}
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.description("foo".to_string())
+			.amount(
+				Amount::Currency {
+					iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+					amount: 1000,
+				},
+				&conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats_unchecked(MAX_VALUE_MSAT + 1)
+			.build_unchecked_and_sign();
+
+		let mut buffer = Vec::new();
+		invoice_request.write(&mut buffer).unwrap();
+
+		match InvoiceRequest::try_from(buffer) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(
+				e,
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidAmount)
+			),
 		}
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
