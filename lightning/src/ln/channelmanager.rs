@@ -5179,6 +5179,7 @@ impl<
 		&self, msg: &msgs::UpdateAddHTLC, shared_secret: [u8; 32],
 		decoded_hop: onion_utils::Hop, allow_underpay: bool,
 		next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>,
+		dummy_hops_skimmed_fee_msat: Option<u64>,
 	) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 		match decoded_hop {
 			onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } |
@@ -5191,7 +5192,7 @@ impl<
 				let current_height: u32 = self.best_block.read().unwrap().height;
 				create_recv_pending_htlc_info(decoded_hop, shared_secret, msg.payment_hash,
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay,
-					msg.dummy_hops_skimmed_fee_msat, msg.skimmed_fee_msat,
+					dummy_hops_skimmed_fee_msat, msg.skimmed_fee_msat,
 					msg.accountable.unwrap_or(false), current_height)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
@@ -7214,7 +7215,6 @@ impl<
 	fn process_pending_update_add_htlcs(&self) -> bool {
 		let mut should_persist = false;
 		let mut decode_update_add_htlcs = new_hash_map();
-		let mut dummy_update_add_htlcs = new_hash_map();
 		mem::swap(&mut decode_update_add_htlcs, &mut self.decode_update_add_htlcs.lock().unwrap());
 
 		let get_htlc_failure_type = |outgoing_scid_opt: Option<u64>, payment_hash: PaymentHash| {
@@ -7265,8 +7265,10 @@ impl<
 
 			let mut htlc_forwards = Vec::new();
 			let mut htlc_fails = Vec::new();
-			for update_add_htlc in &update_add_htlcs {
-				let (next_hop, next_packet_details_opt) =
+			for initial_update_add_htlc in &update_add_htlcs {
+				let mut update_add_htlc = initial_update_add_htlc.clone();
+				let mut dummy_hops_skimmed_fee_msat = None;
+				let (next_hop, next_packet_details_opt) = loop {
 					match decode_incoming_update_add_htlc_onion(
 						&update_add_htlc,
 						&self.node_signer,
@@ -7283,33 +7285,31 @@ impl<
 								},
 								Some(next_packet_details),
 							) => {
-								let new_update_add_htlc =
+								let (new_update_add_htlc, accumulated_dummy_hops_skimmed_fee_msat) =
 									onion_utils::peel_dummy_hop_update_add_htlc(
-										update_add_htlc,
+										&update_add_htlc,
 										dummy_hop_data,
 										next_hop_hmac,
 										new_packet_bytes,
 										next_packet_details,
+										dummy_hops_skimmed_fee_msat.unwrap_or(0),
 										&self.node_signer,
 										&self.secp_ctx,
 									);
-
-								dummy_update_add_htlcs
-									.entry(incoming_scid_alias)
-									.or_insert_with(Vec::new)
-									.push(new_update_add_htlc);
-
-								continue;
+								update_add_htlc = new_update_add_htlc;
+								dummy_hops_skimmed_fee_msat =
+									Some(accumulated_dummy_hops_skimmed_fee_msat);
 							},
-							_ => decoded_onion,
+							decoded_onion => break decoded_onion,
 						},
 
 						Err((htlc_fail, reason)) => {
 							let failure_type = HTLCHandlingFailureType::InvalidOnion;
 							htlc_fails.push((htlc_fail, failure_type, reason.into()));
-							continue;
+							continue 'outer_loop;
 						},
-					};
+					}
+				};
 
 				let is_intro_node_blinded_forward = next_hop.is_intro_node_blinded_forward();
 				let outgoing_scid_opt =
@@ -7398,6 +7398,7 @@ impl<
 					next_hop,
 					incoming_accept_underpaying_htlcs,
 					next_packet_details_opt.map(|d| d.next_packet_pubkey),
+					dummy_hops_skimmed_fee_msat,
 				) {
 					Ok(info) => {
 						let pending_add = PendingAddHTLCInfo {
@@ -7535,18 +7536,6 @@ impl<
 					},
 					None,
 				));
-			}
-		}
-
-		// Merge peeled dummy HTLCs into the existing decode queue so they can be
-		// processed in the next iteration. We avoid replacing the whole queue
-		// (e.g. via mem::swap) because other threads may have enqueued new HTLCs
-		// meanwhile; merging preserves everything safely.
-		if !dummy_update_add_htlcs.is_empty() {
-			let mut decode_update_add_htlc_source = self.decode_update_add_htlcs.lock().unwrap();
-
-			for (incoming_scid_alias, htlcs) in dummy_update_add_htlcs.into_iter() {
-				decode_update_add_htlc_source.entry(incoming_scid_alias).or_default().extend(htlcs);
 			}
 		}
 
