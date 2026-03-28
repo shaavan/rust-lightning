@@ -645,9 +645,22 @@ impl UnsignedBolt12Invoice {
 		const NON_EXPERIMENTAL_TYPES: core::ops::Range<u64> = 0..INVOICE_REQUEST_TYPES.end;
 		const EXPERIMENTAL_TYPES: core::ops::Range<u64> =
 			EXPERIMENTAL_OFFER_TYPES.start..EXPERIMENTAL_INVOICE_REQUEST_TYPES.end;
+		const INVOICE_REQUEST_AMOUNT_TYPE: u64 = 82;
 
 		let (_, _, _, invoice_tlv_stream, _, _, experimental_invoice_tlv_stream) =
 			contents.as_tlv_stream();
+		// If a fiat-denominated offer request omitted an explicit msat amount, serialize the
+		// resolved invoice amount into the embedded invoice_request so the invoice can be parsed
+		// again without needing currency conversion context.
+		let invoice_request_amount_msats = match &contents {
+			InvoiceContents::ForOffer { invoice_request, fields }
+				if !invoice_request.has_amount_msats()
+					&& invoice_request.inner.offer.is_currency_denominated() =>
+			{
+				Some(fields.amount_msats)
+			},
+			_ => None,
+		};
 
 		const INVOICE_ALLOCATION_SIZE: usize = 1024;
 		let mut bytes = Vec::with_capacity(INVOICE_ALLOCATION_SIZE);
@@ -655,18 +668,42 @@ impl UnsignedBolt12Invoice {
 		// Use the invoice_request bytes instead of the invoice_request TLV stream as the latter may
 		// have contained unknown TLV records, which are not stored in `InvoiceRequestContents` or
 		// `RefundContents`.
+		let mut invoice_request_amount_serialized = invoice_request_amount_msats.is_none();
 		for record in TlvStream::new(invreq_bytes).range(NON_EXPERIMENTAL_TYPES) {
+			if let Some(amount_msats) = invoice_request_amount_msats {
+				// Keep the TLV stream ordered by inserting the amount before the first later record.
+				if !invoice_request_amount_serialized && record.r#type > INVOICE_REQUEST_AMOUNT_TYPE
+				{
+					Self::write_invoice_request_amount(&mut bytes, amount_msats);
+					invoice_request_amount_serialized = true;
+				}
+
+				// Replace any serialized amount with the resolved invoice_request amount.
+				if record.r#type == INVOICE_REQUEST_AMOUNT_TYPE {
+					if !invoice_request_amount_serialized {
+						Self::write_invoice_request_amount(&mut bytes, amount_msats);
+						invoice_request_amount_serialized = true;
+					}
+					continue;
+				}
+			}
 			record.write(&mut bytes).unwrap();
 		}
 
-		let remaining_bytes = &invreq_bytes[bytes.len()..];
+		// Append the amount if the copied invoice_request had no amount TLV and no later
+		// non-experimental TLV where it could be inserted in order.
+		if let Some(amount_msats) = invoice_request_amount_msats {
+			if !invoice_request_amount_serialized {
+				Self::write_invoice_request_amount(&mut bytes, amount_msats);
+			}
+		}
 
 		invoice_tlv_stream.write(&mut bytes).unwrap();
 
 		const EXPERIMENTAL_TLV_ALLOCATION_SIZE: usize = 0;
 		let mut experimental_bytes = Vec::with_capacity(EXPERIMENTAL_TLV_ALLOCATION_SIZE);
 
-		let experimental_tlv_stream = TlvStream::new(remaining_bytes).range(EXPERIMENTAL_TYPES);
+		let experimental_tlv_stream = TlvStream::new(invreq_bytes).range(EXPERIMENTAL_TYPES);
 		for record in experimental_tlv_stream {
 			record.write(&mut experimental_bytes).unwrap();
 		}
@@ -677,6 +714,21 @@ impl UnsignedBolt12Invoice {
 		let tagged_hash = TaggedHash::from_tlv_stream(SIGNATURE_TAG, tlv_stream);
 
 		Self { bytes, experimental_bytes, contents, tagged_hash }
+	}
+
+	fn write_invoice_request_amount(bytes: &mut Vec<u8>, amount_msats: u64) {
+		InvoiceRequestTlvStreamRef {
+			chain: None,
+			amount: Some(amount_msats),
+			features: None,
+			quantity: None,
+			payer_id: None,
+			payer_note: None,
+			paths: None,
+			offer_from_hrn: None,
+		}
+		.write(bytes)
+		.unwrap();
 	}
 
 	/// Returns the [`TaggedHash`] of the invoice to sign.
