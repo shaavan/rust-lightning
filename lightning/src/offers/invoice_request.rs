@@ -290,6 +290,18 @@ macro_rules! invoice_request_builder_methods { (
 			$self.currency_conversion, $self.invoice_request.amount_msats, $self.invoice_request.quantity
 		)?;
 
+		if $self.invoice_request.amount_msats.is_none()
+			&& $self.invoice_request.offer.is_currency_denominated()
+		{
+			let quantity = $self.invoice_request.quantity.unwrap_or(1);
+			let (_, _, amount_msats) = $self
+				.invoice_request
+				.offer
+				.resolve_offer_amount_bounds_for_quantity($self.currency_conversion, quantity)?
+				.ok_or(Bolt12SemanticError::MissingAmount)?;
+			$self.invoice_request.amount_msats = Some(amount_msats);
+		}
+
 		Ok($self.build_without_checks())
 	}
 

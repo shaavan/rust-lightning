@@ -405,15 +405,12 @@ macro_rules! invoice_builder_methods {
 
 			if invoice_request.has_amount_msats() {
 				let quantity = invoice_request.quantity().unwrap_or(1);
-				let minimum_offer_msats =
-					match invoice_request.resolve_offer_amount(currency_conversion)? {
-						Some(unit_msats) => Some(
-							unit_msats
-								.checked_mul(quantity)
-								.ok_or(Bolt12SemanticError::InvalidAmount)?,
-						),
-						None => None,
-					};
+				let minimum_offer_msats = invoice_request
+					.contents
+					.inner
+					.offer
+					.resolve_offer_amount_bounds_for_quantity(currency_conversion, quantity)?
+					.map(|(minimum, _, _)| minimum);
 
 				if let Some(minimum) = minimum_offer_msats {
 					if requested_msats < minimum {
