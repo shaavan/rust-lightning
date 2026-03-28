@@ -1939,6 +1939,7 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::DecodeError;
+	use crate::offers::currency::CurrencyConversion;
 	use crate::offers::invoice_request::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
 		InvoiceRequestVerifiedFromOffer,
@@ -1963,6 +1964,18 @@ mod tests {
 		crate::offers::offer::OfferWithExplicitMetadataBuilder as OfferBuilder,
 		crate::offers::refund::RefundMaybeWithDerivedMetadataBuilder as RefundBuilder,
 	};
+
+	struct TolerantTestCurrencyConversion;
+
+	impl CurrencyConversion for TolerantTestCurrencyConversion {
+		fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
+			if iso4217_code.as_str() == "USD" {
+				Ok((1_000.0, 5))
+			} else {
+				Err(())
+			}
+		}
+	}
 
 	trait ToBytes {
 		fn to_bytes(&self) -> Vec<u8>;
@@ -2149,13 +2162,13 @@ mod tests {
 	}
 
 	#[test]
-	fn parses_invoice_for_fiat_offer_without_explicit_request_amount() {
+	fn parses_invoice_for_fiat_offer_with_tolerance_adjusted_request_amount() {
 		let expanded_key = ExpandedKey::new([42; 32]);
 		let entropy = FixedEntropy {};
 		let nonce = Nonce::from_entropy_source(&entropy);
 		let secp_ctx = Secp256k1::new();
 		let payment_id = PaymentId([1; 32]);
-		let conversion = TestCurrencyConversion;
+		let conversion = TolerantTestCurrencyConversion;
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount(
@@ -2181,9 +2194,127 @@ mod tests {
 		let parsed_invoice = Bolt12Invoice::try_from(encoded_invoice).unwrap();
 		let (_, _, invoice_request_tlv_stream, invoice_tlv_stream, _, _, _, _) =
 			parsed_invoice.as_tlv_stream();
+		assert_eq!(invoice_request_tlv_stream.amount, Some(10_500));
+		assert_eq!(invoice_tlv_stream.amount, Some(10_500));
+		assert_eq!(parsed_invoice.amount_msats(), 10_500);
+	}
+
+	#[test]
+	fn parses_invoice_for_fiat_offer_without_explicit_request_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TolerantTestCurrencyConversion;
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_unchecked_and_sign();
+
+		let invoice = invoice_request
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		let mut encoded_invoice = Vec::new();
+		invoice.write(&mut encoded_invoice).unwrap();
+
+		let parsed_invoice = Bolt12Invoice::try_from(encoded_invoice).unwrap();
+		let (_, _, invoice_request_tlv_stream, invoice_tlv_stream, _, _, _, _) =
+			parsed_invoice.as_tlv_stream();
 		assert_eq!(invoice_request_tlv_stream.amount, Some(10_000));
 		assert_eq!(invoice_tlv_stream.amount, Some(10_000));
 		assert_eq!(parsed_invoice.amount_msats(), 10_000);
+	}
+
+	#[test]
+	fn builds_invoice_for_fiat_offer_with_request_amount_within_tolerance() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TolerantTestCurrencyConversion;
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.amount_msats(9_500)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		let invoice = invoice_request
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap();
+		assert_eq!(invoice.amount_msats(), 9_500);
+	}
+
+	#[test]
+	fn builds_invoice_for_fiat_offer() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
+		let currency_amount =
+			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 };
+		let expected_amount_msats = 10_000;
+
+		let payment_paths = payment_paths();
+		let payment_hash = payment_hash();
+		let now = now();
+		let unsigned_invoice = OfferBuilder::new(recipient_pubkey())
+			.amount(currency_amount, &conversion)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(&conversion, payment_paths.clone(), payment_hash, now)
+			.unwrap()
+			.build()
+			.unwrap();
+
+		let (_, offer_tlv_stream, _, invoice_tlv_stream, _, _, _) =
+			unsigned_invoice.contents.as_tlv_stream();
+		assert_eq!(unsigned_invoice.amount(), Some(currency_amount));
+		assert_eq!(offer_tlv_stream.currency, Some(b"USD"));
+		assert_eq!(offer_tlv_stream.amount, Some(10));
+		assert_eq!(invoice_tlv_stream.amount, Some(expected_amount_msats));
+		assert_eq!(unsigned_invoice.amount_msats(), expected_amount_msats);
+		assert_eq!(unsigned_invoice.payment_paths(), payment_paths.as_slice());
+
+		#[cfg(c_bindings)]
+		let mut unsigned_invoice = unsigned_invoice;
+		let invoice = unsigned_invoice.sign(recipient_sign).unwrap();
+		let (_, offer_tlv_stream, _, invoice_tlv_stream, _, _, _, _) = invoice.as_tlv_stream();
+		assert_eq!(invoice.amount(), Some(currency_amount));
+		assert_eq!(offer_tlv_stream.currency, Some(b"USD"));
+		assert_eq!(offer_tlv_stream.amount, Some(10));
+		assert_eq!(invoice_tlv_stream.amount, Some(expected_amount_msats));
+		assert_eq!(invoice.amount_msats(), expected_amount_msats);
 	}
 
 	#[test]
