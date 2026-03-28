@@ -964,7 +964,6 @@ impl OfferContents {
 
 		let quantity = requested_quantity.unwrap_or(1);
 
-		// Expected offer amount defaults to zero if unspecified
 		let expected_amount_msats = self
 			.resolve_offer_amount(currency_conversion)?
 			.map(|unit_msats| {
