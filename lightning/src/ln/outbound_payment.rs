@@ -1282,11 +1282,18 @@ impl OutboundPayments {
 						));
 					}
 
-					let amount_msat = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+					let amount_msat = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 						invreq,
 						currency_conversion,
-					)
-					.map_err(|_| Bolt12PaymentError::UnexpectedInvoice)?;
+					) {
+						Ok(amount_msat) => amount_msat,
+						Err(_) => {
+							// An amount must be provided explicitly in the invoice request or
+							// remain derivable from the underlying offer at this stage.
+							abandon_with_entry!(entry, PaymentFailureReason::UnexpectedError);
+							return Err(Bolt12PaymentError::UnknownRequiredFeatures);
+						},
+					};
 					let keysend_preimage =
 						PaymentPreimage(entropy_source.get_secure_random_bytes());
 					let payment_hash =
@@ -2948,13 +2955,15 @@ mod tests {
 	use crate::ln::outbound_payment::RecipientOnionFields;
 	use crate::ln::outbound_payment::{
 		Bolt12PaymentError, OutboundPayments, PendingOutboundPayment, RecipientCustomTlvs, Retry,
-		RetryableSendFailure, StaleExpiration,
+		RetryableInvoiceRequest, RetryableSendFailure, StaleExpiration,
 	};
+	use crate::offers::currency::DefaultCurrencyConversion;
 	#[cfg(feature = "std")]
 	use crate::offers::invoice::DEFAULT_RELATIVE_EXPIRY;
 	use crate::offers::invoice_request::InvoiceRequest;
 	use crate::offers::nonce::Nonce;
-	use crate::offers::offer::OfferBuilder;
+	use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
+	use crate::offers::static_invoice::StaticInvoiceBuilder;
 	use crate::offers::test_utils::*;
 	use crate::routing::gossip::NetworkGraph;
 	use crate::routing::router::{
@@ -3647,5 +3656,95 @@ mod tests {
 			payment_id,
 			reason: Some(PaymentFailureReason::UserAbandoned),
 		}, None));
+	}
+
+	#[test]
+	#[rustfmt::skip]
+	fn abandoning_async_payment_on_amount_resolution_failure() {
+		let pending_events = Mutex::new(VecDeque::new());
+		let outbound_payments = OutboundPayments::new(new_hash_map());
+		let payment_id = PaymentId([0; 32]);
+		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
+		let secp_ctx = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let conversion = TestCurrencyConversion;
+		let unsupported_conversion = DefaultCurrencyConversion;
+
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+		)
+		.path(blinded_path())
+		.amount(
+			Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 1000,
+			},
+			&conversion,
+		)
+		.unwrap()
+		.build();
+
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		let invoice = StaticInvoiceBuilder::for_offer_using_derived_keys(
+			&offer,
+			payment_paths(),
+			vec![blinded_path()],
+			now(),
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+		)
+		.unwrap()
+		.build_and_sign(&secp_ctx)
+		.unwrap();
+
+		assert!(
+			outbound_payments.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				Retry::Attempts(0),
+				RouteParametersConfig::default(),
+				Some(RetryableInvoiceRequest {
+					invoice_request,
+					nonce,
+					needs_retry: false,
+				}),
+			).is_ok()
+		);
+		assert!(outbound_payments.has_pending_payments());
+
+		assert_eq!(
+			outbound_payments.static_invoice_received(
+				&invoice,
+				&unsupported_conversion,
+				payment_id,
+				Bolt12InvoiceFeatures::empty(),
+				0,
+				now(),
+				&entropy,
+				&pending_events,
+			),
+			Err(Bolt12PaymentError::UnexpectedInvoice),
+		);
+		assert!(!outbound_payments.has_pending_payments());
+		assert_eq!(
+			pending_events.lock().unwrap().pop_front(),
+			Some((Event::PaymentFailed {
+				payment_hash: None,
+				payment_id,
+				reason: Some(PaymentFailureReason::UnexpectedError),
+			}, None)),
+		);
+		assert!(pending_events.lock().unwrap().is_empty());
 	}
 }
