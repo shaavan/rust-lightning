@@ -51,7 +51,7 @@
 //! let mut buffer = Vec::new();
 //!
 //! # use lightning::offers::invoice_request::InvoiceRequestBuilder;
-//! # <InvoiceRequestBuilder<_, _>>::from(
+//! # <InvoiceRequestBuilder<'_, '_, _, _>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
 //!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)?
@@ -286,9 +286,25 @@ macro_rules! invoice_request_builder_methods { (
 		}
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
-		if let Some(amount_msats) = $self.invoice_request.amount_msats {
-			// Omitted amounts are resolved when the payee builds the invoice, so only
-			// explicit payer-provided amounts need request-time validation here.
+		let amount_msats = match $self.invoice_request.amount_msats {
+			Some(amount_msats) => Some(amount_msats),
+			None => match $self.invoice_request.offer.resolve_offer_amount($self.currency_conversion) {
+				Ok(Some(unit_msats)) => {
+					let quantity = $self.invoice_request.quantity.unwrap_or(1);
+					let amount_range =
+						unit_msats.checked_mul(quantity).map_err(|_| Bolt12SemanticError::InvalidAmount)?;
+					if amount_range.amount_msats() > MAX_VALUE_MSAT {
+						return Err(Bolt12SemanticError::InvalidAmount);
+					}
+					Some(amount_range.amount_msats())
+				},
+				Ok(None) | Err(Bolt12SemanticError::UnsupportedCurrency) => None,
+				Err(err) => return Err(err),
+			},
+		};
+		if let Some(amount_msats) = amount_msats {
+			// Preserve the omitted amount on the wire, while still rejecting requests whose
+			// effective amount is already deterministically invalid at signing time.
 			$self.invoice_request.offer.check_amount_msats_for_quantity(
 				$self.currency_conversion, Some(amount_msats), $self.invoice_request.quantity
 			)?;
@@ -1069,7 +1085,8 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		&$self, currency_conversion: &CC,
 		payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
-	) -> Result<$builder, Bolt12SemanticError> {
+	) -> Result<$builder, Bolt12SemanticError>
+	{
 		if $self.inner.invoice_request_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
 		}
@@ -1525,6 +1542,12 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 		}
 
 		offer.check_quantity(quantity)?;
+
+		if let Some(amount_msats) = amount {
+			if amount_msats > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
+			}
+		}
 
 		match offer.check_amount_msats_for_quantity(&DefaultCurrencyConversion, amount, quantity) {
 			// If the offer amount is currency-denominated, we intentionally skip the

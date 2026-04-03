@@ -68,6 +68,7 @@ use crate::routing::gossip::{NodeAlias, NodeId};
 use crate::routing::router::{DEFAULT_PAYMENT_DUMMY_HOPS, PaymentParameters, RouteParameters, RouteParametersConfig};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::Writeable;
+use crate::util::test_utils::TestCurrencyConversion;
 
 /// This used to determine whether we built a compact path or not, but now its just a random
 /// constant we apply to blinded path expiry in these tests.
@@ -2385,6 +2386,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 		.build();
 
 	let payment_id = PaymentId([1; 32]);
+	let conversion = TestCurrencyConversion;
 	david.node.pay_for_offer(&offer, None, payment_id, Default::default()).unwrap();
 
 	connect_peers(david, bob);
@@ -2419,14 +2421,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-			request
-				.respond_using_derived_keys_no_std(
-					&DefaultCurrencyConversion,
-					payment_paths,
-					payment_hash,
-					created_at,
-				)
-				.unwrap()
+			request.respond_using_derived_keys_no_std(&conversion, payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
