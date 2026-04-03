@@ -51,7 +51,7 @@
 //! let mut buffer = Vec::new();
 //!
 //! # use lightning::offers::invoice_request::InvoiceRequestBuilder;
-//! # <InvoiceRequestBuilder<_, _>>::from(
+//! # <InvoiceRequestBuilder<'_, '_, _, _>>::from(
 //! "lno1qcp4256ypq"
 //!     .parse::<Offer>()?
 //!     .request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)?
@@ -286,9 +286,25 @@ macro_rules! invoice_request_builder_methods { (
 		}
 
 		$self.invoice_request.offer.check_quantity($self.invoice_request.quantity)?;
-		if let Some(amount_msats) = $self.invoice_request.amount_msats {
-			// Omitted amounts are resolved when the payee builds the invoice, so only
-			// explicit payer-provided amounts need request-time validation here.
+		let amount_msats = match $self.invoice_request.amount_msats {
+			Some(amount_msats) => Some(amount_msats),
+			None => match $self.invoice_request.offer.resolve_offer_amount($self.currency_conversion) {
+				Ok(Some(unit_msats)) => {
+					let quantity = $self.invoice_request.quantity.unwrap_or(1);
+					Some(
+						unit_msats
+							.checked_mul(quantity)
+							.filter(|amount_msats| *amount_msats <= MAX_VALUE_MSAT)
+							.ok_or(Bolt12SemanticError::InvalidAmount)?,
+					)
+				},
+				Ok(None) | Err(Bolt12SemanticError::UnsupportedCurrency) => None,
+				Err(err) => return Err(err),
+			},
+		};
+		if let Some(amount_msats) = amount_msats {
+			// Preserve the omitted amount on the wire, while still rejecting requests whose
+			// effective amount is already deterministically invalid at signing time.
 			$self.invoice_request.offer.check_amount_msats_for_quantity(
 				$self.currency_conversion, Some(amount_msats), $self.invoice_request.quantity
 			)?;
@@ -2117,14 +2133,8 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 		{
-			Ok(invoice_request) => {
-				assert!(!invoice_request.has_amount_msats());
-				assert_eq!(
-					invoice_request.amount_msats(&conversion),
-					Err(Bolt12SemanticError::InvalidAmount)
-				);
-			},
-			Err(_) => panic!("expected invoice request"),
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
 		}
 	}
 
