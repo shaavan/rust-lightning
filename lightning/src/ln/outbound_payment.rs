@@ -92,6 +92,9 @@ pub(crate) enum PendingOutboundPayment {
 	// Helps avoid holding the `OutboundPayments::pending_outbound_payments` lock during pathfinding.
 	InvoiceReceived {
 		payment_hash: PaymentHash,
+		// Persist the invoice identity so duplicate delivery of the same invoice remains
+		// idempotent without accepting a different invoice that reuses the payment hash.
+		invoice_identity: Option<[u8; 32]>,
 		retry_strategy: Retry,
 		// Preserve the originating invoice request so offer-based amount validation
 		// can still happen if invoice sending is deferred until after receipt.
@@ -1291,7 +1294,7 @@ impl OutboundPayments {
 							// An amount must be provided explicitly in the invoice request or
 							// remain derivable from the underlying offer at this stage.
 							abandon_with_entry!(entry, PaymentFailureReason::UnexpectedError);
-							return Err(Bolt12PaymentError::UnknownRequiredFeatures);
+							return Err(Bolt12PaymentError::UnexpectedInvoice);
 						},
 					};
 					let keysend_preimage =
@@ -2166,6 +2169,7 @@ impl OutboundPayments {
 						retryable_invoice_request.as_ref().map(|invreq| invreq.invoice_request.clone());
 					*entry.into_mut() = PendingOutboundPayment::InvoiceReceived {
 						payment_hash,
+						invoice_identity: Some(invoice.signable_hash()),
 						retry_strategy: retry,
 						invoice_request: invoice_request.clone(),
 						route_params_config: config,
@@ -2178,9 +2182,16 @@ impl OutboundPayments {
 				// event generation remains idempotent, even if the same invoice is received again before the
 				// event is handled by the user.
 				PendingOutboundPayment::InvoiceReceived {
-					payment_hash, retry_strategy, route_params_config, invoice_request,
+					payment_hash, invoice_identity, retry_strategy, route_params_config,
+					invoice_request,
 				} => {
 					if *payment_hash != invoice.payment_hash() {
+						return Err(Bolt12PaymentError::DuplicateInvoice);
+					}
+					if invoice_identity
+						.as_ref()
+						.is_some_and(|invoice_identity| *invoice_identity != invoice.signable_hash())
+					{
 						return Err(Bolt12PaymentError::DuplicateInvoice);
 					}
 					Ok((
@@ -2905,6 +2916,7 @@ impl_writeable_tlv_based_enum_upgradable!(PendingOutboundPayment,
 			)
 		))),
 		(7, invoice_request, option),
+		(9, invoice_identity, option),
 	},
 	// Added in 0.1. Prior versions will drop these outbounds on downgrade, which is safe because no
 	// HTLCs are in-flight.
@@ -3746,5 +3758,52 @@ mod tests {
 			}, None)),
 		);
 		assert!(pending_events.lock().unwrap().is_empty());
+	}
+
+	#[test]
+	#[rustfmt::skip]
+	fn rejects_distinct_duplicate_invoice_with_same_payment_hash() {
+		let outbound_payments = OutboundPayments::new(new_hash_map());
+		let payment_id = PaymentId([0; 32]);
+		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
+		let conversion = TestCurrencyConversion;
+		let invoice_request = dummy_invoice_request();
+		let payment_hash = payment_hash();
+
+		let first_invoice = invoice_request
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash, now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+		let second_invoice = invoice_request
+			.respond_with_no_std(
+				&conversion,
+				payment_paths(),
+				payment_hash,
+				now() + Duration::from_secs(1),
+			)
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		assert!(
+			outbound_payments.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				Retry::Attempts(0),
+				RouteParametersConfig::default(),
+				None,
+			).is_ok()
+		);
+
+		assert_eq!(outbound_payments.mark_invoice_received(&first_invoice, payment_id), Ok(()));
+		assert_eq!(
+			outbound_payments.mark_invoice_received(&second_invoice, payment_id),
+			Err(Bolt12PaymentError::DuplicateInvoice),
+		);
 	}
 }
