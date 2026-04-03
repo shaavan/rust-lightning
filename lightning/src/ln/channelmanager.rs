@@ -5760,6 +5760,8 @@ impl<
 	fn send_payment_for_verified_bolt12_invoice(
 		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
 	) -> Result<(), Bolt12PaymentError> {
+		self.check_bolt12_invoice_amount(invoice, payment_id)?;
+
 		let best_block_height = self.best_block.read().unwrap().height;
 		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
 		let features = self.bolt12_invoice_features();
@@ -5779,6 +5781,31 @@ impl<
 			|args| self.send_payment_along_path(args),
 			&WithContext::for_payment(&self.logger, None, None, None, payment_id),
 		)
+	}
+
+	fn check_bolt12_invoice_amount(
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId,
+	) -> Result<(), Bolt12PaymentError> {
+		let (_, _, invoice_request) = self
+			.pending_outbound_payments
+			.invoice_request_for_pending_bolt12_invoice(payment_id)
+			.map_err(|e| match e {
+				Bolt12PaymentError::DuplicateInvoice => Bolt12PaymentError::DuplicateInvoice,
+				_ => Bolt12PaymentError::UnexpectedInvoice,
+			})?;
+		if let Some(ref invoice_request) = invoice_request {
+			let requested_amount = invoice_request
+				.payable_amount(&self.currency_conversion)
+				.map_err(|_| Bolt12PaymentError::UnexpectedInvoice)?;
+			// A returned invoice quotes the amount the payee expects to receive. Make
+			// sure it matches the payer's locally expected amount before recording the
+			// invoice as received or initiating payment.
+			if !requested_amount.contains(invoice.amount_msats()) {
+				return Err(Bolt12PaymentError::UnexpectedInvoice);
+			}
+		}
+
+		Ok(())
 	}
 
 	fn check_refresh_async_receive_offer_cache(&self, timer_tick_occurred: bool) {
@@ -8554,27 +8581,15 @@ impl<
 								});
 								let verified_invreq = match verify_opt {
 									Some(verified_invreq) => {
-										match verified_invreq
-											.payable_amount(&self.currency_conversion)
+										if let Some(invreq_amt_msat) =
+											verified_invreq.amount_msats()
 										{
-											Ok(invreq_amt) => {
-												let invreq_amt_msat = invreq_amt.amount_msats();
-												if payment_data.total_msat < invreq_amt_msat {
-													fail_htlc!(claimable_htlc, payment_hash);
-												}
-											},
-											Err(_) => {
-												// `payable_amount()` can only fail if the invoice request does not specify an amount
-												// and the underlying offer's amount cannot be resolved.
-												//
-												// This invoice request corresponds to an offer we constructed, and we only allow
-												// creating offers with currency amounts that the node explicitly supports.
-												//
-												// Therefore, amount resolution must succeed here. Reaching this branch indicates
-												// an internal logic error.
-												debug_assert!(false);
+											// Only explicit payer-provided amounts act as a lower
+											// bound here. Omitted amounts are resolved into the
+											// invoice amount when the payee creates the invoice.
+											if payment_data.total_msat < invreq_amt_msat {
 												fail_htlc!(claimable_htlc, payment_hash);
-											},
+											}
 										}
 										verified_invreq
 									},
@@ -17069,6 +17084,10 @@ impl<
 				);
 
 				if self.config.read().unwrap().manually_handle_bolt12_invoices {
+					if let Err(e) = self.check_bolt12_invoice_amount(&invoice, payment_id) {
+						handle_pay_invoice_res!(Err(e), invoice, logger);
+					}
+
 					// Update the corresponding entry in `PendingOutboundPayment` for this invoice.
 					// This ensures that event generation remains idempotent in case we receive
 					// the same invoice multiple times.

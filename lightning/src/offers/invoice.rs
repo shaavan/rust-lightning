@@ -37,6 +37,7 @@
 //! # fn create_payment_hash() -> PaymentHash { unimplemented!() }
 //! #
 //! # fn parse_invoice_request(bytes: Vec<u8>) -> Result<(), lightning::offers::parse::Bolt12ParseError> {
+//! let conversion = DefaultCurrencyConversion;
 //! let payment_paths = create_payment_paths();
 //! let payment_hash = create_payment_hash();
 //! let secp_ctx = Secp256k1::new();
@@ -122,8 +123,8 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
-use crate::offers::currency::CurrencyConversion;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::currency::{CurrencyConversion, DefaultCurrencyConversion};
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
@@ -397,11 +398,40 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
-) => {
+	) => {
 		pub(crate) fn amount_msats<CC: CurrencyConversion>(
 			invoice_request: &InvoiceRequest, currency_conversion: &CC,
 		) -> Result<u64, Bolt12SemanticError> {
-			invoice_request.payable_amount(currency_conversion).map(|amount| amount.amount_msats())
+			let requested_msats = match invoice_request.amount_msats() {
+				Some(explicit_requested_msats) => {
+					// Explicit payer-provided amounts must still satisfy the offer-implied
+					// minimum for the requested quantity.
+					let quantity = invoice_request.quantity().unwrap_or(1);
+					let minimum_offer_msats = invoice_request
+						.resolve_offer_amount(currency_conversion)?
+						.map(|unit_msats| {
+							unit_msats.checked_mul(quantity).map(|amount| amount.minimum_msats())
+						})
+						.transpose()?;
+
+					if let Some(minimum) = minimum_offer_msats {
+						if explicit_requested_msats < minimum {
+							return Err(Bolt12SemanticError::InsufficientAmount);
+						}
+					}
+
+					explicit_requested_msats
+				},
+				// Omitted amounts are resolved by the request helper that derives the
+				// payable amount from the underlying offer.
+				None => invoice_request.payable_amount(currency_conversion)?.amount_msats(),
+			};
+
+			if requested_msats > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
+			}
+
+			Ok(requested_msats)
 		}
 
 		#[cfg_attr(c_bindings, allow(dead_code))]
@@ -637,14 +667,12 @@ impl UnsignedBolt12Invoice {
 			record.write(&mut bytes).unwrap();
 		}
 
-		let remaining_bytes = &invreq_bytes[bytes.len()..];
-
 		invoice_tlv_stream.write(&mut bytes).unwrap();
 
 		const EXPERIMENTAL_TLV_ALLOCATION_SIZE: usize = 0;
 		let mut experimental_bytes = Vec::with_capacity(EXPERIMENTAL_TLV_ALLOCATION_SIZE);
 
-		let experimental_tlv_stream = TlvStream::new(remaining_bytes).range(EXPERIMENTAL_TYPES);
+		let experimental_tlv_stream = TlvStream::new(invreq_bytes).range(EXPERIMENTAL_TYPES);
 		for record in experimental_tlv_stream {
 			record.write(&mut experimental_bytes).unwrap();
 		}
@@ -1769,6 +1797,26 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				if amount_msats != requested_amount_msats {
 					return Err(Bolt12SemanticError::InvalidAmount);
 				}
+			} else {
+				// If the invoice request omits `amount_msats`, parse-time validation can only
+				// recompute the expected amount for offers whose amount is already in msats.
+				// We therefore use `DefaultCurrencyConversion` here and deliberately tolerate
+				// `UnsupportedCurrency` so fiat-denominated offers can still parse. Those
+				// omitted-amount fiat invoices are validated later in the payment flow, where
+				// a real `CurrencyConversion` is available.
+				match invoice_request.payable_amount(&DefaultCurrencyConversion) {
+					Ok(requested_amount) => {
+						if amount_msats != requested_amount.amount_msats() {
+							return Err(Bolt12SemanticError::InvalidAmount);
+						}
+					},
+					Err(Bolt12SemanticError::UnsupportedCurrency) => (),
+					Err(e) => return Err(e),
+				}
+			}
+
+			if amount_msats > MAX_VALUE_MSAT {
+				return Err(Bolt12SemanticError::InvalidAmount);
 			}
 
 			Ok(InvoiceContents::ForOffer { invoice_request, fields })
@@ -1847,7 +1895,7 @@ mod tests {
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::{
-		Amount, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
+		Amount, CurrencyCode, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
@@ -2047,6 +2095,44 @@ mod tests {
 		if let Err(e) = Bolt12Invoice::try_from(buffer) {
 			panic!("error parsing invoice: {:?}", e);
 		}
+	}
+
+	#[test]
+	fn parses_invoice_for_fiat_offer_without_explicit_request_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let conversion = TestCurrencyConversion;
+
+		let invoice = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&conversion,
+			)
+			.unwrap()
+			.build()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &conversion)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(&conversion, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		let mut encoded_invoice = Vec::new();
+		invoice.write(&mut encoded_invoice).unwrap();
+
+		let parsed_invoice = Bolt12Invoice::try_from(encoded_invoice).unwrap();
+		let (_, _, invoice_request_tlv_stream, invoice_tlv_stream, _, _, _, _) =
+			parsed_invoice.as_tlv_stream();
+		assert_eq!(invoice_request_tlv_stream.amount, None);
+		assert_eq!(invoice_tlv_stream.amount, Some(10_000));
+		assert_eq!(parsed_invoice.amount_msats(), 10_000);
 	}
 
 	#[test]
