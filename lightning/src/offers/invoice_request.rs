@@ -1656,6 +1656,7 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+	use crate::offers::currency::CurrencyConversion;
 	use crate::offers::currency::DefaultCurrencyConversion;
 	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
 	use crate::offers::invoice_request::string_truncate_safe;
@@ -1681,6 +1682,30 @@ mod tests {
 	use core::num::NonZeroU64;
 	#[cfg(feature = "std")]
 	use core::time::Duration;
+
+	struct TolerantCurrencyConversion;
+
+	impl CurrencyConversion for TolerantCurrencyConversion {
+		fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
+			if iso4217_code.as_str() == "USD" {
+				Ok((1_000.0, 5))
+			} else {
+				Err(())
+			}
+		}
+	}
+
+	struct ShiftedCurrencyConversion;
+
+	impl CurrencyConversion for ShiftedCurrencyConversion {
+		fn msats_per_minor_unit(&self, iso4217_code: CurrencyCode) -> Result<(f64, u8), ()> {
+			if iso4217_code.as_str() == "USD" {
+				Ok((1_040.0, 5))
+			} else {
+				Err(())
+			}
+		}
+	}
 
 	#[test]
 	fn builds_invoice_request_with_defaults() {
@@ -1770,6 +1795,58 @@ mod tests {
 		if let Err(e) = InvoiceRequest::try_from(buffer) {
 			panic!("error parsing invoice request: {:?}", e);
 		}
+	}
+
+	#[test]
+	fn matches_invoice_amount_with_currency_tolerance_when_request_omits_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let payer_conversion = TolerantCurrencyConversion;
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&payer_conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &payer_conversion)
+			.unwrap()
+			.build_unchecked_and_sign();
+
+		assert!(!invoice_request.has_amount_msats());
+		assert_eq!(invoice_request.amount_msats(&payer_conversion), Ok(10_000));
+		assert!(invoice_request.matches_invoice_amount(10_400, &payer_conversion).unwrap());
+	}
+
+	#[test]
+	fn rejects_invoice_amount_outside_currency_tolerance_when_request_omits_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let payer_conversion = TolerantCurrencyConversion;
+		let payee_conversion = ShiftedCurrencyConversion;
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(
+				Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 },
+				&payer_conversion,
+			)
+			.unwrap()
+			.build_unchecked()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id, &payer_conversion)
+			.unwrap()
+			.build_unchecked_and_sign();
+
+		let payee_amount_msats = invoice_request.amount_msats(&payee_conversion).unwrap();
+
+		assert_eq!(payee_amount_msats, 10_400);
+		assert!(!invoice_request.matches_invoice_amount(10_600, &payer_conversion).unwrap());
 	}
 
 	#[cfg(feature = "std")]
