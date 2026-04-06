@@ -80,8 +80,8 @@ use crate::offers::merkle::{
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents, OfferId,
-	OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
+	OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
@@ -1009,6 +1009,36 @@ impl InvoiceRequest {
 	/// [`payer_signing_pubkey`]: Self::payer_signing_pubkey
 	pub fn signature(&self) -> Signature {
 		self.signature
+	}
+
+	pub(crate) fn matches_invoice_amount<CC: CurrencyConversion>(
+		&self, invoice_amount_msats: u64, currency_conversion: &CC,
+	) -> Result<bool, Bolt12SemanticError> {
+		let requested_amount_msats = self.amount_msats(currency_conversion)?;
+		if self.has_amount_msats() {
+			return Ok(invoice_amount_msats == requested_amount_msats);
+		}
+
+		match self.amount() {
+			Some(Amount::Currency { iso4217_code, .. }) => {
+				let (_, tolerance_percent) = currency_conversion
+					.msats_per_minor_unit(iso4217_code)
+					.map_err(|_| Bolt12SemanticError::UnsupportedCurrency)?;
+				let requested_amount_msats = requested_amount_msats as u128;
+				let invoice_amount_msats = invoice_amount_msats as u128;
+				let lower_bound = if tolerance_percent >= 100 {
+					0
+				} else {
+					requested_amount_msats * (100 - tolerance_percent as u128) / 100
+				};
+				// Round the upper bound up so integer division doesn't exclude boundary values.
+				let upper_bound =
+					(requested_amount_msats * (100 + tolerance_percent as u128)).div_ceil(100);
+
+				Ok(invoice_amount_msats >= lower_bound && invoice_amount_msats <= upper_bound)
+			},
+			_ => Ok(invoice_amount_msats == requested_amount_msats),
+		}
 	}
 
 	pub(crate) fn as_tlv_stream(&self) -> FullInvoiceRequestTlvStreamRef<'_> {

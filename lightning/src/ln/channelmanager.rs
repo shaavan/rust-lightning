@@ -5794,13 +5794,13 @@ impl<
 				_ => Bolt12PaymentError::UnexpectedInvoice,
 			})?;
 		if let Some(ref invoice_request) = invoice_request {
-			let requested_amount_msats = invoice_request
-				.amount_msats(&self.currency_conversion)
+			let invoice_amount_matches = invoice_request
+				.matches_invoice_amount(invoice.amount_msats(), &self.currency_conversion)
 				.map_err(|_| Bolt12PaymentError::UnexpectedInvoice)?;
-			// A returned invoice quotes the amount the payee expects to receive. Make
-			// sure it matches the payer's locally expected amount before recording the
-			// invoice as received or initiating payment.
-			if invoice.amount_msats() != requested_amount_msats {
+			// Explicit payer-provided amounts must match exactly. When the request omits
+			// the amount for a currency-denominated offer, allow the payee's quoted
+			// invoice amount to vary within the conversion tolerance.
+			if !invoice_amount_matches {
 				return Err(Bolt12PaymentError::UnexpectedInvoice);
 			}
 		}
