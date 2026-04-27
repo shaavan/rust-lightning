@@ -1860,7 +1860,8 @@ mod tests {
 	#[cfg(c_bindings)]
 	use super::OfferWithExplicitMetadataBuilder as OfferBuilder;
 	use super::{
-		Amount, ExperimentalOfferTlvStreamRef, Offer, OfferTlvStreamRef, Quantity,
+		Amount, ExperimentalOfferTlvStreamRef, Offer, OfferRecurrence, OfferTlvStreamRef, Period,
+		Quantity, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrenceType,
 		EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 	};
 
@@ -2351,6 +2352,62 @@ mod tests {
 	}
 
 	#[test]
+	fn builds_offer_with_recurrence() {
+		let recurrence = Period::Days(7);
+		let paywindow = RecurrencePaywindow { seconds_before: 300, seconds_after: 600 };
+		let limit = RecurrenceLimit(12);
+
+		let mut builder = OfferBuilder::new(pubkey(42));
+		builder.offer.recurrence = Some(OfferRecurrence {
+			recurrence_period: recurrence,
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_paywindow: Some(paywindow),
+			recurrence_limit: Some(limit),
+		});
+
+		let offer = builder.build().unwrap();
+		assert_eq!(
+			offer.recurrence(),
+			Some(OfferRecurrence {
+				recurrence_period: recurrence,
+				recurrence_type: RecurrenceType::Optional,
+				recurrence_paywindow: Some(paywindow),
+				recurrence_limit: Some(limit),
+			})
+		);
+		assert_eq!(offer.as_tlv_stream().0.recurrence_optional, Some(&recurrence));
+		assert_eq!(offer.as_tlv_stream().0.recurrence_compulsory, None);
+		assert_eq!(offer.as_tlv_stream().0.recurrence_base, None);
+		assert_eq!(offer.as_tlv_stream().0.recurrence_paywindow, Some(&paywindow));
+		assert_eq!(offer.as_tlv_stream().0.recurrence_limit, Some(&limit));
+
+		let recurrence_base = RecurrenceBase { proportional: true, basetime: 1_706_704_496 };
+		let mut builder = OfferBuilder::new(pubkey(42));
+		builder.offer.recurrence = Some(OfferRecurrence {
+			recurrence_period: recurrence,
+			recurrence_type: RecurrenceType::Compulsory(Some(recurrence_base)),
+			recurrence_paywindow: Some(paywindow),
+			recurrence_limit: Some(limit),
+		});
+
+		let offer = builder.build().unwrap();
+		assert_eq!(
+			offer.recurrence(),
+			Some(OfferRecurrence {
+				recurrence_period: recurrence,
+				recurrence_type: RecurrenceType::Compulsory(Some(recurrence_base)),
+				recurrence_paywindow: Some(paywindow),
+				recurrence_limit: Some(limit),
+			})
+		);
+		assert_eq!(offer.as_tlv_stream().0.recurrence_optional, None);
+		assert_eq!(offer.as_tlv_stream().0.recurrence_compulsory, Some(&recurrence));
+		assert_eq!(offer.as_tlv_stream().0.recurrence_base, Some(&recurrence_base));
+		assert_eq!(offer.as_tlv_stream().0.recurrence_paywindow, Some(&paywindow));
+		assert_eq!(offer.as_tlv_stream().0.recurrence_limit, Some(&limit));
+	}
+
+	#[test]
 	fn fails_requesting_invoice_with_unknown_required_features() {
 		let expanded_key = ExpandedKey::new([42; 32]);
 		let entropy = FixedEntropy {};
@@ -2661,6 +2718,70 @@ mod tests {
 				);
 			},
 		}
+	}
+
+	#[test]
+	fn parses_offer_with_recurrence() {
+		let recurrence = Period::Months(1);
+		let paywindow = RecurrencePaywindow { seconds_before: 86_400, seconds_after: 172_800 };
+		let limit = RecurrenceLimit(6);
+
+		let mut builder = OfferBuilder::new(pubkey(42));
+		builder.offer.recurrence = Some(OfferRecurrence {
+			recurrence_period: recurrence,
+			recurrence_type: RecurrenceType::Compulsory(None),
+			recurrence_paywindow: Some(paywindow),
+			recurrence_limit: Some(limit),
+		});
+
+		let offer = builder.build().unwrap();
+		match Offer::try_from(offer.bytes.clone()) {
+			Ok(parsed) => assert_eq!(
+				parsed.recurrence(),
+				Some(OfferRecurrence {
+					recurrence_period: recurrence,
+					recurrence_type: RecurrenceType::Compulsory(None),
+					recurrence_paywindow: Some(paywindow),
+					recurrence_limit: Some(limit),
+				})
+			),
+			Err(e) => panic!("error parsing offer: {:?}", e),
+		}
+
+		let mut tlv_stream = offer.as_tlv_stream();
+		let recurrence_base = RecurrenceBase { proportional: false, basetime: 1_706_704_496 };
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+		tlv_stream.0.recurrence_compulsory = None;
+		tlv_stream.0.recurrence_base = Some(&recurrence_base);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		match Offer::try_from(encoded_offer) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(
+				e,
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidRecurrence)
+			),
+		}
+	}
+
+	#[test]
+	fn computes_recurrence_period_times() {
+		let seconds_recurrence = Period::Seconds(3_600);
+		assert_eq!(seconds_recurrence.start_time(1_700_000_000, 2), 1_700_007_200);
+		assert_eq!(seconds_recurrence.period_length_secs(1_700_000_000, 2), 3_600);
+
+		let days_recurrence = Period::Days(7);
+		assert_eq!(days_recurrence.start_time(1_706_704_496, 1), 1_707_309_296);
+		assert_eq!(days_recurrence.period_length_secs(1_706_704_496, 1), 604_800);
+
+		let months_recurrence = Period::Months(1);
+		assert_eq!(months_recurrence.start_time(1_706_704_496, 0), 1_706_704_496);
+		assert_eq!(months_recurrence.start_time(1_706_704_496, 1), 1_709_210_096);
+		assert_eq!(months_recurrence.start_time(1_706_704_496, 2), 1_711_888_496);
+		assert_eq!(months_recurrence.period_length_secs(1_706_704_496, 0), 2_505_600);
+		assert_eq!(months_recurrence.period_length_secs(1_706_704_496, 1), 2_678_400);
 	}
 
 	#[test]
