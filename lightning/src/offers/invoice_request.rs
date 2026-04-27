@@ -1896,7 +1896,8 @@ mod tests {
 	#[cfg(c_bindings)]
 	use crate::offers::offer::OfferWithExplicitMetadataBuilder as OfferBuilder;
 	use crate::offers::offer::{
-		Amount, CurrencyCode, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
+		Amount, CurrencyCode, ExperimentalOfferTlvStreamRef, Offer, OfferTlvStreamRef, Quantity,
+		Recurrence, TimeUnit,
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
@@ -2642,6 +2643,68 @@ mod tests {
 	}
 
 	#[test]
+	fn builds_invoice_request_with_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		let token = vec![1, 2, 3, 5, 8];
+		let invoice_request = Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(1)
+			.recurrence_token(token.clone())
+			.build_and_sign()
+			.unwrap();
+		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
+
+		assert_eq!(invoice_request.recurrence_counter(), Some(1));
+		assert_eq!(invoice_request.recurrence_token(), Some(&token));
+		assert_eq!(tlv_stream.recurrence_counter, Some(1));
+		assert_eq!(tlv_stream.recurrence_token, Some(&token));
+	}
+
+	#[test]
+	fn fails_initial_invoice_request_with_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		match Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(0)
+			.recurrence_token(vec![13, 21, 34])
+			.build_and_sign()
+		{
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
+		}
+	}
+
+	#[test]
 	fn fails_responding_with_unknown_required_features() {
 		let expanded_key = ExpandedKey::new([42; 32]);
 		let entropy = FixedEntropy {};
@@ -2687,6 +2750,44 @@ mod tests {
 
 		if let Err(e) = InvoiceRequest::try_from(buffer) {
 			panic!("error parsing invoice_request: {:?}", e);
+		}
+	}
+
+	#[test]
+	fn parses_invoice_request_with_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		let token = vec![1, 2, 3, 5, 8];
+		let invoice_request = Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(1)
+			.recurrence_token(token.clone())
+			.build_and_sign()
+			.unwrap();
+
+		let mut buffer = Vec::new();
+		invoice_request.write(&mut buffer).unwrap();
+
+		match InvoiceRequest::try_from(buffer) {
+			Ok(parsed) => {
+				assert_eq!(parsed.recurrence_counter(), Some(1));
+				assert_eq!(parsed.recurrence_token(), Some(&token));
+			},
+			Err(e) => panic!("error parsing invoice_request: {:?}", e),
 		}
 	}
 
