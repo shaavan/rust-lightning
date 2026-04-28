@@ -2045,7 +2045,8 @@ mod tests {
 	use crate::offers::merkle::{self, SignError, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
 	use crate::offers::offer::{
-		Amount, ExperimentalOfferTlvStreamRef, OfferTlvStreamRef, Quantity,
+		Amount, ExperimentalOfferTlvStreamRef, Offer, OfferTlvStreamRef, Quantity, Recurrence,
+		TimeUnit,
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
@@ -2253,6 +2254,108 @@ mod tests {
 
 		if let Err(e) = Bolt12Invoice::try_from(buffer) {
 			panic!("error parsing invoice: {:?}", e);
+		}
+	}
+
+	#[test]
+	fn builds_and_parses_invoice_with_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		let token = vec![1, 2, 3, 5, 8];
+		let invoice = Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.recurrence_token(token.clone())
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		let (_, _, _, tlv_stream, _, _, _, _) = invoice.as_tlv_stream();
+		assert_eq!(invoice.recurrence_token(), Some(&token));
+		assert_eq!(tlv_stream.invoice_recurrence_token, Some(&token));
+
+		let mut buffer = Vec::new();
+		invoice.write(&mut buffer).unwrap();
+
+		match Bolt12Invoice::try_from(buffer) {
+			Ok(parsed) => assert_eq!(parsed.recurrence_token(), Some(&token)),
+			Err(e) => panic!("error parsing invoice: {:?}", e),
+		}
+	}
+
+	#[test]
+	fn fails_building_invoice_with_empty_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		match Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.recurrence_token(Vec::new())
+			.build()
+		{
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
+		}
+	}
+
+	#[test]
+	fn fails_building_non_recurring_invoice_with_recurrence_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		match OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.recurrence_token(vec![13, 21, 34])
+			.build()
+		{
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::UnexpectedRecurrence),
 		}
 	}
 

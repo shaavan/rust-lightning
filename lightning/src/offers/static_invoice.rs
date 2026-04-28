@@ -1390,6 +1390,24 @@ mod tests {
 	}
 
 	#[test]
+	fn fails_parsing_invoice_with_recurrence_token() {
+		let invoice = invoice();
+		let token = vec![1, 2, 3, 5, 8];
+		let mut tlv_stream = invoice.as_tlv_stream();
+		tlv_stream.1.invoice_recurrence_token = Some(&token);
+
+		match StaticInvoice::try_from(tlv_stream_to_bytes(&tlv_stream)) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => {
+				assert_eq!(
+					e,
+					Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+				);
+			},
+		}
+	}
+
+	#[test]
 	fn fails_parsing_invoice_with_invalid_signature() {
 		let mut invoice = invoice();
 		let last_signature_byte = invoice.bytes.last_mut().unwrap();
