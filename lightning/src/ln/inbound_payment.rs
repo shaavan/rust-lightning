@@ -94,9 +94,14 @@ impl ExpandedKey {
 		HmacEngine::<Sha256>::new(&self.offers_base_key)
 	}
 
-	/// Encrypts or decrypts the given `bytes`. Used for data included in an offer message's
-	/// metadata (e.g., payment id).
-	pub(crate) fn crypt_for_offer(&self, mut bytes: [u8; 32], nonce: Nonce) -> [u8; 32] {
+	/// Encrypts or decrypts the given fixed-size `bytes` using the offer metadata stream cipher.
+	///
+	/// This is used for offer-bound values that should only be recoverable by the offer creator,
+	/// such as the payment id carried in offer-derived metadata or other authenticated offer-flow
+	/// state.
+	pub(crate) fn crypt_for_offer<const N: usize>(
+		&self, mut bytes: [u8; N], nonce: Nonce,
+	) -> [u8; N] {
 		ChaCha20::encrypt_single_block_in_place(&self.offers_encryption_key, &nonce.0, &mut bytes);
 		bytes
 	}

@@ -13,6 +13,7 @@ use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::offers::merkle::TlvRecord;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::OfferId;
 use crate::util::ser::Writeable;
 use bitcoin::hashes::cmp::fixed_time_eq;
 use bitcoin::hashes::hmac::{Hmac, HmacEngine};
@@ -48,6 +49,29 @@ const WITH_ENCRYPTED_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[4; 16];
 // const OFFER_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[5; 16];
 // const PAYMENT_HASH_HMAC_INPUT: &[u8; 16] = &[7; 16];
 // const PAYMENT_TLVS_HMAC_INPUT: &[u8; 16] = &[8; 16];
+
+// Recurrence tokens are encoded as `encrypted_bytes || nonce || hmac`, where
+// `encrypted_bytes` is the fixed-width offer-bound recurrence state encrypted using the same
+// stream cipher used for metadata, `nonce` is the 16-byte offer encryption nonce, and `hmac` is a
+// 32-byte SHA256 HMAC over the bound recurrence state.
+const RECURRENCE_TOKEN_OFFER_ID_LEN: usize = 32;
+const RECURRENCE_TOKEN_BASETIME_LEN: usize = 8;
+const RECURRENCE_TOKEN_PLAINTEXT_LEN: usize =
+	RECURRENCE_TOKEN_OFFER_ID_LEN + RECURRENCE_TOKEN_BASETIME_LEN;
+const RECURRENCE_TOKEN_LEN: usize = RECURRENCE_TOKEN_PLAINTEXT_LEN + Nonce::LENGTH + Sha256::LEN;
+const RECURRENCE_TOKEN_HMAC_INPUT: &[u8; 16] = &[9; 16];
+const RECURRENCE_TOKEN_OFFER_ID_OFFSET: usize = 0;
+const RECURRENCE_TOKEN_BASETIME_OFFSET: usize =
+	RECURRENCE_TOKEN_OFFER_ID_OFFSET + RECURRENCE_TOKEN_OFFER_ID_LEN;
+const RECURRENCE_TOKEN_NONCE_OFFSET: usize = RECURRENCE_TOKEN_PLAINTEXT_LEN;
+const RECURRENCE_TOKEN_HMAC_OFFSET: usize = RECURRENCE_TOKEN_NONCE_OFFSET + Nonce::LENGTH;
+
+/// Fixed-width recurrence state carried inside a recurrence token.
+#[derive(Clone, Copy)]
+struct RecurrenceTokenFields {
+	offer_id: OfferId,
+	basetime: u64,
+}
 
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
 /// verified.
@@ -321,6 +345,59 @@ pub(super) fn derive_keys(nonce: Nonce, expanded_key: &ExpandedKey) -> Keypair {
 	Keypair::from_secret_key(&secp_ctx, &privkey)
 }
 
+#[allow(dead_code)]
+pub(super) fn create_recurrence_token(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, basetime: u64, counter: u32,
+	start: Option<u32>, nonce: Nonce, expanded_key: &ExpandedKey,
+) -> Vec<u8> {
+	let fields = RecurrenceTokenFields { offer_id, basetime };
+	let encrypted_bytes =
+		expanded_key.crypt_for_offer(write_recurrence_token_fields(fields), nonce);
+	let hmac = recurrence_token_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		basetime,
+		counter,
+		start,
+		expanded_key,
+	);
+
+	let mut token = Vec::with_capacity(RECURRENCE_TOKEN_LEN);
+	token.extend_from_slice(&encrypted_bytes);
+	token.extend_from_slice(nonce.as_slice());
+	token.extend_from_slice(hmac.as_byte_array());
+	token
+}
+
+/// Verifies that a recurrence token matches the expected recurrence context and returns its
+/// period-0 basetime.
+#[allow(dead_code)]
+pub(super) fn verify_recurrence_token(
+	token: &[u8], offer_id: OfferId, payer_signing_pubkey: PublicKey, counter: u32,
+	start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Result<u64, ()> {
+	let (fields, nonce, hmac_bytes) = read_recurrence_token(token, expanded_key)?;
+	if fields.offer_id != offer_id {
+		return Err(());
+	}
+	let expected_hmac = recurrence_token_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		fields.basetime,
+		counter,
+		start,
+		expanded_key,
+	);
+
+	if !fixed_time_eq(&hmac_bytes, &expected_hmac.to_byte_array()) {
+		return Err(());
+	}
+
+	Ok(fields.basetime)
+}
+
 /// Verifies data given in a TLV stream was used to produce the given metadata, consisting of:
 /// - a 256-bit [`PaymentId`],
 /// - a 128-bit [`Nonce`], and possibly
@@ -412,6 +489,80 @@ fn verify_metadata<T: secp256k1::Signing>(
 			Err(())
 		}
 	}
+}
+
+fn recurrence_token_hmac(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, nonce: Nonce, basetime: u64, counter: u32,
+	start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Hmac<Sha256> {
+	let mut hmac = expanded_key.hmac_for_offer();
+	hmac.input(RECURRENCE_TOKEN_HMAC_INPUT);
+	hmac.input(&offer_id.0);
+	hmac.input(&payer_signing_pubkey.serialize());
+	hmac.input(nonce.as_slice());
+	hmac.input(&basetime.to_be_bytes());
+	hmac.input(&counter.to_be_bytes());
+
+	match start {
+		Some(start) => {
+			hmac.input(&[1]);
+			hmac.input(&start.to_be_bytes());
+		},
+		None => hmac.input(&[0]),
+	}
+
+	Hmac::from_engine(hmac)
+}
+
+/// Serializes the authenticated recurrence fields into the token's fixed-width plaintext layout.
+fn write_recurrence_token_fields(
+	fields: RecurrenceTokenFields,
+) -> [u8; RECURRENCE_TOKEN_PLAINTEXT_LEN] {
+	let mut bytes = [0; RECURRENCE_TOKEN_PLAINTEXT_LEN];
+	bytes[RECURRENCE_TOKEN_OFFER_ID_OFFSET
+		..RECURRENCE_TOKEN_OFFER_ID_OFFSET + RECURRENCE_TOKEN_OFFER_ID_LEN]
+		.copy_from_slice(&fields.offer_id.0);
+	bytes[RECURRENCE_TOKEN_BASETIME_OFFSET
+		..RECURRENCE_TOKEN_BASETIME_OFFSET + RECURRENCE_TOKEN_BASETIME_LEN]
+		.copy_from_slice(&fields.basetime.to_be_bytes());
+
+	bytes
+}
+
+/// Decrypts and parses the recurrence-token payload together with its nonce and HMAC.
+fn read_recurrence_token(
+	token: &[u8], expanded_key: &ExpandedKey,
+) -> Result<(RecurrenceTokenFields, Nonce, [u8; Sha256::LEN]), ()> {
+	if token.len() != RECURRENCE_TOKEN_LEN {
+		return Err(());
+	}
+
+	let nonce = Nonce::try_from(
+		&token[RECURRENCE_TOKEN_NONCE_OFFSET..RECURRENCE_TOKEN_NONCE_OFFSET + Nonce::LENGTH],
+	)
+	.expect("slice length is validated above");
+	let encrypted_bytes: [u8; RECURRENCE_TOKEN_PLAINTEXT_LEN] =
+		token[..RECURRENCE_TOKEN_PLAINTEXT_LEN].try_into().map_err(|_| ())?;
+	let bytes = expanded_key.crypt_for_offer(encrypted_bytes, nonce);
+
+	let offer_id = OfferId(
+		bytes[RECURRENCE_TOKEN_OFFER_ID_OFFSET
+			..RECURRENCE_TOKEN_OFFER_ID_OFFSET + RECURRENCE_TOKEN_OFFER_ID_LEN]
+			.try_into()
+			.map_err(|_| ())?,
+	);
+	let basetime = u64::from_be_bytes(
+		bytes[RECURRENCE_TOKEN_BASETIME_OFFSET
+			..RECURRENCE_TOKEN_BASETIME_OFFSET + RECURRENCE_TOKEN_BASETIME_LEN]
+			.try_into()
+			.map_err(|_| ())?,
+	);
+
+	Ok((
+		RecurrenceTokenFields { offer_id, basetime },
+		nonce,
+		token[RECURRENCE_TOKEN_HMAC_OFFSET..].try_into().map_err(|_| ())?,
+	))
 }
 
 fn hmac_for_message<'a>(
