@@ -2252,6 +2252,55 @@ mod tests {
 	}
 
 	#[test]
+	fn builds_invoice_request_with_explicit_payer_signing_pubkey() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let payer_signing_key =
+			Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[43; 32]).unwrap());
+
+		#[cfg(c_bindings)]
+		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+		)
+		.amount_msats(1000)
+		.experimental_foo(42)
+		.build()
+		.unwrap();
+		let unsigned_invoice_request = offer
+			.request_invoice_with_explicit_signing_pubkey(
+				payer_signing_key.public_key(),
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+				payment_id,
+			)
+			.unwrap()
+			.build()
+			.unwrap();
+		let invoice_request = unsigned_invoice_request
+			.sign(|message: &UnsignedInvoiceRequest| {
+				Ok(secp_ctx
+					.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_signing_key))
+			})
+			.unwrap();
+
+		assert_eq!(invoice_request.payer_signing_pubkey(), payer_signing_key.public_key());
+		let verified_invoice_request =
+			invoice_request.clone().verify_using_metadata(&expanded_key, &secp_ctx).unwrap();
+		assert_eq!(verified_invoice_request.offer_id(), offer.id());
+		assert!(invoice_request
+			.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx)
+			.is_err());
+	}
+
+	#[test]
 	fn builds_invoice_request_with_chain() {
 		let expanded_key = ExpandedKey::new([42; 32]);
 		let entropy = FixedEntropy {};
