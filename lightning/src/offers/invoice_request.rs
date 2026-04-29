@@ -2049,14 +2049,18 @@ impl Readable for InvoiceRequestFields {
 mod tests {
 	use super::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestFields,
-		InvoiceRequestTlvStreamRef, UnsignedInvoiceRequest, EXPERIMENTAL_INVOICE_REQUEST_TYPES,
-		INVOICE_REQUEST_TYPES, PAYER_NOTE_LIMIT, SIGNATURE_TAG,
+		InvoiceRequestTlvStreamRef, InvoiceRequestVerifiedFromOffer, UnsignedInvoiceRequest,
+		VerifiedInvoiceRequest, EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_TYPES,
+		PAYER_NOTE_LIMIT, SIGNATURE_TAG,
 	};
 
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
+	use crate::offers::invoice::{
+		Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey,
+		SIGNATURE_TAG as INVOICE_SIGNATURE_TAG,
+	};
 	use crate::offers::invoice_request::string_truncate_safe;
 	use crate::offers::merkle::{self, SignatureTlvStreamRef, TaggedHash, TlvStream};
 	use crate::offers::nonce::Nonce;
@@ -2075,6 +2079,8 @@ mod tests {
 	use crate::types::string::{PrintableString, UntrustedString};
 	use crate::util::ser::{BigSize, Readable, Writeable};
 	use bitcoin::constants::ChainHash;
+	use bitcoin::hashes::sha256::Hash as Sha256;
+	use bitcoin::hashes::Hash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{self, Keypair, Secp256k1, SecretKey};
 	use core::num::NonZeroU64;
@@ -3007,6 +3013,183 @@ mod tests {
 			},
 			Err(e) => panic!("error parsing invoice_request: {:?}", e),
 		}
+	}
+
+	#[test]
+	fn creates_and_verifies_recurrence_token_for_explicit_payer_signing_pubkey() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let offer_nonce = Nonce([1; Nonce::LENGTH]);
+		let token_nonce = Nonce([2; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let payer_signing_key =
+			Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[43; 32]).unwrap());
+
+		#[cfg(c_bindings)]
+		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			offer_nonce,
+			&secp_ctx,
+		)
+		.amount_msats(1000)
+		.build()
+		.unwrap();
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+		let offer = Offer::try_from(encoded_offer).unwrap();
+
+		let unsigned_invoice_request = offer
+			.request_invoice_with_explicit_signing_pubkey(
+				payer_signing_key.public_key(),
+				&expanded_key,
+				offer_nonce,
+				&secp_ctx,
+				payment_id,
+			)
+			.unwrap()
+			.recurrence_counter(1)
+			.build()
+			.unwrap();
+		let invoice_request = unsigned_invoice_request
+			.sign(|message: &UnsignedInvoiceRequest| {
+				Ok(secp_ctx
+					.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_signing_key))
+			})
+			.unwrap();
+
+		let verified_invoice_request = VerifiedInvoiceRequest {
+			offer_id: offer.id(),
+			inner: invoice_request,
+			keys: ExplicitSigningPubkey {},
+		};
+
+		let basetime = 1_706_704_496;
+		let token = verified_invoice_request.create_recurrence_token(
+			basetime,
+			1,
+			None,
+			token_nonce,
+			&expanded_key,
+		);
+		assert_eq!(token.len(), 8 + Nonce::LENGTH + Sha256::LEN);
+		assert_ne!(&token[..8], &basetime.to_be_bytes());
+
+		let unsigned_invoice_request = offer
+			.request_invoice_with_explicit_signing_pubkey(
+				payer_signing_key.public_key(),
+				&expanded_key,
+				offer_nonce,
+				&secp_ctx,
+				payment_id,
+			)
+			.unwrap()
+			.recurrence_counter(1)
+			.recurrence_token(token.clone())
+			.build()
+			.unwrap();
+		let invoice_request = unsigned_invoice_request
+			.sign(|message: &UnsignedInvoiceRequest| {
+				Ok(secp_ctx
+					.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_signing_key))
+			})
+			.unwrap();
+		let verified_invoice_request =
+			InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
+				offer_id: offer.id(),
+				inner: invoice_request,
+				keys: ExplicitSigningPubkey {},
+			});
+		assert_eq!(verified_invoice_request.verify_recurrence_token(&expanded_key), Ok(basetime));
+
+		let mut tampered_token = token;
+		let last_index = tampered_token.len() - 1;
+		tampered_token[last_index] ^= 1;
+		let unsigned_invoice_request = offer
+			.request_invoice_with_explicit_signing_pubkey(
+				payer_signing_key.public_key(),
+				&expanded_key,
+				offer_nonce,
+				&secp_ctx,
+				payment_id,
+			)
+			.unwrap()
+			.recurrence_counter(1)
+			.recurrence_token(tampered_token)
+			.build()
+			.unwrap();
+		let invoice_request = unsigned_invoice_request
+			.sign(|message: &UnsignedInvoiceRequest| {
+				Ok(secp_ctx
+					.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_signing_key))
+			})
+			.unwrap();
+		let verified_invoice_request =
+			InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
+				offer_id: offer.id(),
+				inner: invoice_request,
+				keys: ExplicitSigningPubkey {},
+			});
+		assert!(verified_invoice_request.verify_recurrence_token(&expanded_key).is_err());
+	}
+
+	#[test]
+	fn creates_recurrence_token_for_derived_payer_signing_pubkey() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let offer_nonce = Nonce([3; Nonce::LENGTH]);
+		let token_nonce = Nonce([4; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		#[cfg(c_bindings)]
+		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			offer_nonce,
+			&secp_ctx,
+		)
+		.amount_msats(1000)
+		.build()
+		.unwrap();
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+		let offer = Offer::try_from(encoded_offer).unwrap();
+
+		let invoice_request = offer
+			.request_invoice(&expanded_key, offer_nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(1)
+			.build_and_sign()
+			.unwrap();
+		let verified_invoice_request = VerifiedInvoiceRequest {
+			offer_id: offer.id(),
+			inner: invoice_request,
+			keys: DerivedSigningPubkey(Keypair::from_secret_key(
+				&secp_ctx,
+				&SecretKey::from_slice(&[44; 32]).unwrap(),
+			)),
+		};
+
+		let basetime = 1_706_704_497;
+		let token = verified_invoice_request.create_recurrence_token(
+			basetime,
+			1,
+			None,
+			token_nonce,
+			&expanded_key,
+		);
+		assert_eq!(token.len(), 8 + Nonce::LENGTH + Sha256::LEN);
+		assert_ne!(&token[..8], &basetime.to_be_bytes());
 	}
 
 	#[test]
