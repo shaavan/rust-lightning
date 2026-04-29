@@ -83,7 +83,10 @@ use crate::offers::offer::{
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
-use crate::offers::signer::{Metadata, MetadataMaterial};
+use crate::offers::signer::{
+	create_recurrence_token as create_recurrence_token_bytes,
+	verify_recurrence_token as verify_recurrence_token_bytes, Metadata, MetadataMaterial,
+};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
@@ -813,6 +816,16 @@ impl InvoiceRequestVerifiedFromOffer {
 			InvoiceRequestVerifiedFromOffer::ExplicitKeys(req) => req.offer_id,
 		}
 	}
+
+	/// Verifies the recurrence token carried by this invoice request and returns the recovered
+	/// period-0 basetime.
+	///
+	/// Callers are expected to first decide whether recurrence-token verification applies for this
+	/// request (e.g., follow-up non-cancel recurring requests only).
+	#[allow(dead_code)]
+	pub(crate) fn verify_recurrence_token(&self, expanded_key: &ExpandedKey) -> Result<u64, ()> {
+		self.inner().contents.verify_recurrence_token(self.offer_id(), expanded_key)
+	}
 }
 
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
@@ -1305,6 +1318,21 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
 
+	#[allow(dead_code)]
+	pub(crate) fn create_recurrence_token(
+		&self, basetime: u64, counter: u32, start: Option<u32>, nonce: Nonce,
+		expanded_key: &ExpandedKey,
+	) -> Vec<u8> {
+		self.inner.contents.create_recurrence_token(
+			self.offer_id,
+			basetime,
+			counter,
+			start,
+			nonce,
+			expanded_key,
+		)
+	}
+
 	#[cfg(not(c_bindings))]
 	invoice_request_respond_with_derived_signing_pubkey_methods!(
 		self,
@@ -1323,6 +1351,21 @@ impl VerifiedInvoiceRequest<ExplicitSigningPubkey> {
 	offer_accessors!(self, self.inner.contents.inner.offer);
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
+
+	#[allow(dead_code)]
+	pub(crate) fn create_recurrence_token(
+		&self, basetime: u64, counter: u32, start: Option<u32>, nonce: Nonce,
+		expanded_key: &ExpandedKey,
+	) -> Vec<u8> {
+		self.inner.contents.create_recurrence_token(
+			self.offer_id,
+			basetime,
+			counter,
+			start,
+			nonce,
+			expanded_key,
+		)
+	}
 
 	#[cfg(not(c_bindings))]
 	invoice_request_respond_with_explicit_signing_pubkey_methods!(
@@ -1425,6 +1468,39 @@ impl InvoiceRequestContents {
 
 	pub(super) fn offer_from_hrn(&self) -> &Option<HumanReadableName> {
 		&self.inner.offer_from_hrn
+	}
+
+	#[allow(dead_code)]
+	pub(crate) fn verify_recurrence_token(
+		&self, offer_id: OfferId, expanded_key: &ExpandedKey,
+	) -> Result<u64, ()> {
+		let token = self.recurrence_token().ok_or(())?;
+		let counter = self.recurrence_counter().ok_or(())?;
+
+		verify_recurrence_token_bytes(
+			token,
+			offer_id,
+			self.payer_signing_pubkey,
+			counter,
+			self.recurrence_start(),
+			expanded_key,
+		)
+	}
+
+	#[allow(dead_code)]
+	pub(crate) fn create_recurrence_token(
+		&self, offer_id: OfferId, basetime: u64, counter: u32, start: Option<u32>, nonce: Nonce,
+		expanded_key: &ExpandedKey,
+	) -> Vec<u8> {
+		create_recurrence_token_bytes(
+			offer_id,
+			self.payer_signing_pubkey,
+			basetime,
+			counter,
+			start,
+			nonce,
+			expanded_key,
+		)
 	}
 
 	pub(super) fn as_tlv_stream(&self) -> PartialInvoiceRequestTlvStreamRef<'_> {

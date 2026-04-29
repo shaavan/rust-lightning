@@ -176,8 +176,8 @@ mod real_chacha {
 		}
 
 		/// Same as `encrypt_single_block` only operates on a fixed-size input in-place.
-		pub fn encrypt_single_block_in_place(
-			key: &[u8; 32], nonce: &[u8; 16], bytes: &mut [u8; 32],
+		pub fn encrypt_single_block_in_place<const N: usize>(
+			key: &[u8; 32], nonce: &[u8; 16], bytes: &mut [u8; N],
 		) {
 			let block = ChaCha20::get_single_block(key, nonce);
 			for i in 0..bytes.len() {
