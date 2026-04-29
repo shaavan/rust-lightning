@@ -13,6 +13,7 @@ use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::offers::merkle::TlvRecord;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::OfferId;
 use crate::util::ser::Writeable;
 use bitcoin::hashes::cmp::fixed_time_eq;
 use bitcoin::hashes::hmac::{Hmac, HmacEngine};
@@ -48,6 +49,13 @@ const WITH_ENCRYPTED_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[4; 16];
 // const OFFER_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[5; 16];
 // const PAYMENT_HASH_HMAC_INPUT: &[u8; 16] = &[7; 16];
 // const PAYMENT_TLVS_HMAC_INPUT: &[u8; 16] = &[8; 16];
+
+// Recurrence tokens are encoded as `encrypted_basetime || nonce || hmac`, where
+// `encrypted_basetime` is the 8-byte period-0 basetime encrypted using the same offer-bound
+// stream cipher used for metadata, `nonce` is the 16-byte offer encryption nonce, and `hmac` is a
+// 32-byte SHA256 HMAC over the bound recurrence state.
+const RECURRENCE_TOKEN_LEN: usize = 8 + Nonce::LENGTH + Sha256::LEN;
+const RECURRENCE_TOKEN_HMAC_INPUT: &[u8; 16] = &[9; 16];
 
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
 /// verified.
@@ -321,6 +329,59 @@ pub(super) fn derive_keys(nonce: Nonce, expanded_key: &ExpandedKey) -> Keypair {
 	Keypair::from_secret_key(&secp_ctx, &privkey)
 }
 
+#[allow(dead_code)]
+pub(super) fn create_recurrence_token(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, basetime: u64, counter: u32,
+	start: Option<u32>, nonce: Nonce, expanded_key: &ExpandedKey,
+) -> Vec<u8> {
+	let encrypted_basetime = expanded_key.crypt_for_offer(basetime.to_be_bytes(), nonce);
+	let hmac = recurrence_token_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		basetime,
+		counter,
+		start,
+		expanded_key,
+	);
+
+	let mut token = Vec::with_capacity(RECURRENCE_TOKEN_LEN);
+	token.extend_from_slice(&encrypted_basetime);
+	token.extend_from_slice(nonce.as_slice());
+	token.extend_from_slice(hmac.as_byte_array());
+	token
+}
+
+#[allow(dead_code)]
+pub(super) fn verify_recurrence_token(
+	token: &[u8], offer_id: OfferId, payer_signing_pubkey: PublicKey, counter: u32,
+	start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Result<u64, ()> {
+	if token.len() != RECURRENCE_TOKEN_LEN {
+		return Err(());
+	}
+
+	let encrypted_basetime: [u8; 8] = token[..8].try_into().map_err(|_| ())?;
+	let nonce =
+		Nonce::try_from(&token[8..8 + Nonce::LENGTH]).expect("slice length is validated above");
+	let basetime = u64::from_be_bytes(expanded_key.crypt_for_offer(encrypted_basetime, nonce));
+	let expected_hmac = recurrence_token_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		basetime,
+		counter,
+		start,
+		expanded_key,
+	);
+
+	if !fixed_time_eq(&token[8 + Nonce::LENGTH..], &expected_hmac.to_byte_array()) {
+		return Err(());
+	}
+
+	Ok(basetime)
+}
+
 /// Verifies data given in a TLV stream was used to produce the given metadata, consisting of:
 /// - a 256-bit [`PaymentId`],
 /// - a 128-bit [`Nonce`], and possibly
@@ -412,6 +473,29 @@ fn verify_metadata<T: secp256k1::Signing>(
 			Err(())
 		}
 	}
+}
+
+fn recurrence_token_hmac(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, nonce: Nonce, basetime: u64, counter: u32,
+	start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Hmac<Sha256> {
+	let mut hmac = expanded_key.hmac_for_offer();
+	hmac.input(RECURRENCE_TOKEN_HMAC_INPUT);
+	hmac.input(&offer_id.0);
+	hmac.input(&payer_signing_pubkey.serialize());
+	hmac.input(nonce.as_slice());
+	hmac.input(&basetime.to_be_bytes());
+	hmac.input(&counter.to_be_bytes());
+
+	match start {
+		Some(start) => {
+			hmac.input(&[1]);
+			hmac.input(&start.to_be_bytes());
+		},
+		None => hmac.input(&[0]),
+	}
+
+	Hmac::from_engine(hmac)
 }
 
 fn hmac_for_message<'a>(
