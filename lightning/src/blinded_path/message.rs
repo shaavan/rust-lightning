@@ -470,6 +470,9 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 		/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 		nonce: Nonce,
+		/// The period-0 recurrence basetime expected in the corresponding invoice, if known when
+		/// the invoice request was created.
+		expected_recurrence_basetime: Option<u64>,
 	},
 	/// Context used by a [`BlindedMessagePath`] as a reply path for a [`Bolt12Invoice`].
 	///
@@ -664,6 +667,7 @@ impl_writeable_tlv_based_enum!(OffersContext,
 	(4, OutboundPaymentForOffer) => {
 		(0, payment_id, required),
 		(1, nonce, required),
+		(2, expected_recurrence_basetime, option),
 	},
 );
 

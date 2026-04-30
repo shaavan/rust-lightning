@@ -1021,6 +1021,16 @@ macro_rules! invoice_accessors { ($self: ident, $contents: expr) => {
 		$contents.amount_msats()
 	}
 
+	/// Returns the recurrence counter copied from the originating invoice request, if present.
+	pub fn recurrence_counter(&$self) -> Option<u32> {
+		$contents.recurrence_counter()
+	}
+
+	/// Returns the period-0 recurrence basetime carried by the invoice, if present.
+	pub fn recurrence_basetime(&$self) -> Option<u64> {
+		$contents.recurrence_basetime()
+	}
+
 	/// Returns the speculative recurrence token for the next recurring invoice request, if present.
 	///
 	/// This provisional extension is pending the upstream recurrence-token proposal and remains
@@ -1364,6 +1374,19 @@ impl InvoiceContents {
 
 	fn amount_msats(&self) -> u64 {
 		self.fields().amount_msats
+	}
+
+	fn recurrence_counter(&self) -> Option<u32> {
+		match self {
+			InvoiceContents::ForOffer { invoice_request, .. } => {
+				invoice_request.recurrence_counter()
+			},
+			InvoiceContents::ForRefund { .. } => None,
+		}
+	}
+
+	fn recurrence_basetime(&self) -> Option<u64> {
+		self.fields().invoice_recurrence_basetime
 	}
 
 	fn recurrence_token(&self) -> Option<&Vec<u8>> {

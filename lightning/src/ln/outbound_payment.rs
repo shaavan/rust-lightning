@@ -171,6 +171,7 @@ pub(crate) enum PendingOutboundPayment {
 pub(crate) struct RetryableInvoiceRequest {
 	pub(crate) invoice_request: InvoiceRequest,
 	pub(crate) nonce: Nonce,
+	pub(crate) expected_recurrence_basetime: Option<u64>,
 	pub(super) needs_retry: bool,
 }
 
@@ -178,6 +179,7 @@ impl_writeable_tlv_based!(RetryableInvoiceRequest, {
 	(0, invoice_request, required),
 	(1, needs_retry, (default_value, true)),
 	(2, nonce, required),
+	(3, expected_recurrence_basetime, option),
 });
 
 impl PendingOutboundPayment {

@@ -501,12 +501,43 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None if invoice.is_for_refund_without_paths() => {
 				invoice.verify_using_metadata(expanded_key, secp_ctx)
 			},
-			Some(&OffersContext::OutboundPaymentForOffer { payment_id, nonce, .. }) => {
-				if invoice.is_for_offer() {
-					invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)
-				} else {
-					Err(())
+			Some(&OffersContext::OutboundPaymentForOffer {
+				payment_id,
+				nonce,
+				expected_recurrence_basetime,
+			}) if invoice.is_for_offer() => {
+				let payment_id =
+					invoice.verify_using_payer_data(payment_id, nonce, expanded_key, secp_ctx)?;
+
+				if let Some(invoice_recurrence_basetime) = invoice.recurrence_basetime() {
+					match expected_recurrence_basetime {
+						Some(expected_basetime) => {
+							if expected_basetime != invoice_recurrence_basetime {
+								return Err(());
+							}
+						},
+						None if invoice.recurrence_counter() == Some(0) => {
+							// Skip the check, any non-context check such as ensuring
+							// that invoice_recurrence_basetime matches invoice.created_at()
+							// for the first invoice, or that the created
+							// expected_recurrence_basetime is correct, is handled at the
+							// respective time, either during parsing or at the time of
+							// context creation.
+						},
+						None if invoice.recurrence_counter().is_some() => {
+							debug_assert!(
+								false,
+								"Empty expected recurrence basetime for subsequent recurring invoices must not be possible"
+							);
+							return Err(());
+						},
+						_ => {
+							debug_assert!(false, "Any invalid structure shouldn't be possible.")
+						},
+					}
 				}
+
+				Ok(payment_id)
 			},
 			Some(&OffersContext::OutboundPaymentForRefund { payment_id, nonce, .. }) => {
 				if invoice.is_for_refund() {
@@ -1093,10 +1124,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// [`supports_onion_messages`]: crate::types::features::Features::supports_onion_messages
 	pub fn enqueue_invoice_request(
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId, nonce: Nonce,
-		peers: Vec<MessageForwardNode>,
+		expected_recurrence_basetime: Option<u64>, peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
-		let context =
-			MessageContext::Offers(OffersContext::OutboundPaymentForOffer { payment_id, nonce });
+		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			nonce,
+			expected_recurrence_basetime,
+		});
 		let reply_paths = self
 			.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
