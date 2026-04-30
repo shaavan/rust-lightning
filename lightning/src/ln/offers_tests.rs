@@ -1987,6 +1987,35 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 	}
 }
 
+#[test]
+fn fails_creating_non_recurring_invoice_request_with_expected_recurrence_basetime() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+
+	let offer = alice.node
+		.create_offer_builder().unwrap()
+		.amount_msats(10_000_000)
+		.build().unwrap();
+	let optional_params = channelmanager::OptionalOfferPaymentParams {
+		expected_recurrence_basetime: Some(1_706_704_496),
+		..Default::default()
+	};
+
+	match bob.node.pay_for_offer(&offer, None, PaymentId([1; 32]), optional_params) {
+		Ok(_) => panic!("Expected error"),
+		Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
+	}
+
+	assert!(bob.node.list_recent_payments().is_empty());
+}
+
 /// Fails requesting a payment when the refund contains an unsupported chain.
 #[test]
 fn fails_sending_invoice_with_unsupported_chain_for_refund() {

@@ -2058,9 +2058,11 @@ mod tests {
 
 	use crate::blinded_path::message::BlindedMessagePath;
 	use crate::blinded_path::BlindedHop;
+	use crate::chain::BestBlock;
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::DecodeError;
+	use crate::offers::flow::OffersMessageFlow;
 	use crate::offers::invoice_request::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequestTlvStreamRef,
 		InvoiceRequestVerifiedFromOffer,
@@ -2074,10 +2076,13 @@ mod tests {
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
 	use crate::offers::test_utils::*;
+	use crate::onion_message::messenger::NullMessageRouter;
 	use crate::prelude::*;
+	use crate::sign::ReceiveAuthKey;
 	use crate::types::features::{Bolt12InvoiceFeatures, InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::PrintableString;
 	use crate::util::ser::{BigSize, Iterable, Writeable};
+	use crate::util::test_utils::TestLogger;
 	#[cfg(not(c_bindings))]
 	use {crate::offers::offer::OfferBuilder, crate::offers::refund::RefundBuilder};
 	#[cfg(c_bindings)]
@@ -2100,6 +2105,82 @@ mod tests {
 			self.4.write(&mut buffer).unwrap();
 			buffer
 		}
+	}
+
+	/// Constructs an [`OffersMessageFlow`] that can verify invoices built in these tests.
+	fn offers_message_flow(
+		expanded_key: ExpandedKey,
+	) -> OffersMessageFlow<NullMessageRouter, TestLogger> {
+		OffersMessageFlow::new(
+			ChainHash::using_genesis_block(Network::Bitcoin),
+			BestBlock::from_network(Network::Bitcoin),
+			recipient_pubkey(),
+			0,
+			expanded_key,
+			ReceiveAuthKey([43; 32]),
+			Secp256k1::new(),
+			NullMessageRouter {},
+			TestLogger::new(),
+		)
+	}
+
+	/// Builds a first recurring invoice for an offer without an explicit recurrence basetime.
+	fn first_recurring_invoice_without_offer_basetime(
+		expanded_key: &ExpandedKey, nonce: Nonce, payment_id: PaymentId, created_at: Duration,
+	) -> Bolt12Invoice {
+		let secp_ctx = Secp256k1::new();
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(0)
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), created_at)
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap()
+	}
+
+	/// Builds a follow-up recurring invoice whose basetime is anchored by the offer.
+	fn followup_recurring_invoice_with_offer_basetime(
+		expanded_key: &ExpandedKey, nonce: Nonce, payment_id: PaymentId, created_at: Duration,
+	) -> Bolt12Invoice {
+		let secp_ctx = Secp256k1::new();
+		let recurrence = Recurrence { time_unit: TimeUnit::Days, period: 7 };
+		let recurrence_base = RecurrenceBase { proportional: false, basetime: 1_706_704_496 };
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_compulsory = Some(&recurrence);
+		tlv_stream.0.recurrence_base = Some(&recurrence_base);
+
+		let mut encoded_offer = Vec::new();
+		tlv_stream.write(&mut encoded_offer).unwrap();
+
+		Offer::try_from(encoded_offer)
+			.unwrap()
+			.request_invoice(expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.recurrence_counter(1)
+			.recurrence_start(1)
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), created_at)
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap()
 	}
 
 	#[test]
@@ -2441,6 +2522,75 @@ mod tests {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidMetadata),
 		}
+	}
+
+	#[test]
+	fn verifies_first_recurring_invoice_without_expected_recurrence_basetime() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let payment_id = PaymentId([1; 32]);
+		let created_at = now();
+		let invoice = first_recurring_invoice_without_offer_basetime(
+			&expanded_key,
+			nonce,
+			payment_id,
+			created_at,
+		);
+		let flow = offers_message_flow(expanded_key);
+		let context = crate::blinded_path::message::OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			nonce,
+			expected_recurrence_basetime: None,
+		};
+
+		assert_eq!(flow.verify_bolt12_invoice(&invoice, Some(&context)), Ok(payment_id));
+	}
+
+	#[test]
+	fn fails_verifying_recurring_invoice_with_mismatched_expected_recurrence_basetime() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let payment_id = PaymentId([1; 32]);
+		let created_at = now();
+		let invoice = first_recurring_invoice_without_offer_basetime(
+			&expanded_key,
+			nonce,
+			payment_id,
+			created_at,
+		);
+		let flow = offers_message_flow(expanded_key);
+		let context = crate::blinded_path::message::OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			nonce,
+			expected_recurrence_basetime: Some(created_at.as_secs() + 1),
+		};
+
+		assert_eq!(flow.verify_bolt12_invoice(&invoice, Some(&context)), Err(()));
+	}
+
+	#[test]
+	#[should_panic(
+		expected = "Empty expected recurrence basetime for subsequent recurring invoices must not be possible"
+	)]
+	fn fails_verifying_followup_recurring_invoice_without_expected_recurrence_basetime() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let payment_id = PaymentId([1; 32]);
+		let created_at = now();
+		let invoice = followup_recurring_invoice_with_offer_basetime(
+			&expanded_key,
+			nonce,
+			payment_id,
+			created_at,
+		);
+		let flow = offers_message_flow(expanded_key);
+		let context = crate::blinded_path::message::OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			nonce,
+			expected_recurrence_basetime: None,
+		};
+
+		assert_eq!(flow.verify_bolt12_invoice(&invoice, Some(&context)), Err(()));
 	}
 
 	#[test]
