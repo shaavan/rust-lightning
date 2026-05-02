@@ -17093,8 +17093,15 @@ impl<
 					None => return None,
 				};
 
-				let invoice_request = match self.flow.verify_invoice_request(invoice_request, context) {
-					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => invoice_request,
+				let (invoice_request, invoice_recurrence_basetime) =
+					match self.flow.verify_invoice_request(invoice_request, context) {
+					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => {
+						(invoice_request, None)
+					},
+					Ok(InvreqResponseInstructions::SendRecurrentInvoice {
+						verified_invoice_request,
+						invoice_recurrence_basetime,
+					}) => (verified_invoice_request, Some(invoice_recurrence_basetime)),
 					Ok(InvreqResponseInstructions::SendStaticInvoice { recipient_id, invoice_slot, invoice_request }) => {
 						self.pending_events.lock().unwrap().push_back((Event::StaticInvoiceRequested {
 							recipient_id, invoice_slot, reply_path: responder, invoice_request,
@@ -17103,6 +17110,25 @@ impl<
 						return None
 					},
 					Err(_) => return None,
+				};
+
+				let next_recurrence_token = match invoice_recurrence_basetime {
+					Some(basetime) => match invoice_request.create_next_recurrence_token(
+						basetime,
+						Nonce::from_entropy_source(&self.entropy_source),
+						&self.inbound_payment_key,
+					) {
+						Ok(token) => Some(token),
+						Err(()) => {
+							return Some((
+								OffersMessage::InvoiceError(InvoiceError::from(
+									Bolt12SemanticError::InvalidMetadata,
+								)),
+								responder.respond(),
+							));
+						},
+					},
+					None => None,
 				};
 
 				let get_payment_info = |amount_msats, relative_expiry| {
@@ -17124,6 +17150,10 @@ impl<
 
 						match result {
 							Ok((builder, context)) => {
+								let builder = match next_recurrence_token.clone() {
+									Some(token) => builder.recurrence_token(token),
+									None => builder,
+								};
 								let res = builder
 									.build_and_sign(&self.secp_ctx)
 									.map_err(InvoiceError::from);
@@ -17148,6 +17178,10 @@ impl<
 
 						match result {
 							Ok((builder, context)) => {
+								let builder = match next_recurrence_token.clone() {
+									Some(token) => builder.recurrence_token(token),
+									None => builder,
+								};
 								let res = builder
 									.build()
 									.map_err(InvoiceError::from)

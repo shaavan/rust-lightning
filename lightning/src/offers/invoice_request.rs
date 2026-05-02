@@ -1318,21 +1318,6 @@ impl VerifiedInvoiceRequest<DerivedSigningPubkey> {
 	invoice_request_accessors!(self, self.inner.contents);
 	fields_accessor!(self, self.inner.contents);
 
-	#[allow(dead_code)]
-	pub(crate) fn create_recurrence_token(
-		&self, basetime: u64, counter: u32, start: Option<u32>, nonce: Nonce,
-		expanded_key: &ExpandedKey,
-	) -> Vec<u8> {
-		self.inner.contents.create_recurrence_token(
-			self.offer_id,
-			basetime,
-			counter,
-			start,
-			nonce,
-			expanded_key,
-		)
-	}
-
 	#[cfg(not(c_bindings))]
 	invoice_request_respond_with_derived_signing_pubkey_methods!(
 		self,
@@ -1385,6 +1370,22 @@ impl InvoiceRequestVerifiedFromOffer {
 	offer_accessors!(self, self.inner().contents.inner.offer);
 	invoice_request_accessors!(self, self.inner().contents);
 	fields_accessor!(self, self.inner().contents);
+
+	pub(crate) fn create_next_recurrence_token(
+		&self, basetime: u64, nonce: Nonce, expanded_key: &ExpandedKey,
+	) -> Result<Vec<u8>, ()> {
+		let next_counter =
+			self.recurrence_counter().and_then(|counter| counter.checked_add(1)).ok_or(())?;
+
+		Ok(self.inner().contents.create_recurrence_token(
+			self.offer_id(),
+			basetime,
+			next_counter,
+			self.recurrence_start(),
+			nonce,
+			expanded_key,
+		))
+	}
 }
 
 /// `String::truncate(new_len)` panics if you split inside a UTF-8 code point,

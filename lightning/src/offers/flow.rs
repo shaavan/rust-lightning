@@ -393,6 +393,14 @@ pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
 	SendInvoice(InvoiceRequestVerifiedFromOffer),
+	/// We are the recipient of a follow-up recurring payment request and should send a
+	/// [`Bolt12Invoice`] in response after reusing the recovered period-0 basetime.
+	SendRecurrentInvoice {
+		/// The verified invoice request that should be answered.
+		verified_invoice_request: InvoiceRequestVerifiedFromOffer,
+		/// The recovered period-0 basetime that must be echoed in the response invoice.
+		invoice_recurrence_basetime: u64,
+	},
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_slot` and calling
 	/// [`OffersMessageFlow::enqueue_static_invoice`].
@@ -479,7 +487,15 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
 
-		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+		if invoice_request.recurrence_token().is_some() {
+			let basetime = invoice_request.verify_recurrence_token(expanded_key)?;
+			Ok(InvreqResponseInstructions::SendRecurrentInvoice {
+				verified_invoice_request: invoice_request,
+				invoice_recurrence_basetime: basetime,
+			})
+		} else {
+			Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+		}
 	}
 
 	/// Verifies a [`Bolt12Invoice`] using the provided [`OffersContext`] or the invoice's payer
