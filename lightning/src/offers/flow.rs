@@ -444,8 +444,8 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Returns an error if:
 	/// - Both [`OffersContext`] and [`InvoiceRequest`] metadata are absent or invalid.
 	/// - The verification process (via recipient context data or metadata) fails.
-	pub fn verify_invoice_request(
-		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
+	pub fn verify_invoice_request<ES: EntropySource>(
+		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, entropy_source: ES
 	) -> Result<InvreqResponseInstructions, ()> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
@@ -474,9 +474,9 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 		let invoice_request = match nonce {
 			Some(nonce) => {
-				invoice_request.verify_using_recipient_data(nonce, expanded_key, secp_ctx)
+				invoice_request.verify_using_recipient_data(nonce, expanded_key, secp_ctx, entropy_source)
 			},
-			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
+			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx, entropy_source),
 		}?;
 
 		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))

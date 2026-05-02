@@ -411,7 +411,7 @@ macro_rules! invoice_builder_methods {
 		}
 
 		fn invoice_recurrence_basetime(
-			invoice_request: &InvoiceRequest, created_at: Duration,
+			invoice_request: &InvoiceRequest,
 		) -> Result<Option<u64>, Bolt12SemanticError> {
 			let offer_recurrence = match invoice_request.contents.inner.offer.recurrence_fields() {
 				Some(offer_recurrence) => offer_recurrence,

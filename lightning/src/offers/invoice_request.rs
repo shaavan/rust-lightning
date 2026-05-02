@@ -762,6 +762,10 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	/// The verified request.
 	pub(crate) inner: InvoiceRequest,
 
+	pub(crate) invoice_recurrence_basetime: u64,
+
+	pub(crate) next_recurrence_token: Vec<u8>,
+
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
 	#[cfg_attr(
@@ -1087,14 +1091,17 @@ macro_rules! invoice_request_verify_method {
 	#[rustfmt::skip]
 	pub fn verify_using_metadata<
 		#[cfg(not(c_bindings))]
-		T: secp256k1::Signing
+		T: secp256k1::Signing,
+		ES: crate::sign::EntropySource
 	>(
 		$self: $self_type, key: &ExpandedKey,
 		#[cfg(not(c_bindings))]
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
+		entropy_source: ES,
 	) -> Result<InvoiceRequestVerifiedFromOffer, ()> {
+		let entropy = &*entropy_source;
 		let (offer_id, keys) =
 			$self.contents.inner.offer.verify_using_metadata(&$self.bytes, key, secp_ctx)?;
 		let inner = {
@@ -1104,15 +1111,35 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let (basetime, next_recurrence_token) = if $self.is_recurrent_request() {
+			let basetime = $self.contents.verify_recurrence_token(offer_id, key);
+			let next_recurrence_token = $self.contents.create_recurrence_token(
+				offer_id,
+				basetime,
+				$self.recurrence_counter() + 1,
+				$self.recurrence_start(),
+				Nonce::from_entropy_source(entropy),
+				key
+			)
+
+			(Some(basetime), Some(next_recurrence_token))
+		} else {
+			(None, None)
+		}
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				basetime,
+				next_recurrence_token,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				basetime,
+				next_recurrence_token,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -1130,14 +1157,17 @@ macro_rules! invoice_request_verify_method {
 	#[rustfmt::skip]
 	pub fn verify_using_recipient_data<
 		#[cfg(not(c_bindings))]
-		T: secp256k1::Signing
+		T: secp256k1::Signing,
+		ES: crate::sign::EntropySource
 	>(
 		$self: $self_type, nonce: Nonce, key: &ExpandedKey,
 		#[cfg(not(c_bindings))]
 		secp_ctx: &Secp256k1<T>,
 		#[cfg(c_bindings)]
 		secp_ctx: &Secp256k1<secp256k1::All>,
+		entropy_source: ES,
 	) -> Result<InvoiceRequestVerifiedFromOffer, ()> {
+		let entropy = &*entropy_source;
 		let (offer_id, keys) = $self.contents.inner.offer.verify_using_recipient_data(
 			&$self.bytes, nonce, key, secp_ctx
 		)?;
@@ -1149,20 +1179,50 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let (basetime, next_recurrence_token) = if $self.is_recurrent_request() {
+			let basetime = $self.contents.verify_recurrence_token(offer_id, key);
+			let next_recurrence_token = $self.contents.create_recurrence_token(
+				offer_id,
+				basetime,
+				$self.recurrence_counter() + 1,
+				$self.recurrence_start(),
+				Nonce::from_entropy_source(entropy),
+				key
+			);
+
+			(Some(basetime), Some(next_recurrence_token))
+		} else {
+			(None, None)
+		};
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				basetime,
+				next_recurrence_token,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				basetime,
+				next_recurrence_token,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
 
 		Ok(verified)
+	}
+
+	/// Verifies the recurrence token carried by this invoice request and returns the recovered
+	/// period-0 basetime.
+	///
+	/// Callers are expected to first decide whether recurrence-token verification applies for this
+	/// request (e.g., follow-up non-cancel recurring requests only).
+	#[allow(dead_code)]
+	pub(crate) fn verify_recurrence_token(&self, expanded_key: &ExpandedKey) -> Result<u64, ()> {
+		self.contents.verify_recurrence_token(self.offer_id, expanded_key)
 	}
 	};
 }
