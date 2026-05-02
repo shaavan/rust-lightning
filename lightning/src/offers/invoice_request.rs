@@ -85,6 +85,7 @@ use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage}
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
+use crate::sign::EntropySource;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
 use crate::types::string::{PrintableString, UntrustedString};
@@ -1227,14 +1228,15 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
-	pub fn respond_using_derived_keys(
-		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+	pub fn respond_using_derived_keys<ES: EntropySource>(
+		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+		expanded_key: &ExpandedKey, entropy_source: ES
 	) -> Result<$builder, Bolt12SemanticError> {
 		let created_at = std::time::SystemTime::now()
 			.duration_since(std::time::SystemTime::UNIX_EPOCH)
 			.expect("SystemTime::now() should come after SystemTime::UNIX_EPOCH");
 
-		$self.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at)
+		$self.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at, expanded_key, entropy_source)
 	}
 
 	/// Creates an [`InvoiceBuilder`] for the request using the given required fields and that uses
@@ -1244,9 +1246,9 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// See [`InvoiceRequest::respond_with_no_std`] for further details.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
-	pub fn respond_using_derived_keys_no_std(
+	pub fn respond_using_derived_keys_no_std<ES: EntropySource>(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
-		created_at: core::time::Duration
+		created_at: core::time::Duration, expanded_key: &ExpandedKey, entropy_source: ES
 	) -> Result<$builder, Bolt12SemanticError> {
 		if $self.inner.invoice_request_features().requires_unknown_bits() {
 			return Err(Bolt12SemanticError::UnknownRequiredFeatures);
@@ -1259,9 +1261,45 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 			None => return Err(Bolt12SemanticError::MissingIssuerSigningPubkey),
 		}
 
-		<$builder>::for_offer_using_keys(
+		// TODO: Use invoice requests helper function here.
+		// For all the rest of the fields needed for signer.rs verify_recurrence_token
+		// are already present in invoice request.
+		let token_fields = $self.verify_recurrence_token(expanded_key);
+
+		let mut builder = <$builder>::for_offer_using_keys(
 			&$self.inner, payment_paths, created_at, payment_hash, keys
-		)
+		);
+
+		let (invoice_recurrence_basetime, next_recurrence_token) = match $self.recurrence_counter {
+			// Not recurring invoice
+			None => (None, None),
+			// Primary Invoice Request
+			// Since its primary, there was no retrieve basetime.
+			// Instead use the invoice's created_at time as basetime.
+			Some(0) if if token_fields.basetime.is_none() => {
+				let recurrence_basetime = created_at
+				// TODO: create invoice request level helper here if needed
+				let next_token = self.create_recurrence_token(recurrence_basetime, <other fields>)
+				(Some(recurrence_basetime), Some(next_token))
+			},
+			// Subsequent invoice request
+			Some(c) if c > 0 => {
+				let recurrence_basetime = token_fields.basetime.unwrap_or_error()
+				let next_token = self.create_recurrence_token(recurrence_basetime, <other fields>)
+				(Some(recurrence_basetime), Some(next_token))
+			},
+			_ => Err(())
+		};
+
+		builder.set_recurrence_basetime(invoice_recurrence_basetime)
+		builder.set_next_token(next_recurrence_token)
+
+		// After creating this builder, update it's fields
+		// If the invoice request corresponds to recurrence
+		// 	- If the IR is primary, use the created_at time as basetime.
+		//	- If the IR is subsequent, use the retrieved basetime.
+		// Use the basetime to calculate next_recurrence_token
+		// Set the basetime as invoice_recurrence_basetime in builder.
 	}
 } }
 

@@ -136,7 +136,7 @@ use crate::offers::merkle::{
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
 	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, OfferId, OfferTlvStream,
-	OfferTlvStreamRef, Quantity, RecurrenceType, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	OfferTlvStreamRef, Quantity, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerTlvStream, PayerTlvStreamRef, PAYER_METADATA_TYPE};
@@ -246,11 +246,8 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 			created_at: Duration, payment_hash: PaymentHash, signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError> {
 			let amount_msats = Self::amount_msats(invoice_request)?;
-			let invoice_recurrence_basetime =
-				Self::invoice_recurrence_basetime(invoice_request, created_at)?;
 			let mut fields =
 				Self::fields(payment_paths, created_at, payment_hash, amount_msats, signing_pubkey);
-			fields.invoice_recurrence_basetime = invoice_recurrence_basetime;
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
 				fields,
@@ -320,11 +317,8 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 		) -> Result<Self, Bolt12SemanticError> {
 			let amount_msats = Self::amount_msats(invoice_request)?;
 			let signing_pubkey = keys.public_key();
-			let invoice_recurrence_basetime =
-				Self::invoice_recurrence_basetime(invoice_request, created_at)?;
 			let mut fields =
 				Self::fields(payment_paths, created_at, payment_hash, amount_msats, signing_pubkey);
-			fields.invoice_recurrence_basetime = invoice_recurrence_basetime;
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
 				fields,
@@ -407,36 +401,6 @@ macro_rules! invoice_builder_methods {
 					Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
 					None => Err(Bolt12SemanticError::MissingAmount),
 				},
-			}
-		}
-
-		fn invoice_recurrence_basetime(
-			invoice_request: &InvoiceRequest, created_at: Duration,
-		) -> Result<Option<u64>, Bolt12SemanticError> {
-			let offer_recurrence = match invoice_request.contents.inner.offer.recurrence_fields() {
-				Some(offer_recurrence) => offer_recurrence,
-				None => return Ok(None),
-			};
-
-			let offer_base = match offer_recurrence.recurrence_type {
-				RecurrenceType::Optional => None,
-				RecurrenceType::Compulsory(base) => base,
-			};
-
-			match (offer_base, invoice_request.recurrence_counter()) {
-				// An explicit offer basetime anchors the full recurrence schedule, so every
-				// recurring invoice reuses that same period-0 basetime.
-				(Some(base), _) => Ok(Some(base.basetime)),
-				// Without an explicit offer basetime, the first recurring invoice defines period 0
-				// using its own creation time.
-				(None, Some(0)) => Ok(Some(created_at.as_secs())),
-				// TODO: Follow-up recurring invoices without an explicit offer basetime must reuse the
-				// period-0 basetime from the first invoice. We cannot derive that value from the
-				// current invoice request alone, so reject until token/state plumbing can supply it.
-				(None, Some(_)) => Err(Bolt12SemanticError::InvalidMetadata),
-				// Optional recurring offers may still be used as a one-off payment without
-				// explicit recurrence fields. The invoice still anchors period 0 at creation time.
-				(None, None) => Ok(Some(created_at.as_secs())),
 			}
 		}
 
