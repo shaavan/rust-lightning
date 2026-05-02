@@ -759,6 +759,11 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	/// The verified request.
 	pub(crate) inner: InvoiceRequest,
 
+	// Basetime Retrieved from IR token
+	// Will be None for non-recurring or primary invoice request.
+	// will be some for subsequent invoice request.
+	pub(crate) retrieved_basetime: Option<u64>,
+
 	/// Keys for signing a [`Bolt12Invoice`] for the request.
 	///
 	#[cfg_attr(
@@ -1091,15 +1096,20 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		// Verify the recurrence token and retrieve the basetime
+		let retrieved_basetime = $self.retrieve_basetime(key);
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				retrieved_basetime,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				retrieved_basetime,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -1136,15 +1146,20 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		// Verify the recurrence token and retrieve the basetime
+		let retrieved_basetime = $self.retrieve_basetime(key);
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				retrieved_basetime,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
+				retrieved_basetime,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -1262,6 +1277,13 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 		<$builder>::for_offer_using_keys(
 			&$self.inner, payment_paths, created_at, payment_hash, keys
 		)
+
+		// After creating this builder, update it's fields
+		// If the invoice request corresponds to recurrence
+		// 	- If the IR is primary, use the created_at time as basetime.
+		//	- If the IR is subsequent, use the retrieved basetime.
+		// Use the basetime to calculate next_recurrence_token
+		// Set the basetime as invoice_recurrence_basetime in builder.
 	}
 } }
 
