@@ -68,9 +68,9 @@ const RECURRENCE_TOKEN_HMAC_OFFSET: usize = RECURRENCE_TOKEN_NONCE_OFFSET + Nonc
 
 /// Fixed-width recurrence state carried inside a recurrence token.
 #[derive(Clone, Copy)]
-struct RecurrenceTokenFields {
-	offer_id: OfferId,
-	basetime: u64,
+pub(crate) struct RecurrenceTokenFields {
+	pub(crate) offer_id: OfferId,
+	pub(crate) basetime: u64,
 }
 
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
@@ -374,15 +374,12 @@ pub(super) fn create_recurrence_token(
 /// period-0 basetime.
 #[allow(dead_code)]
 pub(super) fn verify_recurrence_token(
-	token: &[u8], offer_id: OfferId, payer_signing_pubkey: PublicKey, counter: u32,
+	token: &[u8], payer_signing_pubkey: PublicKey, counter: u32,
 	start: Option<u32>, expanded_key: &ExpandedKey,
-) -> Result<u64, ()> {
+) -> Result<RecurrenceTokenFields, ()> {
 	let (fields, nonce, hmac_bytes) = read_recurrence_token(token, expanded_key)?;
-	if fields.offer_id != offer_id {
-		return Err(());
-	}
 	let expected_hmac = recurrence_token_hmac(
-		offer_id,
+		fields.offer_id,
 		payer_signing_pubkey,
 		nonce,
 		fields.basetime,
@@ -395,7 +392,7 @@ pub(super) fn verify_recurrence_token(
 		return Err(());
 	}
 
-	Ok(fields.basetime)
+	Ok(fields)
 }
 
 /// Verifies data given in a TLV stream was used to produce the given metadata, consisting of:
