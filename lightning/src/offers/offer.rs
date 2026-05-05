@@ -1856,8 +1856,10 @@ mod tests {
 	#[cfg(c_bindings)]
 	use super::OfferWithExplicitMetadataBuilder as OfferBuilder;
 	use super::{
-		Amount, ExperimentalOfferTlvStreamRef, Offer, OfferTlvStreamRef, Quantity,
-		EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+		days_from_civil, Amount, ExperimentalOfferTlvStreamRef, FullOfferTlvStreamRef, Offer,
+		OfferTlvStreamRef, Quantity, Recurrence, RecurrenceBase, RecurrenceLimit,
+		RecurrencePaywindow, RecurrencePeriod, RecurrenceType, EXPERIMENTAL_OFFER_TYPES,
+		OFFER_TYPES,
 	};
 
 	use crate::blinded_path::message::BlindedMessagePath;
@@ -1877,6 +1879,27 @@ mod tests {
 	use bitcoin::secp256k1::Secp256k1;
 	use core::num::NonZeroU64;
 	use core::time::Duration;
+
+	trait ToBytes {
+		fn to_bytes(&self) -> Vec<u8>;
+	}
+
+	impl<'a> ToBytes for FullOfferTlvStreamRef<'a> {
+		fn to_bytes(&self) -> Vec<u8> {
+			let mut buffer = Vec::new();
+			self.write(&mut buffer).unwrap();
+			buffer
+		}
+	}
+
+	fn unix_time(year: i128, month: u64, day: u64, hour: u64, minute: u64, second: u64) -> u64 {
+		let days_since_epoch = days_from_civil(year, month, day);
+		u64::try_from(days_since_epoch)
+			.unwrap()
+			.checked_mul(RecurrencePeriod::SECONDS_PER_DAY)
+			.and_then(|days| days.checked_add(hour * 3600 + minute * 60 + second))
+			.unwrap()
+	}
 
 	#[test]
 	fn builds_offer_with_defaults() {
@@ -1930,6 +1953,244 @@ mod tests {
 		if let Err(e) = Offer::try_from(buffer) {
 			panic!("error parsing offer: {:?}", e);
 		}
+	}
+
+	#[test]
+	fn parses_offer_with_compulsory_recurrence() {
+		let offer = OfferBuilder::new(pubkey(42)).amount_msats(1_000).build().unwrap();
+		let recurrence_period = RecurrencePeriod::Months(3);
+		let recurrence_base = RecurrenceBase { proportional: true, basetime: 123_456 };
+		let recurrence_paywindow =
+			RecurrencePaywindow { seconds_before: 3600, seconds_after: 7200 };
+		let recurrence_limit = RecurrenceLimit(24);
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_compulsory = Some(&recurrence_period);
+		tlv_stream.0.recurrence_base = Some(&recurrence_base);
+		tlv_stream.0.recurrence_paywindow = Some(&recurrence_paywindow);
+		tlv_stream.0.recurrence_limit = Some(&recurrence_limit);
+
+		match Offer::try_from(tlv_stream.to_bytes()) {
+			Ok(parsed_offer) => {
+				assert_eq!(
+					parsed_offer.offer_recurrence(),
+					Some(Recurrence {
+						recurrence_type: RecurrenceType::Compulsory(Some(recurrence_base)),
+						recurrence_period,
+						recurrence_paywindow: Some(recurrence_paywindow),
+						recurrence_limit: Some(recurrence_limit),
+					}),
+				);
+			},
+			Err(e) => panic!("error parsing offer: {:?}", e),
+		}
+	}
+
+	#[test]
+	fn parses_offer_with_optional_recurrence() {
+		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let recurrence_period = RecurrencePeriod::Days(14);
+		let recurrence_paywindow =
+			RecurrencePaywindow { seconds_before: 1800, seconds_after: 5400 };
+		let recurrence_limit = RecurrenceLimit(12);
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_optional = Some(&recurrence_period);
+		tlv_stream.0.recurrence_paywindow = Some(&recurrence_paywindow);
+		tlv_stream.0.recurrence_limit = Some(&recurrence_limit);
+
+		match Offer::try_from(tlv_stream.to_bytes()) {
+			Ok(parsed_offer) => {
+				assert_eq!(
+					parsed_offer.offer_recurrence(),
+					Some(Recurrence {
+						recurrence_type: RecurrenceType::Optional,
+						recurrence_period,
+						recurrence_paywindow: Some(recurrence_paywindow),
+						recurrence_limit: Some(recurrence_limit),
+					}),
+				);
+			},
+			Err(e) => panic!("error parsing offer: {:?}", e),
+		}
+	}
+
+	#[test]
+	fn fails_parsing_offer_with_invalid_recurrence_fields() {
+		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		let recurrence_compulsory = RecurrencePeriod::Months(1);
+		let recurrence_optional = RecurrencePeriod::Days(7);
+		let mut tlv_stream = offer.as_tlv_stream();
+		tlv_stream.0.recurrence_compulsory = Some(&recurrence_compulsory);
+		tlv_stream.0.recurrence_optional = Some(&recurrence_optional);
+
+		match Offer::try_from(tlv_stream.to_bytes()) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => {
+				assert_eq!(
+					e,
+					Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidRecurrence)
+				);
+			},
+		}
+	}
+
+	#[test]
+	fn calculates_recurrence_start_time_for_seconds() {
+		let start_time = RecurrencePeriod::Seconds(600).start_time(1_234, 3);
+		assert_eq!(start_time, Ok(3_034));
+	}
+
+	#[test]
+	fn calculates_recurrence_start_time_for_days() {
+		let basetime = unix_time(2024, 1, 15, 1, 2, 3);
+		let start_time = RecurrencePeriod::Days(2).start_time(basetime, 3);
+
+		assert_eq!(start_time, Ok(unix_time(2024, 1, 21, 1, 2, 3)));
+	}
+
+	#[test]
+	fn calculates_recurrence_start_time_for_months() {
+		let basetime = unix_time(2024, 1, 15, 1, 2, 3);
+		let start_time = RecurrencePeriod::Months(1).start_time(basetime, 2);
+
+		assert_eq!(start_time, Ok(unix_time(2024, 3, 15, 1, 2, 3)));
+
+		let basetime = unix_time(2024, 1, 31, 1, 2, 3);
+		let start_time = RecurrencePeriod::Months(1).start_time(basetime, 1);
+
+		assert_eq!(start_time, Ok(unix_time(2024, 2, 29, 1, 2, 3)));
+
+		let basetime = unix_time(2023, 1, 31, 1, 2, 3);
+		let start_time = RecurrencePeriod::Months(1).start_time(basetime, 1);
+
+		assert_eq!(start_time, Ok(unix_time(2023, 2, 28, 1, 2, 3)));
+
+		let basetime = unix_time(2024, 2, 29, 1, 2, 3);
+		let start_time = RecurrencePeriod::Months(12).start_time(basetime, 1);
+
+		assert_eq!(start_time, Ok(unix_time(2025, 2, 28, 1, 2, 3)));
+	}
+
+	#[test]
+	fn handles_recurrence_start_time_boundaries() {
+		assert_eq!(RecurrencePeriod::Seconds(1).start_time(u64::MAX, 1), Err(()));
+		assert_eq!(RecurrencePeriod::Days(u32::MAX).start_time(0, u32::MAX), Err(()));
+		assert_eq!(RecurrencePeriod::Seconds(1).start_time(0, u32::MAX), Ok(u32::MAX.into()));
+		assert_eq!(
+			RecurrencePeriod::Months(1).start_time(unix_time(2020, 2, 29, 0, 0, 0), 12),
+			Ok(unix_time(2021, 2, 28, 0, 0, 0))
+		);
+	}
+
+	#[test]
+	fn calculates_recurrence_payment_windows() {
+		let explicit_recurrence = Recurrence {
+			recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+				proportional: false,
+				basetime: 1_000,
+			})),
+			recurrence_period: RecurrencePeriod::Seconds(600),
+			recurrence_paywindow: Some(RecurrencePaywindow {
+				seconds_before: 120,
+				seconds_after: 300,
+			}),
+			recurrence_limit: None,
+		};
+		assert_eq!(explicit_recurrence.payment_window(1_000, 0), Ok((880, 1_300)));
+		assert_eq!(explicit_recurrence.payment_window(1_000, 2), Ok((2_080, 2_500)));
+
+		let default_recurrence = Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Seconds(600),
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		};
+		assert_eq!(default_recurrence.payment_window(1_000, 0), Ok((1_000, 1_600)));
+		assert_eq!(default_recurrence.payment_window(1_000, 2), Ok((1_600, 2_800)));
+
+		let overflowing_recurrence = Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Seconds(1),
+			recurrence_paywindow: Some(RecurrencePaywindow { seconds_before: 0, seconds_after: 1 }),
+			recurrence_limit: None,
+		};
+		assert_eq!(overflowing_recurrence.payment_window(u64::MAX, 0), Err(()));
+	}
+
+	#[test]
+	fn builds_offers_with_recurrence() {
+		let compulsory = Recurrence {
+			recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+				proportional: true,
+				basetime: 1_000,
+			})),
+			recurrence_period: RecurrencePeriod::Months(1),
+			recurrence_paywindow: Some(RecurrencePaywindow {
+				seconds_before: 3_600,
+				seconds_after: 7_200,
+			}),
+			recurrence_limit: Some(RecurrenceLimit(12)),
+		};
+		let offer = OfferBuilder::new(pubkey(42))
+			.amount_msats(1_000)
+			.recurrence(compulsory)
+			.build()
+			.unwrap();
+		assert_eq!(offer.offer_recurrence(), Some(compulsory));
+
+		let optional = Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Days(7),
+			recurrence_paywindow: None,
+			recurrence_limit: Some(RecurrenceLimit(5)),
+		};
+		let offer = OfferBuilder::new(pubkey(43)).recurrence(optional).build().unwrap();
+		assert_eq!(offer.offer_recurrence(), Some(optional));
+	}
+
+	#[test]
+	fn rejects_invalid_recurrence_during_offer_construction() {
+		for recurrence_period in
+			[RecurrencePeriod::Seconds(0), RecurrencePeriod::Days(0), RecurrencePeriod::Months(0)]
+		{
+			let recurrence = Recurrence {
+				recurrence_type: RecurrenceType::Optional,
+				recurrence_period,
+				recurrence_paywindow: None,
+				recurrence_limit: None,
+			};
+			assert_eq!(
+				OfferBuilder::new(pubkey(42)).recurrence(recurrence).build().unwrap_err(),
+				Bolt12SemanticError::InvalidRecurrence
+			);
+		}
+
+		let zero_limit = Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Days(1),
+			recurrence_paywindow: None,
+			recurrence_limit: Some(RecurrenceLimit(0)),
+		};
+		assert_eq!(
+			OfferBuilder::new(pubkey(42)).recurrence(zero_limit).build().unwrap_err(),
+			Bolt12SemanticError::InvalidRecurrence
+		);
+
+		let proportional_without_amount = Recurrence {
+			recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+				proportional: true,
+				basetime: 1_000,
+			})),
+			recurrence_period: RecurrencePeriod::Days(1),
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		};
+		assert_eq!(
+			OfferBuilder::new(pubkey(42))
+				.recurrence(proportional_without_amount)
+				.build()
+				.unwrap_err(),
+			Bolt12SemanticError::InvalidRecurrence
+		);
 	}
 
 	#[test]
