@@ -1788,6 +1788,35 @@ mod tests {
 				);
 			},
 		}
+
+		let mut tlv_stream = refund.as_tlv_stream();
+		tlv_stream.2.recurrence_counter = Some(1);
+		tlv_stream.2.recurrence_start = Some(2);
+		tlv_stream.2.recurrence_cancel = Some(&());
+
+		match Refund::try_from(tlv_stream.to_bytes()) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => {
+				assert_eq!(
+					e,
+					Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+				);
+			},
+		}
+
+		let recurrence_prev_state = vec![42; 3];
+		let mut tlv_stream = refund.as_tlv_stream();
+		tlv_stream.2.recurrence_prev_state = Some(&recurrence_prev_state);
+
+		match Refund::try_from(tlv_stream.to_bytes()) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => {
+				assert_eq!(
+					e,
+					Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+				);
+			},
+		}
 	}
 
 	#[test]
