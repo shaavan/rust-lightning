@@ -1668,6 +1668,23 @@ mod tests {
 	}
 
 	#[test]
+	fn fails_parsing_invoice_with_recurrence() {
+		let invoice = invoice();
+		let recurrence_token = vec![1, 2, 3];
+		let mut tlv_stream = invoice.as_tlv_stream();
+		tlv_stream.1.invoice_recurrence_basetime = Some(123_456);
+		tlv_stream.1.invoice_recurrence_token = Some(&recurrence_token);
+
+		match StaticInvoice::try_from(tlv_stream_to_bytes(&tlv_stream)) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(
+				e,
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+			),
+		}
+	}
+
+	#[test]
 	fn fails_parsing_invoice_with_invalid_offer_fields() {
 		// Error if the offer is missing paths.
 		let missing_offer_paths_invoice = invoice();
