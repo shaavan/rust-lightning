@@ -70,15 +70,16 @@ use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
-	Amount, ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents,
-	OfferId, OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
+	ExperimentalOfferTlvStream, ExperimentalOfferTlvStreamRef, Offer, OfferContents, OfferId,
+	OfferTlvStream, OfferTlvStreamRef, EXPERIMENTAL_OFFER_TYPES, OFFER_TYPES,
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
@@ -708,21 +709,34 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 		$contents.chain()
 	}
 
-	/// The amount to pay in msats (i.e., the minimum lightning-payable unit for [`chain`]), which
-	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
+	/// Returns the amount explicitly requested in the invoice request, in millisatoshis.
 	///
-	/// [`chain`]: Self::chain
+	/// If the invoice request omits an explicit amount, this returns `None` even when a
+	/// payable amount can be inferred from the offer and quantity. Use
+	/// [`Self::payable_amount_msats`] to obtain the payable amount.
 	pub fn amount_msats(&$self) -> Option<u64> {
 		$contents.amount_msats()
 	}
 
-	/// Returns whether an amount was set in the request; otherwise, if [`amount_msats`] is `Some`
-	/// then it was inferred from the [`Offer::amount`] and [`quantity`].
+	/// Returns the amount payable for this invoice request, in millisatoshis.
 	///
-	/// [`amount_msats`]: Self::amount_msats
-	/// [`quantity`]: Self::quantity
-	pub fn has_amount_msats(&$self) -> bool {
-		$contents.has_amount_msats()
+	/// The payable amount is determined as follows:
+	///
+	/// - If the invoice request explicitly specifies an amount, that amount is returned after
+	///   validating it against the offer's minimum payable amount.
+	/// - Otherwise, the amount is inferred from the [`Offer`] amount and the requested
+	///   quantity.
+	///
+	/// For a currency-denominated offer without an explicitly requested amount, `converter`'s
+	/// reference exchange rate is used to calculate the payable amount in millisatoshis.
+	///
+	/// Returns an error if:
+	///
+	/// - no payable amount can be determined,
+	/// - the offer amount cannot be converted to Bitcoin, or
+	/// - the amount is semantically invalid.
+	pub fn payable_amount_msats<CC: CurrencyConversion>(&$self, converter: &CC) -> Result<u64, Bolt12SemanticError> {
+		$contents.payable_amount_msats(converter)
 	}
 
 	/// Features pertaining to requesting an invoice.
@@ -1147,20 +1161,41 @@ impl InvoiceRequestContents {
 	}
 
 	pub(super) fn amount_msats(&self) -> Option<u64> {
-		self.inner.amount_msats().or_else(|| match self.inner.offer.amount() {
-			Some(Amount::Bitcoin { amount_msats }) => {
-				Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
-			},
-			Some(Amount::Currency { .. }) => None,
-			None => {
-				debug_assert!(false);
-				None
-			},
-		})
+		self.inner.amount_msats()
 	}
 
-	pub(super) fn has_amount_msats(&self) -> bool {
-		self.inner.amount_msats().is_some()
+	pub(super) fn payable_amount_msats<CC: CurrencyConversion>(
+		&self, converter: &CC,
+	) -> Result<u64, Bolt12SemanticError> {
+		match self.inner.offer.amount() {
+			Some(amount) => {
+				// Explicit amounts are chosen by the payer, so only accept them if they
+				// cover the offer's minimum and fit within a valid payment amount.
+				let (minimum_unit_msats, _maximum_unit_msats) = amount.to_msats_range(converter)?;
+				let minimum_msats = minimum_unit_msats
+					.checked_mul(self.quantity().unwrap_or(1))
+					.filter(|msats| *msats <= MAX_VALUE_MSAT)
+					.ok_or(Bolt12SemanticError::InvalidAmount)?;
+
+				match self.inner.amount_msats() {
+					Some(amount_msats) if amount_msats < minimum_msats => {
+						Err(Bolt12SemanticError::InsufficientAmount)
+					},
+					Some(amount_msats) if amount_msats > MAX_VALUE_MSAT => {
+						Err(Bolt12SemanticError::InvalidAmount)
+					},
+					Some(amount_msats) => Ok(amount_msats),
+					// When the payer omits the amount, use the payee's reference conversion
+					// to choose the concrete payable amount.
+					None => amount
+						.to_msats(converter)?
+						.checked_mul(self.quantity().unwrap_or(1))
+						.filter(|msats| *msats <= MAX_VALUE_MSAT)
+						.ok_or(Bolt12SemanticError::InvalidAmount),
+				}
+			},
+			None => self.inner.amount_msats().ok_or(Bolt12SemanticError::MissingAmount),
+		}
 	}
 
 	pub(super) fn features(&self) -> &InvoiceRequestFeatures {
@@ -1570,6 +1605,9 @@ mod tests {
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+	use crate::offers::currency::{
+		CurrencyConversion, ExchangeRate, ExchangeRateBound, NullCurrencyConversion, Tolerance,
+	};
 	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
 	use crate::offers::invoice_request::string_truncate_safe;
 	use crate::offers::merkle::{self, SignatureTlvStreamRef, TaggedHash, TlvStream};
@@ -1587,12 +1625,27 @@ mod tests {
 	use crate::types::features::{InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::{PrintableString, UntrustedString};
 	use crate::util::ser::{BigSize, Readable, Writeable};
+	use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{self, Keypair, Secp256k1, SecretKey};
 	use core::num::NonZeroU64;
 	#[cfg(feature = "std")]
 	use core::time::Duration;
+
+	struct RangedCurrencyConversion;
+
+	impl CurrencyConversion for RangedCurrencyConversion {
+		fn conversion_range(&self, currency: CurrencyCode) -> Result<ExchangeRateBound, ()> {
+			if currency.as_str() == "USD" {
+				let exchange_rate = ExchangeRate::new(1000);
+				let tolerance = Tolerance::BasisPoints(1000);
+				ExchangeRateBound::new(exchange_rate, tolerance, tolerance)
+			} else {
+				Err(())
+			}
+		}
+	}
 
 	#[test]
 	fn builds_invoice_request_with_defaults() {
@@ -1633,7 +1686,7 @@ mod tests {
 		assert_eq!(invoice_request.supported_quantity(), Quantity::One);
 		assert_eq!(invoice_request.issuer_signing_pubkey(), Some(recipient_pubkey()));
 		assert_eq!(invoice_request.chain(), ChainHash::using_genesis_block(Network::Bitcoin));
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(1000));
 		assert_eq!(invoice_request.invoice_request_features(), &InvoiceRequestFeatures::empty());
 		assert_eq!(invoice_request.quantity(), None);
 		assert_eq!(invoice_request.payer_note(), None);
@@ -1949,7 +2002,6 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(invoice_request.has_amount_msats());
 		assert_eq!(invoice_request.amount_msats(), Some(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
@@ -1966,7 +2018,6 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(invoice_request.has_amount_msats());
 		assert_eq!(invoice_request.amount_msats(), Some(1000));
 		assert_eq!(tlv_stream.amount, Some(1000));
 
@@ -1981,7 +2032,6 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(invoice_request.has_amount_msats());
 		assert_eq!(invoice_request.amount_msats(), Some(1001));
 		assert_eq!(tlv_stream.amount, Some(1001));
 
@@ -2091,8 +2141,8 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(1000));
+		assert!(invoice_request.amount_msats().is_none());
+		assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(1000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2107,8 +2157,8 @@ mod tests {
 			.build_and_sign()
 			.unwrap();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), Some(2000));
+		assert!(invoice_request.amount_msats().is_none());
+		assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(2000));
 		assert_eq!(tlv_stream.amount, None);
 
 		let invoice_request = OfferBuilder::new(recipient_pubkey())
@@ -2121,9 +2171,142 @@ mod tests {
 			.unwrap()
 			.build_unchecked_and_sign();
 		let (_, _, tlv_stream, _, _, _) = invoice_request.as_tlv_stream();
-		assert!(!invoice_request.has_amount_msats());
-		assert_eq!(invoice_request.amount_msats(), None);
+		assert!(invoice_request.amount_msats().is_none());
+		assert_eq!(
+			invoice_request.payable_amount_msats(&NullCurrencyConversion),
+			Err(Bolt12SemanticError::UnsupportedCurrency)
+		);
 		assert_eq!(tlv_stream.amount, None);
+	}
+
+	/// Ensures an explicit amount cannot bypass the recipient's minimum accepted currency
+	/// conversion when determining the amount payable for an invoice request.
+	#[test]
+	fn payable_amount_msats_rejects_explicit_currency_amount_below_minimum() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = TestCurrencyConversion {};
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.amount_msats(9_999)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		assert_eq!(
+			invoice_request.payable_amount_msats(&converter),
+			Err(Bolt12SemanticError::InsufficientAmount)
+		);
+	}
+
+	/// Checks that an explicit payer amount is compared against the lowest
+	/// accepted currency conversion after applying quantity.
+	#[test]
+	fn payable_amount_msats_checks_currency_minimum_with_quantity() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = RangedCurrencyConversion {};
+
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.supported_quantity(Quantity::Unbounded)
+			.build()
+			.unwrap();
+
+		// The converter accepts 10% below the reference rate. For two units of a
+		// 10-minor-unit offer, the minimum accepted amount is 18,000 msats.
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.quantity(2)
+			.unwrap()
+			.amount_msats(17_999)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(
+			invoice_request.payable_amount_msats(&converter),
+			Err(Bolt12SemanticError::InsufficientAmount)
+		);
+
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.quantity(2)
+			.unwrap()
+			.amount_msats(18_000)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(invoice_request.payable_amount_msats(&converter), Ok(18_000));
+	}
+
+	#[test]
+	fn payable_amount_msats_uses_reference_rate_for_currency_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = RangedCurrencyConversion {};
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		assert_eq!(invoice_request.payable_amount_msats(&converter), Ok(10_000));
+	}
+
+	#[test]
+	fn payable_amount_msats_rejects_explicit_currency_amount_above_max() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = TestCurrencyConversion {};
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.amount_msats_unchecked(MAX_VALUE_MSAT + 1)
+			.build_unchecked_and_sign();
+
+		assert_eq!(
+			invoice_request.payable_amount_msats(&converter),
+			Err(Bolt12SemanticError::InvalidAmount)
+		);
 	}
 
 	#[test]
