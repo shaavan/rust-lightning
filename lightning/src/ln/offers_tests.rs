@@ -375,7 +375,7 @@ fn check_dummy_hop_pattern_in_offer() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, alice, bob_id, DUMMY_HOPS_PATH_LENGTH));
 
@@ -397,7 +397,7 @@ fn check_dummy_hop_pattern_in_offer() {
 	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, alice, bob_id, DUMMY_HOPS_PATH_LENGTH));
 }
@@ -583,7 +583,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 		},
 		payment_metadata: None,
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, bob, charlie_id, DUMMY_HOPS_PATH_LENGTH));
 
@@ -742,7 +742,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 		},
 		payment_metadata: None,
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, alice, bob_id, DUMMY_HOPS_PATH_LENGTH));
 
@@ -1285,7 +1285,7 @@ fn creates_and_pays_for_offer_with_retry() {
 		},
 		payment_metadata: None,
 	});
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, alice, bob_id, DUMMY_HOPS_PATH_LENGTH));
 	let onion_message = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
@@ -1601,7 +1601,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(david_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, david, charlie_id, DUMMY_HOPS_PATH_LENGTH));
 
@@ -1630,7 +1630,7 @@ fn fails_authentication_when_handling_invoice_request() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, david, charlie_id, DUMMY_HOPS_PATH_LENGTH));
 
@@ -1730,7 +1730,7 @@ fn fails_authentication_when_handling_invoice_for_offer() {
 	alice.onion_messenger.handle_onion_message(bob_id, &onion_message);
 
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
-	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
+	assert_eq!(invoice_request.payable_amount_msats(&NullCurrencyConversion), Ok(10_000_000));
 	assert_ne!(invoice_request.payer_signing_pubkey(), david_id);
 	assert!(check_dummy_hopped_path_length(&reply_path, david, charlie_id, DUMMY_HOPS_PATH_LENGTH));
 
