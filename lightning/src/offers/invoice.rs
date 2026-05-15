@@ -121,6 +121,7 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::DecodeError;
+use crate::offers::currency::NullCurrencyConversion;
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
@@ -1831,7 +1832,11 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				experimental_invoice_request_tlv_stream,
 			))?;
 
-			if let Some(requested_amount_msats) = invoice_request.amount_msats() {
+			let requested_amount_msats = match invoice_request.amount_msats() {
+				Some(amount_msats) => Ok(amount_msats),
+				None => invoice_request.payable_amount_msats(&NullCurrencyConversion),
+			};
+			if let Ok(requested_amount_msats) = requested_amount_msats {
 				if amount_msats != requested_amount_msats {
 					return Err(Bolt12SemanticError::InvalidAmount);
 				}
@@ -3220,6 +3225,38 @@ mod tests {
 
 		let invoice = OfferBuilder::new(recipient_pubkey())
 			.amount_msats(1000)
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.amount_msats(1000)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.amount_msats_unchecked(2000)
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		let mut buffer = Vec::new();
+		invoice.write(&mut buffer).unwrap();
+
+		match Bolt12Invoice::try_from(buffer) {
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(
+				e,
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidAmount)
+			),
+		}
+
+		let invoice = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: crate::offers::offer::CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
 			.build()
 			.unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
