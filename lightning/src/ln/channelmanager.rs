@@ -94,9 +94,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::currency::CurrencyConversion;
-#[cfg(not(c_bindings))]
-use crate::offers::currency::NullCurrencyConversion;
+use crate::offers::currency::{CurrencyConversion, NullCurrencyConversion};
 use crate::offers::flow::{HeldHtlcReplyPath, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
@@ -17737,8 +17735,14 @@ impl<
 						None
 					};
 
-				let invoice_request = match self.flow.verify_invoice_request(invoice_request, context) {
-					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => invoice_request,
+				let (invoice_request, amount_msats) = match self.flow.verify_invoice_request(
+					invoice_request,
+					context,
+					&self.currency_conversion,
+				) {
+					Ok(InvreqResponseInstructions::SendInvoice { invoice_request, amount_msats }) => {
+						(invoice_request, amount_msats)
+					},
 					Ok(InvreqResponseInstructions::SendStaticInvoice { recipient_id, invoice_slot, invoice_request }) => {
 						self.pending_events.lock().unwrap().push_back((Event::StaticInvoiceRequested {
 							recipient_id, invoice_slot, reply_path: responder, invoice_request,
@@ -17746,7 +17750,13 @@ impl<
 
 						return None
 					},
-					Err(_) => return None,
+					Err(Bolt12SemanticError::InvalidMetadata) => return None,
+					Err(error) => {
+						return Some((
+							OffersMessage::InvoiceError(InvoiceError::from(error)),
+							responder.respond(),
+						));
+					},
 				};
 
 				let get_payment_info = |amount_msats, relative_expiry| {
@@ -17765,6 +17775,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
@@ -17790,6 +17801,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
