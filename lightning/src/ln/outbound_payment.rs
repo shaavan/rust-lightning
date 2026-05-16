@@ -26,9 +26,10 @@ use crate::ln::channelmanager::{
 use crate::ln::msgs::{DecodeError, TrampolineOnionPacket};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
-use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
+use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::Amount;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::routing::router::{
 	BlindedTail, InFlightHtlcs, Path, PaymentParameters, Route, RouteParameters,
@@ -1460,11 +1461,16 @@ impl OutboundPayments {
 						));
 					}
 
-					let amount_msat = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-						invreq,
-					) {
-						Ok(amt) => amt,
-						Err(_) => {
+					let amount_msat = match invreq.amount_msats().or_else(|| {
+						match invreq.amount() {
+							Some(Amount::Bitcoin { amount_msats }) => {
+								amount_msats.checked_mul(invreq.quantity().unwrap_or(1))
+							},
+							Some(Amount::Currency { .. }) | None => None,
+						}
+					}) {
+						Some(amt) => amt,
+						None => {
 							// We check this during invoice request parsing, when constructing the invreq's
 							// contents from its TLV stream.
 							debug_assert!(false, "LDK requires an msat amount in either the invreq or the invreq's underlying offer");
@@ -3636,7 +3642,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), created_at).unwrap()
+			.respond_with_no_std(1000, payment_paths(), payment_hash(), created_at).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3685,7 +3691,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with_no_std(1000, payment_paths(), payment_hash(), now()).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3750,7 +3756,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with_no_std(1000, payment_paths(), payment_hash(), now()).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3847,7 +3853,7 @@ mod tests {
 			.unwrap()
 			.build_and_sign()
 			.unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.respond_with_no_std(1000, payment_paths(), payment_hash(), now())
 			.unwrap()
 			.build()
 			.unwrap()
