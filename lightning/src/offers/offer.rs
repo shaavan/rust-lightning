@@ -944,23 +944,51 @@ impl OfferContents {
 	pub(super) fn check_amount_msats_for_quantity(
 		&self, amount_msats: Option<u64>, quantity: Option<u64>,
 	) -> Result<(), Bolt12SemanticError> {
-		let offer_amount_msats = match self.amount {
+		let minimum_unit_msats = match self.amount {
 			None => 0,
 			Some(Amount::Bitcoin { amount_msats }) => amount_msats,
-			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			Some(Amount::Currency { .. }) => {
+				// This function is used by invoice request build checkers and parsers
+				// to ensure that the `InvoiceRequest::amount_msats()` is sufficient
+				// compared to the offer's amount.
+				//
+				// However, if the `Offer::Amount` is specified in a fiat currency,
+				// we, as the payer, skip this local validation. We instead defer
+				// to the payee's ultimate judgment when they verify our request
+				// and issue the corresponding invoice.
+				//
+				// With this approach, we leave it to the payee (offer creator)
+				// to decide whether the amount we specified is reasonable relative
+				// to their fiat offer, or—if we omitted the amount—to dictate the
+				// final msat total in the invoice themselves.
+				//
+				// Deferring this validation rightly leaves the onus of currency conversion
+				// and precise verification to the invoice creator.
+				0
+			},
 		};
 
+		let mut amount_to_check = amount_msats;
 		if !self.expects_quantity() || quantity.is_some() {
-			let expected_amount_msats = offer_amount_msats
+			// Some offers require the payer to choose a quantity. Until that
+			// quantity is provided, there is no total offer amount to compare
+			// against, so do not assume a quantity of one.
+			let expected_amount_msats = minimum_unit_msats
 				.checked_mul(quantity.unwrap_or(1))
 				.ok_or(Bolt12SemanticError::InvalidAmount)?;
-			let amount_msats = amount_msats.unwrap_or(expected_amount_msats);
 
-			if amount_msats < expected_amount_msats {
+			let actual_amount_msats = amount_msats.unwrap_or(expected_amount_msats);
+			if actual_amount_msats < expected_amount_msats {
 				return Err(Bolt12SemanticError::InsufficientAmount);
 			}
+			amount_to_check = Some(actual_amount_msats);
+		}
 
-			if amount_msats > MAX_VALUE_MSAT {
+		// `amount_to_check` is the msat amount the invoice request commits to,
+		// either explicitly requested by the payer or inferred from the offer. It
+		// must fit within the maximum amount supported by Lightning payments.
+		if let Some(amount_to_check) = amount_to_check {
+			if amount_to_check > MAX_VALUE_MSAT {
 				return Err(Bolt12SemanticError::InvalidAmount);
 			}
 		}
@@ -1807,6 +1835,13 @@ mod tests {
 
 		// An amount of 0 must be rejected per BOLT 12.
 		match OfferBuilder::new(pubkey(42)).amount_msats(0).build() {
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
+		}
+
+		let invalid_amount =
+			Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 0 };
+		match OfferBuilder::new(pubkey(42)).amount(invalid_amount).build() {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidAmount),
 		}
