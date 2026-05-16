@@ -465,6 +465,7 @@ fn archive_monitor_with_pending_closure_event() {
 			fee_estimator: nodes[1].fee_estimator,
 			router: nodes[1].router,
 			message_router: nodes[1].message_router,
+			currency_conversion: nodes[1].currency_conversion,
 			chain_monitor: nodes[1].chain_monitor,
 			tx_broadcaster: nodes[1].tx_broadcaster,
 			logger: nodes[1].logger,

@@ -444,6 +444,9 @@ type DynMessageRouter = lightning::onion_message::messenger::DefaultMessageRoute
 >;
 
 #[cfg(not(c_bindings))]
+type DynCurrencyConversion = lightning::offers::currency::NullCurrencyConversion;
+
+#[cfg(not(c_bindings))]
 type DynSignerProvider = dyn lightning::sign::SignerProvider<
 		EcdsaSigner = lightning::sign::InMemorySigner<&'static (dyn Logger + Send + Sync)>,
 	> + Send
@@ -461,6 +464,7 @@ type DynChannelManager = lightning::ln::channelmanager::ChannelManager<
 	&'static (dyn FeeEstimator + Send + Sync),
 	&'static DynRouter,
 	&'static DynMessageRouter,
+	&'static DynCurrencyConversion,
 	&'static (dyn Logger + Send + Sync),
 >;
 
@@ -2051,6 +2055,7 @@ mod tests {
 		IgnoringMessageHandler, MessageHandler, PeerManager, SocketDescriptor,
 	};
 	use lightning::ln::types::ChannelId;
+	use lightning::offers::currency::NullCurrencyConversion;
 	use lightning::onion_message::messenger::{DefaultMessageRouter, OnionMessenger};
 	use lightning::routing::gossip::{NetworkGraph, P2PGossipSync};
 	use lightning::routing::router::{CandidateRouteHop, DefaultRouter, Path, RouteHop};
@@ -2148,6 +2153,7 @@ mod tests {
 				Arc<KeysManager>,
 			>,
 		>,
+		Arc<NullCurrencyConversion>,
 		Arc<test_utils::TestLogger>,
 	>;
 
@@ -2577,6 +2583,7 @@ mod tests {
 				Arc::clone(&network_graph),
 				Arc::clone(&keys_manager),
 			));
+			let conversion = Arc::new(NullCurrencyConversion);
 			let chain_source = Arc::new(test_utils::TestChainSource::new(Network::Bitcoin));
 			let kv_store = Arc::new(Persister::new(format!("{persist_dir}_persister_{i}").into()));
 			let now = Duration::from_secs(genesis_block.header.time as u64);
@@ -2607,6 +2614,7 @@ mod tests {
 				Arc::clone(&tx_broadcaster),
 				Arc::clone(&router),
 				Arc::clone(&msg_router),
+				Arc::clone(&conversion),
 				Arc::clone(&logger),
 				Arc::clone(&keys_manager),
 				Arc::clone(&keys_manager),
