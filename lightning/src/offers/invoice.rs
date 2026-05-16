@@ -2536,6 +2536,90 @@ mod tests {
 		assert_eq!(tlv_stream.amount, Some(1001));
 	}
 
+	/// Invoice responses must honor the payer's explicit total for either signing strategy and
+	/// either offer currency, even when that total includes an overpayment of the offer amount.
+	#[test]
+	fn rejects_invoice_response_with_mismatched_requested_amount() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+
+		for offer_amount in [
+			Amount::Bitcoin { amount_msats: 1000 },
+			Amount::Currency {
+				iso4217_code: crate::offers::offer::CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			},
+		] {
+			for derived_keys in [false, true] {
+				let offer = if derived_keys {
+					#[cfg(c_bindings)]
+					use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
+					OfferBuilder::deriving_signing_pubkey(
+						recipient_pubkey(),
+						&expanded_key,
+						nonce,
+						&secp_ctx,
+					)
+					.amount(offer_amount)
+					.build()
+					.unwrap()
+				} else {
+					OfferBuilder::new(recipient_pubkey()).amount(offer_amount).build().unwrap()
+				};
+				let invoice_request = offer
+					.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+					.unwrap()
+					.amount_msats(10_000)
+					.unwrap()
+					.build_and_sign()
+					.unwrap();
+
+				for invoice_amount in [9_999, 10_000, 10_001] {
+					let result = if derived_keys {
+						match invoice_request
+							.clone()
+							.verify_using_metadata(&expanded_key, &secp_ctx)
+							.unwrap()
+						{
+							InvoiceRequestVerifiedFromOffer::DerivedKeys(req) => req
+								.respond_using_derived_keys_no_std(
+									invoice_amount,
+									payment_paths(),
+									payment_hash(),
+									now(),
+								)
+								.map(|_| ()),
+							InvoiceRequestVerifiedFromOffer::ExplicitKeys(_) => {
+								panic!("expected invoice request with derived keys");
+							},
+						}
+					} else {
+						invoice_request
+							.respond_with_no_std(
+								invoice_amount,
+								payment_paths(),
+								payment_hash(),
+								now(),
+							)
+							.map(|_| ())
+					};
+
+					// The explicit request fixes the total at 10,000 msat. Both lower and higher
+					// responses must fail, while the matching amount must still create a builder.
+					let expected = if invoice_amount == 10_000 {
+						Ok(())
+					} else {
+						Err(Bolt12SemanticError::InvalidAmount)
+					};
+					assert_eq!(result, expected);
+				}
+			}
+		}
+	}
+
 	#[test]
 	fn builds_invoice_with_quantity_from_request() {
 		let expanded_key = ExpandedKey::new([42; 32]);
