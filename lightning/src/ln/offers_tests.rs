@@ -54,7 +54,9 @@ use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, self};
 use crate::ln::outbound_payment::{Bolt12PaymentError, RecipientOnionFields, Retry};
-use crate::offers::currency::NullCurrencyConversion;
+use crate::offers::currency::{
+	CurrencyConversion, ExchangeRate, ExchangeRateBound, NullCurrencyConversion, Tolerance,
+};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, OnionMessage, OnionMessageHandler};
@@ -63,7 +65,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::OfferBuilder;
+use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::payer_proof::PayerProof;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, DUMMY_HOPS_PATH_LENGTH, QR_CODED_DUMMY_HOPS_PATH_LENGTH};
@@ -2005,6 +2007,75 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedChain),
 	}
+}
+
+/// Ensures a payer does not create an invoice request whose explicit amount is below the
+/// currency-denominated offer's converted minimum.
+#[test]
+fn fails_creating_currency_invoice_request_with_insufficient_amount() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let offer = nodes[0].node
+		.create_offer_builder().unwrap()
+		.amount(Amount::Currency {
+			iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+			amount: 10,
+		})
+		.build().unwrap();
+
+	match nodes[1].node.pay_for_offer(
+		&offer, Some(9_999), PaymentId([1; 32]), Default::default()
+	) {
+		Ok(_) => panic!("Expected error"),
+		Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
+	}
+
+	assert!(nodes[1].node.list_recent_payments().is_empty());
+}
+
+struct EuroCurrencyConversion;
+
+impl CurrencyConversion for EuroCurrencyConversion {
+	fn conversion_range(&self, currency: CurrencyCode) -> Result<ExchangeRateBound, ()> {
+		if currency.as_str() == "EUR" {
+			let exchange_rate = ExchangeRate::new(1000);
+			let tolerance = Tolerance::BasisPoints(0);
+			ExchangeRateBound::new(exchange_rate, tolerance, tolerance)
+		} else {
+			Err(())
+		}
+	}
+}
+
+/// Ensures a payer fails before creating an invoice request if their converter cannot price the
+/// offer currency.
+#[test]
+fn fails_creating_currency_invoice_request_with_unsupported_currency() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let offer = OfferBuilder::new(nodes[0].node.get_our_node_id(), &EuroCurrencyConversion)
+		.amount(Amount::Currency {
+			iso4217_code: CurrencyCode::new(*b"EUR").unwrap(),
+			amount: 10,
+		})
+		.build().unwrap();
+
+	match nodes[1].node.pay_for_offer(&offer, None, PaymentId([1; 32]), Default::default()) {
+		Ok(_) => panic!("Expected error"),
+		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedCurrency),
+	}
+
+	assert!(nodes[1].node.list_recent_payments().is_empty());
 }
 
 /// Fails requesting a payment when the refund contains an unsupported chain.
