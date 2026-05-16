@@ -2467,7 +2467,7 @@ fn fails_paying_invoice_with_unknown_required_features() {
 
 	let invoice = match verified_invoice_request {
 		InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-			request.respond_using_derived_keys_no_std(payment_paths, payment_hash, created_at).unwrap()
+			request.respond_using_derived_keys_no_std(invoice.amount_msats(), payment_paths, payment_hash, created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
@@ -3023,7 +3023,7 @@ fn pay_for_bolt12_invoice_error_cases() {
 
 	let unknown_features_invoice = match verified_invoice_request {
 		InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
-			request.respond_using_derived_keys_no_std(invoice.payment_paths().to_vec(), invoice.payment_hash(), created_at).unwrap()
+			request.respond_using_derived_keys_no_std(invoice.amount_msats(), invoice.payment_paths().to_vec(), invoice.payment_hash(), created_at).unwrap()
 				.features_unchecked(Bolt12InvoiceFeatures::unknown())
 				.build_and_sign(&secp_ctx).unwrap()
 		},
