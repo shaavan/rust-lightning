@@ -1603,14 +1603,18 @@ impl Readable for InvoiceRequestFields {
 mod tests {
 	use super::{
 		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestFields,
-		InvoiceRequestTlvStreamRef, UnsignedInvoiceRequest, EXPERIMENTAL_INVOICE_REQUEST_TYPES,
-		INVOICE_REQUEST_TYPES, PAYER_NOTE_LIMIT, SIGNATURE_TAG,
+		InvoiceRequestTlvStreamRef, InvoiceRequestVerifiedFromOffer, UnsignedInvoiceRequest,
+		EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_TYPES, PAYER_NOTE_LIMIT, SIGNATURE_TAG,
 	};
 
+	use crate::blinded_path::message::BlindedMessagePath;
+	use crate::blinded_path::BlindedHop;
 	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::inbound_payment::ExpandedKey;
 	use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-	use crate::offers::currency::NullCurrencyConversion;
+	use crate::offers::currency::{
+		CurrencyConversion, ExchangeRate, ExchangeRateBound, NullCurrencyConversion, Tolerance,
+	};
 	use crate::offers::invoice::{Bolt12Invoice, SIGNATURE_TAG as INVOICE_SIGNATURE_TAG};
 	use crate::offers::invoice_request::string_truncate_safe;
 	use crate::offers::merkle::{self, SignatureTlvStreamRef, TaggedHash, TlvStream};
@@ -1628,6 +1632,7 @@ mod tests {
 	use crate::types::features::{InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::{PrintableString, UntrustedString};
 	use crate::util::ser::{BigSize, Readable, Writeable};
+	use crate::util::test_utils::TestCurrencyConversion;
 	use bitcoin::constants::ChainHash;
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{self, Keypair, Secp256k1, SecretKey};
@@ -2390,6 +2395,143 @@ mod tests {
 			Ok(_) => panic!("expected error"),
 			Err(e) => assert_eq!(e, Bolt12SemanticError::UnknownRequiredFeatures),
 		}
+	}
+
+	/// Uses tolerances around the reference rate so tests can distinguish the amount selected for an
+	/// invoice from the bounds used to validate an explicitly requested amount.
+	struct TolerantCurrencyConversion {}
+
+	impl CurrencyConversion for TolerantCurrencyConversion {
+		fn conversion_range(&self, currency: CurrencyCode) -> Result<ExchangeRateBound, ()> {
+			if currency.as_str() != "USD" {
+				return Err(());
+			}
+
+			ExchangeRateBound::new(
+				ExchangeRate::new(1000),
+				Tolerance::BasisPoints(1000),
+				Tolerance::BasisPoints(1000),
+			)
+		}
+	}
+
+	/// Ensures that without an explicitly requested amount, the payee sets the invoice amount using
+	/// the fiat-to-msat conversion at the reference rate.
+	#[test]
+	fn responds_to_invoice_request_using_reference_rate() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = TolerantCurrencyConversion {};
+
+		let invoice = OfferBuilder::new(recipient_pubkey(), &converter)
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(&converter, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		assert_eq!(invoice.amount_msats(), 10_000);
+		assert_eq!(invoice.verify_using_metadata(&expanded_key, &secp_ctx), Ok(payment_id),);
+	}
+
+	#[test]
+	fn fails_responding_to_invoice_request_with_insufficient_amount_for_currency_offer() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = TestCurrencyConversion {};
+
+		match OfferBuilder::new(recipient_pubkey(), &converter)
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.amount_msats(9_999)
+			.unwrap()
+			.build_and_sign()
+			.unwrap()
+			.respond_with_no_std(&converter, payment_paths(), payment_hash(), now())
+		{
+			Ok(_) => panic!("expected error"),
+			Err(e) => assert_eq!(e, Bolt12SemanticError::InsufficientAmount),
+		}
+	}
+
+	#[test]
+	fn responds_to_invoice_request_using_derived_keys_with_currency_conversion() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let converter = TestCurrencyConversion {};
+		let blinded_path = BlindedMessagePath::from_blinded_path(
+			pubkey(40),
+			pubkey(41),
+			vec![
+				BlindedHop { blinded_node_id: pubkey(42), encrypted_payload: vec![0; 43] },
+				BlindedHop { blinded_node_id: recipient_pubkey(), encrypted_payload: vec![0; 44] },
+			],
+		);
+
+		#[cfg(c_bindings)]
+		use crate::offers::offer::OfferWithDerivedMetadataBuilder as OfferBuilder;
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			nonce,
+			&converter,
+			&secp_ctx,
+		)
+		.amount(Amount::Currency { iso4217_code: CurrencyCode::new(*b"USD").unwrap(), amount: 10 })
+		.path(blinded_path)
+		.build()
+		.unwrap();
+
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let verified_invoice_request =
+			invoice_request.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx).unwrap();
+
+		let invoice = match verified_invoice_request {
+			InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => request
+				.respond_using_derived_keys_no_std(
+					&converter,
+					payment_paths(),
+					payment_hash(),
+					now(),
+				)
+				.unwrap()
+				.build_and_sign(&secp_ctx)
+				.unwrap(),
+			InvoiceRequestVerifiedFromOffer::ExplicitKeys(_) => panic!("expected derived keys"),
+		};
+
+		assert_eq!(invoice.amount_msats(), 10_000);
+		assert_eq!(invoice.verify_using_metadata(&expanded_key, &secp_ctx), Ok(payment_id),);
 	}
 
 	#[test]
