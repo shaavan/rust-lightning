@@ -68,7 +68,7 @@ use crate::ln::channel_state::ChannelDetails;
 use crate::ln::funding::{FundingContribution, FundingTemplate};
 use crate::ln::inbound_payment;
 use crate::ln::interactivetxs::InteractiveTxMessageSend;
-use crate::ln::msgs;
+use crate::ln::msgs::{self, MAX_VALUE_MSAT};
 use crate::ln::msgs::{
 	BaseMessageHandler, ChannelMessageHandler, CommitmentUpdate, DecodeError, LightningError,
 	MessageSendEvent,
@@ -102,7 +102,7 @@ use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Offer, OfferFromHrn};
+use crate::offers::offer::{Amount, Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::Refund;
 use crate::offers::static_invoice::StaticInvoice;
@@ -14946,6 +14946,12 @@ impl<
 	/// `amount_msats` allows you to overpay what is required to satisfy the offer, or may be
 	/// required if the offer does not require a specific amount.
 	///
+	/// If the offer specifies an amount in a fiat currency, `amount_msats` is not checked
+	/// against the offer amount when building the [`InvoiceRequest`]. Instead, the payee
+	/// verifies whether the requested amount is sufficient when deciding whether to issue
+	/// a [`Bolt12Invoice`]. If `amount_msats` is omitted, the payee may determine the
+	/// final invoice amount.
+	///
 	/// If the [`Offer`] was built from a human readable name resolved using BIP 353, you *must*
 	/// instead call [`Self::pay_for_offer_from_hrn`].
 	///
@@ -15093,6 +15099,13 @@ impl<
 		let entropy = &self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
 
+		// Validate any currency-denominated offer up front so we fail immediately if we
+		// cannot convert its currency, rather than after requesting and verifying an
+		// invoice.
+		if let Some(amount) = offer.amount() {
+			amount.to_msats_range(&self.currency_conversion)?;
+		}
+
 		let builder = self.flow.create_invoice_request_builder(
 			offer, nonce, payment_id,
 		)?;
@@ -15101,6 +15114,7 @@ impl<
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
 		};
+
 		let builder = match amount_msats {
 			None => builder,
 			Some(amount_msats) => builder.amount_msats(amount_msats)?,
