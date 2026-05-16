@@ -14946,6 +14946,12 @@ impl<
 	/// `amount_msats` allows you to overpay what is required to satisfy the offer, or may be
 	/// required if the offer does not require a specific amount.
 	///
+	/// If the offer specifies an amount in a fiat currency, `amount_msats` is not checked
+	/// against the offer amount when building the [`InvoiceRequest`]. Instead, the payee
+	/// verifies whether the requested amount is sufficient when deciding whether to issue
+	/// a [`Bolt12Invoice`]. If `amount_msats` is omitted, the payee may determine the
+	/// final invoice amount.
+	///
 	/// If the [`Offer`] was built from a human readable name resolved using BIP 353, you *must*
 	/// instead call [`Self::pay_for_offer_from_hrn`].
 	///
@@ -15093,6 +15099,29 @@ impl<
 		let entropy = &self.entropy_source;
 		let nonce = Nonce::from_entropy_source(entropy);
 
+		// If the invoice request specifies an explicit amount, ensure it is at least
+		// the offer's minimum amount. For currency-denominated offers, we compare
+		// against the minimum value implied by the payer's local conversion range.
+		// This avoids sending an invoice request that the payee would inevitably
+		// reject as an underpayment.
+		if let Some(amount) = offer.amount() {
+			let (minimum_unit_msats, _maximum_unit_msats) =
+				amount.to_msats_range(&self.currency_conversion)?;
+			let minimum_msats = minimum_unit_msats
+				.checked_mul(quantity.unwrap_or(1))
+				.filter(|amount_msats| *amount_msats <= msgs::MAX_VALUE_MSAT)
+				.ok_or(Bolt12SemanticError::InvalidAmount)?;
+
+			if let Some(amount_msats) = amount_msats {
+				if amount_msats < minimum_msats {
+					return Err(Bolt12SemanticError::InsufficientAmount);
+				}
+				if amount_msats > msgs::MAX_VALUE_MSAT {
+					return Err(Bolt12SemanticError::InvalidAmount);
+				}
+			}
+		}
+
 		let builder = self.flow.create_invoice_request_builder(
 			offer, nonce, payment_id,
 		)?;
@@ -15101,6 +15130,7 @@ impl<
 			None => builder,
 			Some(quantity) => builder.quantity(quantity)?,
 		};
+
 		let builder = match amount_msats {
 			None => builder,
 			Some(amount_msats) => builder.amount_msats(amount_msats)?,
