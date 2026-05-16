@@ -211,7 +211,7 @@ pub(crate) fn invoice_with_record_above_experimental_range(chain: Network) -> Bo
 		.unwrap()
 		.build_and_sign()
 		.unwrap()
-		.respond_with_no_std(payment_paths(), payment_hash(), now())
+		.respond_with_no_std(1000, payment_paths(), payment_hash(), now())
 		.unwrap()
 		.build()
 		.unwrap()

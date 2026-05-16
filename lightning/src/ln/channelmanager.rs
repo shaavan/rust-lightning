@@ -18455,6 +18455,16 @@ impl<
 					Err(_) => return None,
 				};
 
+				let amount_msats = match invoice_request.payable_amount_msats(&self.currency_conversion) {
+					Ok(amount_msats) => amount_msats,
+					Err(error) => {
+						return Some((
+							OffersMessage::InvoiceError(InvoiceError::from(error)),
+							responder.respond(),
+						));
+					},
+				};
+
 				let get_payment_info = |amount_msats, relative_expiry| {
 					self.create_inbound_payment(
 						Some(amount_msats),
@@ -18471,6 +18481,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
@@ -18496,6 +18507,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
