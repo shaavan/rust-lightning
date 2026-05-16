@@ -15,6 +15,7 @@ use lightning::blinded_path::payment::{
 	PaymentForwardNode, PaymentRelay, ReceiveTlvs,
 };
 use lightning::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA;
+use lightning::offers::currency::NullCurrencyConversion;
 use lightning::offers::invoice::UnsignedBolt12Invoice;
 use lightning::offers::parse::Bolt12SemanticError;
 use lightning::offers::refund::Refund;
@@ -109,7 +110,7 @@ fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
 	.unwrap();
 
 	let payment_hash = PaymentHash([42; 32]);
-	refund.respond_with(vec![payment_path], payment_hash, signing_pubkey)?.build()
+	refund.respond_with(&NullCurrencyConversion, vec![payment_path], payment_hash, signing_pubkey)?.build()
 }
 
 pub fn refund_deser_test<Out: test_logger::Output>(data: &[u8], out: Out) {

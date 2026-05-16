@@ -24,6 +24,7 @@ use crate::ln::channelmanager::{
 use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
+use crate::offers::currency::NullCurrencyConversion;
 use crate::offers::invoice::{Bolt12Invoice, DerivedSigningPubkey, InvoiceBuilder};
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
@@ -1287,6 +1288,7 @@ impl OutboundPayments {
 
 					let amount_msat = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 						invreq,
+						&NullCurrencyConversion,
 					) {
 						Ok(amt) => amt,
 						Err(_) => {
@@ -3262,7 +3264,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), created_at).unwrap()
+			.respond_with_no_std(&NullCurrencyConversion, payment_paths(), payment_hash(), created_at).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3311,7 +3313,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with_no_std(&NullCurrencyConversion, payment_paths(), payment_hash(), now()).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 
@@ -3376,7 +3378,7 @@ mod tests {
 			.build().unwrap()
 			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id).unwrap()
 			.build_and_sign().unwrap()
-			.respond_with_no_std(payment_paths(), payment_hash(), now()).unwrap()
+			.respond_with_no_std(&NullCurrencyConversion, payment_paths(), payment_hash(), now()).unwrap()
 			.build().unwrap()
 			.sign(recipient_sign).unwrap();
 

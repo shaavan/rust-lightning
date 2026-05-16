@@ -16974,6 +16974,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
+							&self.currency_conversion,
 							self.list_usable_channels(),
 							get_payment_info,
 						);
@@ -16998,6 +16999,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
+							&self.currency_conversion,
 							self.list_usable_channels(),
 							get_payment_info,
 						);
