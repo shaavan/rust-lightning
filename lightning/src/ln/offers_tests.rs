@@ -62,7 +62,7 @@ use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::OfferBuilder;
+use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::payer_proof::PayerProof;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, DUMMY_HOPS_PATH_LENGTH, QR_CODED_DUMMY_HOPS_PATH_LENGTH};
@@ -2005,6 +2005,57 @@ fn fails_creating_invoice_request_for_unsupported_chain() {
 		Ok(_) => panic!("Expected error"),
 		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedChain),
 	}
+}
+
+/// Ensures a payer can create an invoice request whose explicit amount is below the
+/// minimum implied by its local currency conversion.
+#[test]
+fn sends_invoice_request_for_currency_offer_with_explicit_amount_below_local_minimum() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let offer = nodes[0].node
+		.create_offer_builder().unwrap()
+		.amount(Amount::Currency {
+			iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+			amount: 10,
+		})
+		.build().unwrap();
+
+	let payment_id = PaymentId([1; 32]);
+	nodes[1].node.pay_for_offer(&offer, Some(9_999), payment_id, Default::default()).unwrap();
+
+	expect_recent_payment!(nodes[1], RecentPaymentDetails::AwaitingInvoice, payment_id);
+}
+
+/// Ensures a payer fails before creating an invoice request if their converter cannot price the
+/// offer currency.
+#[test]
+fn fails_creating_currency_invoice_request_with_unsupported_currency() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let offer = OfferBuilder::new(nodes[0].node.get_our_node_id())
+		.amount(Amount::Currency {
+			iso4217_code: CurrencyCode::new(*b"EUR").unwrap(),
+			amount: 10,
+		})
+		.build().unwrap();
+
+	match nodes[1].node.pay_for_offer(&offer, None, PaymentId([1; 32]), Default::default()) {
+		Ok(_) => panic!("Expected error"),
+		Err(e) => assert_eq!(e, Bolt12SemanticError::UnsupportedCurrency),
+	}
+
+	assert!(nodes[1].node.list_recent_payments().is_empty());
 }
 
 /// Fails requesting a payment when the refund contains an unsupported chain.
