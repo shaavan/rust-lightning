@@ -27,6 +27,7 @@ use crate::blinded_path::payment::{
 	PaymentConstraints, PaymentContext, ReceiveTlvs,
 };
 use crate::chain::channelmonitor::LATENCY_GRACE_PERIOD_BLOCKS;
+use crate::offers::currency::CurrencyConversion;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
@@ -393,7 +394,12 @@ fn enqueue_onion_message_with_reply_paths<T: OnionMessageContents + Clone>(
 pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
-	SendInvoice(InvoiceRequestVerifiedFromOffer),
+	SendInvoice {
+		/// The verified invoice request.
+		invoice_request: InvoiceRequestVerifiedFromOffer,
+		/// The amount that should be used when responding with an invoice.
+		amount_msats: u64,
+	},
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_slot` and calling
 	/// [`OffersMessageFlow::enqueue_static_invoice`].
@@ -445,9 +451,9 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Returns an error if:
 	/// - Both [`OffersContext`] and [`InvoiceRequest`] metadata are absent or invalid.
 	/// - The verification process (via recipient context data or metadata) fails.
-	pub fn verify_invoice_request(
-		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>,
-	) -> Result<InvreqResponseInstructions, ()> {
+	pub fn verify_invoice_request<CC: CurrencyConversion>(
+		&self, invoice_request: InvoiceRequest, context: Option<OffersContext>, converter: &CC,
+	) -> Result<InvreqResponseInstructions, Bolt12SemanticError> {
 		let secp_ctx = &self.secp_ctx;
 		let expanded_key = &self.inbound_payment_key;
 
@@ -461,7 +467,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			}) => {
 				if path_absolute_expiry < self.duration_since_epoch() {
 					log_trace!(self.logger, "Static invoice request has expired");
-					return Err(());
+					return Err(Bolt12SemanticError::InvalidMetadata);
 				}
 
 				return Ok(InvreqResponseInstructions::SendStaticInvoice {
@@ -470,7 +476,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 					invoice_request,
 				});
 			},
-			_ => return Err(()),
+			_ => return Err(Bolt12SemanticError::InvalidMetadata),
 		};
 
 		let invoice_request = match nonce {
@@ -478,9 +484,11 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				invoice_request.verify_using_recipient_data(nonce, expanded_key, secp_ctx)
 			},
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
-		}?;
+		}
+		.map_err(|_| Bolt12SemanticError::InvalidMetadata)?;
 
-		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+		let amount_msats = invoice_request.inner().payable_amount_msats(converter)?;
+		Ok(InvreqResponseInstructions::SendInvoice { invoice_request, amount_msats })
 	}
 
 	/// Verifies a [`Bolt12Invoice`] using the invoice's payer metadata, returning the
@@ -968,6 +976,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// The provided `amount_msats` is used as the invoice amount. Callers should pass the amount
+	/// obtained from [`Self::verify_invoice_request`] so the invoice matches the verified
+	/// [`InvoiceRequest`].
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
@@ -975,16 +987,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, R: Router, F>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
-		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
+		amount_msats: u64, usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
-
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1006,14 +1015,21 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("time must be after unix epoch");
+
 		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_using_derived_keys_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+
+		let builder = invoice_request
+			.respond_using_derived_keys_no_std(
+				amount_msats,
+				payment_paths,
+				payment_hash,
+				created_at,
+			)
+			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
@@ -1029,6 +1045,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// The provided `amount_msats` is used as the invoice amount. Callers should pass the amount
+	/// obtained from [`Self::verify_invoice_request`] so the invoice matches the verified
+	/// [`InvoiceRequest`].
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
@@ -1036,16 +1056,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, R: Router, F>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
-		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
+		amount_msats: u64, usable_channels: Vec<ChannelDetails>, get_payment_info: F,
 		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
-
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1067,15 +1084,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
 		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_with_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
+		let created_at = std::time::SystemTime::now()
+			.duration_since(std::time::SystemTime::UNIX_EPOCH)
+			.expect("time must be after unix epoch");
 
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		#[cfg(any(not(feature = "std"), fuzzing))]
+		let created_at = Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64);
+
+		let builder = invoice_request
+			.respond_with_no_std(amount_msats, payment_paths, payment_hash, created_at)
+			.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
