@@ -94,9 +94,7 @@ use crate::ln::outbound_payment::{
 };
 use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
-use crate::offers::currency::CurrencyConversion;
-#[cfg(not(c_bindings))]
-use crate::offers::currency::NullCurrencyConversion;
+use crate::offers::currency::{CurrencyConversion, NullCurrencyConversion};
 use crate::offers::flow::{HeldHtlcReplyPath, InvreqResponseInstructions, OffersMessageFlow};
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
@@ -17913,6 +17911,16 @@ impl<
 					Err(_) => return None,
 				};
 
+				let amount_msats = match invoice_request.payable_amount_msats(&self.currency_conversion) {
+					Ok(amount_msats) => amount_msats,
+					Err(error) => {
+						return Some((
+							OffersMessage::InvoiceError(InvoiceError::from(error)),
+							responder.respond(),
+						));
+					},
+				};
+
 				let get_payment_info = |amount_msats, relative_expiry| {
 					self.create_inbound_payment(
 						Some(amount_msats),
@@ -17929,6 +17937,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_with_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
@@ -17954,6 +17963,7 @@ impl<
 						let result = self.flow.create_invoice_builder_from_invoice_request_without_keys(
 							&self.router,
 							&request,
+							amount_msats,
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,

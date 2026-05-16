@@ -16,9 +16,10 @@ use lightning::blinded_path::payment::{
 };
 use lightning::ln::channelmanager::MIN_FINAL_CLTV_EXPIRY_DELTA;
 use lightning::ln::inbound_payment::ExpandedKey;
+use lightning::offers::currency::{CurrencyConversion, ExchangeRate, ExchangeRateBound, Tolerance};
 use lightning::offers::invoice::UnsignedBolt12Invoice;
 use lightning::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields};
-use lightning::offers::offer::OfferId;
+use lightning::offers::offer::{CurrencyCode, OfferId};
 use lightning::offers::parse::Bolt12SemanticError;
 use lightning::sign::{EntropySource, ReceiveAuthKey};
 use lightning::types::features::BlindedHopFeatures;
@@ -37,7 +38,7 @@ pub fn do_test<Out: test_logger::Output>(data: &[u8], _out: Out) {
 		let keys = Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[42; 32]).unwrap());
 		let mut buffer = Vec::new();
 
-		if let Ok(unsigned_invoice) = build_response(&invoice_request, &secp_ctx) {
+		if let Ok(unsigned_invoice) = build_response(&invoice_request, &secp_ctx, data) {
 			let signing_pubkey = unsigned_invoice.signing_pubkey();
 			let (x_only_pubkey, _) = keys.x_only_public_key();
 			let odd_pubkey = x_only_pubkey.public_key(Parity::Odd);
@@ -69,6 +70,48 @@ impl EntropySource for Randomness {
 	}
 }
 
+struct FuzzCurrencyConversion<'a> {
+	data: &'a [u8],
+}
+
+impl<'a> FuzzCurrencyConversion<'a> {
+	/// Reads one fuzz byte, defaulting to zero when the input is shorter than
+	/// the fields used for conversion.
+	fn byte(&self, offset: usize) -> u8 {
+		self.data.get(offset).copied().unwrap_or(0)
+	}
+
+	/// Builds a little-endian integer from fuzz input so exchange rates and
+	/// tolerances vary with the corpus.
+	fn u64(&self, offset: usize) -> u64 {
+		let mut bytes = [0; 8];
+		for (idx, byte) in bytes.iter_mut().enumerate() {
+			*byte = self.byte(offset + idx);
+		}
+		u64::from_le_bytes(bytes)
+	}
+}
+
+impl<'a> CurrencyConversion for FuzzCurrencyConversion<'a> {
+	fn conversion_range(&self, _currency: CurrencyCode) -> Result<ExchangeRateBound, ()> {
+		let rate_msats = self.u64(0).max(1);
+		let lower_tolerance = if self.byte(8) & 1 == 0 {
+			Tolerance::BasisPoints(u16::from_le_bytes([self.byte(9), self.byte(10)]) % 10_000)
+		} else {
+			// Keep the lower bound valid often enough for the fuzzer to reach the
+			// invoice amount conversion logic instead of only testing rejection.
+			Tolerance::AbsoluteMsats(self.u64(9) % rate_msats)
+		};
+		let upper_tolerance = if self.byte(17) & 1 == 0 {
+			Tolerance::BasisPoints(u16::from_le_bytes([self.byte(18), self.byte(19)]))
+		} else {
+			Tolerance::AbsoluteMsats(self.u64(18))
+		};
+
+		ExchangeRateBound::new(ExchangeRate::new(rate_msats), lower_tolerance, upper_tolerance)
+	}
+}
+
 fn pubkey(byte: u8) -> PublicKey {
 	let secp_ctx = Secp256k1::new();
 	PublicKey::from_secret_key(&secp_ctx, &privkey(byte))
@@ -79,7 +122,7 @@ fn privkey(byte: u8) -> SecretKey {
 }
 
 fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
-	invoice_request: &InvoiceRequest, secp_ctx: &Secp256k1<T>,
+	invoice_request: &InvoiceRequest, secp_ctx: &Secp256k1<T>, data: &[u8],
 ) -> Result<UnsignedBolt12Invoice, Bolt12SemanticError> {
 	let expanded_key = ExpandedKey::new([42; 32]);
 	let entropy_source = Randomness {};
@@ -145,7 +188,9 @@ fn build_response<T: secp256k1::Signing + secp256k1::Verification>(
 	.unwrap();
 
 	let payment_hash = PaymentHash([42; 32]);
-	invoice_request.respond_with(vec![payment_path], payment_hash)?.build()
+	let converter = FuzzCurrencyConversion { data };
+	let amount_msats = invoice_request.payable_amount_msats(&converter)?;
+	invoice_request.respond_with(amount_msats, vec![payment_path], payment_hash)?.build()
 }
 
 pub fn invoice_request_deser_test<Out: test_logger::Output>(data: &[u8], out: Out) {
