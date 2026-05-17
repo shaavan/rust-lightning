@@ -1129,9 +1129,10 @@ impl OutboundPayments {
 
 	#[rustfmt::skip]
 	pub(super) fn send_payment_for_bolt12_invoice<
-		R: Router, ES: EntropySource, NS: NodeSigner, NL: NodeIdLookUp, IH, SP, L: Logger,
+		R: Router, ES: EntropySource, NS: NodeSigner, NL: NodeIdLookUp, CC: CurrencyConversion,
+		IH, SP, L: Logger,
 	>(
-		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, router: &R,
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, converter: &CC, router: &R,
 		first_hops: Vec<ChannelDetails>, features: Bolt12InvoiceFeatures, inflight_htlcs: IH,
 		entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
 		secp_ctx: &Secp256k1<secp256k1::All>, best_block_height: u32,
@@ -1142,6 +1143,18 @@ impl OutboundPayments {
 		IH: Fn() -> InFlightHtlcs,
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
+		match invoice.verify_amount_acceptable_for_payment(converter) {
+			Ok(()) => {},
+			Err(Bolt12SemanticError::UnsupportedCurrency)
+			| Err(Bolt12SemanticError::MissingAmount)
+			| Err(Bolt12SemanticError::InvalidAmount) => {
+				return Err(Bolt12PaymentError::UnverifiableAmount)
+			},
+			Err(Bolt12SemanticError::ExcessiveAmount) => {
+				return Err(Bolt12PaymentError::ExcessiveAmount)
+			},
+			_ => return Err(Bolt12PaymentError::UnexpectedInvoice),
+		}
 
 		let (payment_hash, retry_strategy, params_config, _) = self
 			.mark_invoice_received_and_get_details(invoice, payment_id)?;
@@ -3317,7 +3330,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3382,7 +3395,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3460,7 +3473,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3480,7 +3493,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| Ok(()), &log
 			),
@@ -3491,7 +3504,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
