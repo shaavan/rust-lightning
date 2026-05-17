@@ -985,6 +985,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
+	/// - payment hash or payment secret creation fails,
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, R: Router, F>(
@@ -1053,6 +1054,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
+	/// - payment hash or payment secret creation fails,
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, R: Router, F>(

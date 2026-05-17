@@ -121,8 +121,8 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
-use crate::offers::currency::NullCurrencyConversion;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::currency::{CurrencyConversion, NullCurrencyConversion};
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
@@ -1029,6 +1029,49 @@ impl Bolt12Invoice {
 			},
 		};
 		self.contents.verify(&self.bytes, metadata, key, iv_bytes, secp_ctx)
+	}
+
+	/// Verifies that the invoice amount is acceptable for payment relative to the
+	/// underlying offer.
+	///
+	/// For invoice requests with an explicit amount, this checks that the invoice
+	/// amount exactly matches the requested amount.
+	///
+	/// For currency-denominated offers where the invoice request does not specify
+	/// an explicit amount, this checks that the invoice amount does not exceed the
+	/// maximum payable amount derived using the provided currency conversion.
+	///
+	/// Invoices for refunds are assumed to have already been validated during
+	/// parsing.
+	pub fn verify_amount_acceptable_for_payment<CC: CurrencyConversion>(
+		&self, converter: &CC,
+	) -> Result<(), Bolt12SemanticError> {
+		if let InvoiceContents::ForOffer { invoice_request, .. } = &self.contents {
+			if let Some(requested_amount_msats) = invoice_request.amount_msats() {
+				if self.amount_msats() != requested_amount_msats {
+					return Err(Bolt12SemanticError::InvalidAmount);
+				}
+			} else {
+				let offer_amount = invoice_request
+					.inner
+					.offer
+					.amount()
+					.ok_or(Bolt12SemanticError::MissingAmount)?;
+
+				let (_minimum_unit_msats, maximum_unit_msats) =
+					offer_amount.to_msats_range(converter)?;
+
+				let maximum_msats = maximum_unit_msats
+					.saturating_mul(self.quantity().unwrap_or(1))
+					.min(MAX_VALUE_MSAT);
+
+				if self.amount_msats() > maximum_msats {
+					return Err(Bolt12SemanticError::ExcessiveAmount);
+				}
+			}
+		}
+
+		Ok(())
 	}
 
 	/// Re-derives the payer's signing keypair for payer proof creation.

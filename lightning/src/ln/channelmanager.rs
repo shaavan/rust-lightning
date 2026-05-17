@@ -6255,6 +6255,13 @@ impl<
 	///   offer, or
 	/// - the refund corresponding to the invoice has already expired.
 	///
+	/// If the invoice corresponds to a currency-denominated offer and the invoice request did not
+	/// specify an explicit amount, the invoice amount is checked against the maximum amount payable
+	/// using the configured currency conversion. [`Bolt12PaymentError::UnverifiableAmount`] is
+	/// returned if the invoice amount could not be verified against the converted offer amount, and
+	/// [`Bolt12PaymentError::ExcessiveAmount`] is returned if the invoice quotes more than the
+	/// maximum amount we are willing to pay for the offer.
+	///
 	/// To retry the payment, request another invoice using a new `payment_id`.
 	///
 	/// Attempting to pay the same invoice twice while the first payment is still pending will
@@ -6267,15 +6274,17 @@ impl<
 	#[deprecated(
 		since = "0.3.0",
 		note = "Use ChannelManager::pay_for_bolt12_invoice instead, providing a fresh payment_id \
-		        and verifying the invoice yourself."
+		        and verifying the invoice yourself with Bolt12Invoice::verify_using_metadata and \
+		        Bolt12Invoice::verify_amount_acceptable_for_payment before paying."
 	)]
 	pub fn send_payment_for_bolt12_invoice(
 		&self, invoice: &Bolt12Invoice, context: Option<&OffersContext>,
 	) -> Result<(), Bolt12PaymentError> {
-		match self.flow.verify_bolt12_invoice(invoice, context) {
-			Ok(payment_id) => self.send_payment_for_verified_bolt12_invoice(invoice, payment_id),
-			Err(()) => Err(Bolt12PaymentError::UnexpectedInvoice),
-		}
+		let payment_id = self
+			.flow
+			.verify_bolt12_invoice(invoice, context)
+			.map_err(|_| Bolt12PaymentError::UnexpectedInvoice)?;
+		self.send_payment_for_verified_bolt12_invoice(invoice, payment_id)
 	}
 
 	fn send_payment_for_verified_bolt12_invoice(
@@ -6287,6 +6296,7 @@ impl<
 		self.pending_outbound_payments.send_payment_for_bolt12_invoice(
 			invoice,
 			payment_id,
+			&self.currency_conversion,
 			&self.router,
 			self.list_usable_channels(),
 			features,
@@ -6314,6 +6324,20 @@ impl<
 	/// invoice (e.g., via [`ChannelManager::pay_for_offer`]). This method does not deduplicate by
 	/// invoice — calling it twice with different `payment_id`s for the same invoice sends two
 	/// separate payments. Callers are responsible for ensuring each invoice is paid at most once.
+	///
+	/// # Invoice amount verification
+	///
+	/// This method does not verify the invoice amount against the underlying offer or invoice
+	/// request. Before paying, callers must also call
+	/// [`Bolt12Invoice::verify_amount_acceptable_for_payment`] with their [`CurrencyConversion`]
+	/// implementation and reject the invoice if verification fails.
+	///
+	/// For currency-denominated offers whose invoice request omitted an explicit amount, this checks
+	/// that the invoice amount does not exceed the maximum payable amount derived using the currency
+	/// conversion. Verifying the payer metadata alone *does not* check whether the invoice amount is
+	/// acceptable.
+	///
+	/// # Payment parameters and results
 	///
 	/// The amount this node contributes to the payment can be set via
 	/// [`OptionalBolt12PaymentParams::amount_msats`], which defaults to the full invoice amount.
@@ -9509,6 +9533,11 @@ impl<
 									},
 								};
 
+								// Derive the expected payment amount from the invoice request at claim time,
+								// since async static-invoice payments don't have a fixed invoice-bound amount to
+								// verify against. If the expected amount cannot be determined (e.g., currency
+								// conversion is unavailable), reject the payment rather than risk accepting an
+								// underpayment.
 								match verified_invreq
 									.payable_amount_msats(&self.currency_conversion)
 								{
@@ -9517,8 +9546,6 @@ impl<
 											fail_htlc!(payment_hash);
 										}
 									},
-									// If we cannot check the offer amount, reject the payment instead of risking
-									// accepting an underpayment.
 									Err(_) => {
 										fail_htlc!(payment_hash);
 									},
@@ -15914,11 +15941,11 @@ impl<
 	/// `amount_msats` allows you to overpay what is required to satisfy the offer, or may be
 	/// required if the offer does not require a specific amount.
 	///
-	/// If the offer specifies an amount in a fiat currency, `amount_msats` is not checked
-	/// against the offer amount when building the [`InvoiceRequest`]. Instead, the payee
-	/// verifies whether the requested amount is sufficient when deciding whether to issue
-	/// a [`Bolt12Invoice`]. If `amount_msats` is omitted, the payee may determine the
-	/// final invoice amount.
+	/// If the offer specifies an amount in a fiat currency and `amount_msats` is omitted, the payee
+	/// may determine the final invoice amount. In that case, the configured
+	/// [`CurrencyConversion`] must support the offer currency so the returned invoice amount can be
+	/// evaluated. If `amount_msats` is provided, it is included in the [`InvoiceRequest`] without
+	/// checking it against the payer's local conversion range.
 	///
 	/// If the [`Offer`] was built from a human readable name resolved using BIP 353, you *must*
 	/// instead call [`Self::pay_for_offer_from_hrn`].
@@ -15946,6 +15973,9 @@ impl<
 	/// Errors if:
 	/// - a duplicate `payment_id` is provided given the caveats in the aforementioned link,
 	/// - the provided parameters are invalid for the offer,
+	/// - the offer amount cannot be converted using the configured [`CurrencyConversion`] when
+	///   conversion is required,
+	/// - `amount_msats` is less than the offer amount for a bitcoin-denominated offer,
 	/// - the offer is for an unsupported chain, or
 	/// - the parameterized [`Router`] is unable to create a blinded reply path for the invoice
 	///   request.
@@ -18405,6 +18435,13 @@ impl<
 						let err_msg = "Failed to create a blinded path back to ourselves";
 						log_trace!($logger, "{}", err_msg);
 						InvoiceError::from_string(err_msg.to_string())
+					},
+					Err(e @ (
+						Bolt12PaymentError::UnverifiableAmount
+						| Bolt12PaymentError::ExcessiveAmount
+					)) => {
+						log_trace!($logger, "Failed paying invoice: {:?}", e);
+						InvoiceError::from_string(format!("{:?}", e))
 					},
 					Err(e @ Bolt12PaymentError::InvalidAmount)
 						| Err(e @ Bolt12PaymentError::UnsupportedChain) => {
