@@ -986,9 +986,18 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// The `converter` is used to determine the payable amount. Explicit [`InvoiceRequest`]
+	/// amounts are validated against the offer's minimum payable amount, while omitted amounts are
+	/// derived from the offer amount and quantity. Currency-denominated offers require conversion
+	/// in either case.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
+	/// - the payable amount is missing, invalid, or exceeds supported payment bounds,
+	/// - the offer amount cannot be converted using the provided [`CurrencyConversion`],
+	/// - an explicit amount is less than the offer's minimum payable amount,
+	/// - payment hash or payment secret creation fails,
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_with_keys<
@@ -1061,9 +1070,18 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// The `converter` is used to determine the payable amount. Explicit [`InvoiceRequest`]
+	/// amounts are validated against the offer's minimum payable amount, while omitted amounts are
+	/// derived from the offer amount and quantity. Currency-denominated offers require conversion
+	/// in either case.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
+	/// - the payable amount is missing, invalid, or exceeds supported payment bounds,
+	/// - the offer amount cannot be converted using the provided [`CurrencyConversion`],
+	/// - an explicit amount is less than the offer's minimum payable amount,
+	/// - payment hash or payment secret creation fails,
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	pub fn create_invoice_builder_from_invoice_request_without_keys<
