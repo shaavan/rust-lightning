@@ -656,6 +656,20 @@ pub enum Bolt12PaymentError {
 	UnexpectedInvoice,
 	/// Payment for an invoice with the corresponding [`PaymentId`] was already initiated.
 	DuplicateInvoice,
+	/// The invoice was valid for the corresponding [`PaymentId`], but its amount
+	/// could not be verified.
+	///
+	/// This occurs for currency-denominated offers without an explicitly requested
+	/// amount when the offer amount could not be converted to msats because the
+	/// currency was unsupported or the converted amount exceeded supported bounds.
+	UnverifiableAmount,
+	/// The invoice was valid for the corresponding [`PaymentId`], but its amount
+	/// exceeded the maximum acceptable amount derived from the underlying offer.
+	///
+	/// This occurs for currency-denominated offers without an explicitly requested
+	/// amount when the invoice amount was higher than the payer was willing to pay
+	/// after currency conversion.
+	ExcessiveAmount,
 	/// The invoice was valid for the corresponding [`PaymentId`], but required unknown features.
 	UnknownRequiredFeatures,
 	/// The invoice was valid for the corresponding [`PaymentId`], but sending the payment failed.
