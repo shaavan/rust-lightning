@@ -24,10 +24,12 @@ use crate::ln::channelmanager::{
 use crate::ln::msgs::{DecodeError, TrampolineOnionPacket};
 use crate::ln::onion_utils;
 use crate::ln::onion_utils::{DecodedOnionFailure, HTLCFailReason};
+use crate::offers::currency::CurrencyConversion;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::Amount;
+use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::routing::router::{
 	BlindedTail, InFlightHtlcs, Path, PaymentParameters, Route, RouteParameters,
@@ -691,6 +693,12 @@ pub enum Bolt12PaymentError {
 	DuplicateInvoice,
 	/// The invoice was valid for the corresponding [`PaymentId`], but required unknown features.
 	UnknownRequiredFeatures,
+	/// The invoice was valid for the corresponding [`PaymentId`], but the amount could not be
+	/// verified.
+	UnverifiableAmount,
+	/// The invoice was valid for the corresponding [`PaymentId`], but the amount exceeded what we
+	/// are willing to pay.
+	ExcessiveAmount,
 	/// Incorrect amount was provided to [`ChannelManager::pay_for_bolt12_invoice`].
 	///
 	/// This occurs when `amount_msats` is zero, exceeds the invoice amount, or is below the
@@ -1147,9 +1155,10 @@ impl OutboundPayments {
 
 	#[rustfmt::skip]
 	pub(super) fn send_payment_for_bolt12_invoice<
-		R: Router, ES: EntropySource, NS: NodeSigner, NL: NodeIdLookUp, IH, SP, L: Logger,
+		R: Router, ES: EntropySource, NS: NodeSigner, NL: NodeIdLookUp, CC: CurrencyConversion,
+		IH, SP, L: Logger,
 	>(
-		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, router: &R,
+		&self, invoice: &Bolt12Invoice, payment_id: PaymentId, converter: &CC, router: &R,
 		first_hops: Vec<ChannelDetails>, features: Bolt12InvoiceFeatures, inflight_htlcs: IH,
 		entropy_source: &ES, node_signer: &NS, node_id_lookup: &NL,
 		secp_ctx: &Secp256k1<secp256k1::All>, best_block_height: u32,
@@ -1160,9 +1169,39 @@ impl OutboundPayments {
 		IH: Fn() -> InFlightHtlcs,
 		SP: Fn(SendAlongPathArgs) -> Result<(), APIError>,
 	{
-
+		// First associate the invoice with its pending payment, then validate its amount.
+		// This lets us abandon the correct payment if validation fails, rather than leaving
+		// it stuck waiting for another invoice that is not expected to arrive.
 		let (payment_hash, retry_strategy, params_config, _) = self
 			.mark_invoice_received_and_get_details(invoice, payment_id)?;
+
+		match invoice.verify_amount_acceptable_for_payment(converter) {
+			Ok(()) => {},
+			Err(Bolt12SemanticError::UnsupportedCurrency)
+			| Err(Bolt12SemanticError::MissingAmount)
+			| Err(Bolt12SemanticError::InvalidAmount) => {
+				self.abandon_payment(
+					payment_id, PaymentFailureReason::UnexpectedError, pending_events,
+				);
+				return Err(Bolt12PaymentError::UnverifiableAmount);
+			},
+			Err(Bolt12SemanticError::ExcessiveAmount) => {
+				self.abandon_payment(
+					payment_id, PaymentFailureReason::UnexpectedError, pending_events,
+				);
+				return Err(Bolt12PaymentError::ExcessiveAmount);
+			},
+			_ => {
+				debug_assert!(
+					false,
+					"Invoice amount verification returned an error unrelated to amount validation"
+				);
+				self.abandon_payment(
+					payment_id, PaymentFailureReason::UnexpectedError, pending_events,
+				);
+				return Err(Bolt12PaymentError::UnexpectedInvoice);
+			},
+		}
 
 		if invoice.invoice_features().requires_unknown_bits_from(&features) {
 			self.abandon_payment(
@@ -1414,23 +1453,21 @@ impl OutboundPayments {
 						));
 					}
 
-					let amount_msat = match invreq.amount_msats().or_else(|| {
-						match invreq.amount() {
+					let amount_msat =
+						match invreq.amount_msats().or_else(|| match invreq.amount() {
 							Some(Amount::Bitcoin { amount_msats }) => {
 								amount_msats.checked_mul(invreq.quantity().unwrap_or(1))
 							},
 							Some(Amount::Currency { .. }) | None => None,
-						}
-					}) {
-						Some(amt) => amt,
-						None => {
-							// We check this during invoice request parsing, when constructing the invreq's
-							// contents from its TLV stream.
-							debug_assert!(false, "LDK requires an msat amount in either the invreq or the invreq's underlying offer");
-							abandon_with_entry!(entry, PaymentFailureReason::UnexpectedError);
-							return Err(Bolt12PaymentError::UnknownRequiredFeatures);
-						},
-					};
+						}) {
+							Some(amt) => amt,
+							None => {
+								// Static invoices do not include an amount, so currency-denominated offers
+								// require the invoice request to provide an explicit msat amount.
+								abandon_with_entry!(entry, PaymentFailureReason::UnexpectedError);
+								return Err(Bolt12PaymentError::UnverifiableAmount);
+							},
+						};
 					let keysend_preimage =
 						PaymentPreimage(entropy_source.get_secure_random_bytes());
 					let payment_hash =
@@ -3010,6 +3047,8 @@ mod tests {
 		RetryableSendFailure, StaleExpiration,
 	};
 	#[cfg(feature = "std")]
+	use crate::offers::currency::NullCurrencyConversion;
+	#[cfg(feature = "std")]
 	use crate::offers::invoice::DEFAULT_RELATIVE_EXPIRY;
 	use crate::offers::invoice_request::InvoiceRequest;
 	use crate::offers::nonce::Nonce;
@@ -3414,7 +3453,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3479,7 +3518,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3557,7 +3596,7 @@ mod tests {
 		assert!(!outbound_payments.has_pending_payments());
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
@@ -3577,7 +3616,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| Ok(()), &log
 			),
@@ -3588,7 +3627,7 @@ mod tests {
 
 		assert_eq!(
 			outbound_payments.send_payment_for_bolt12_invoice(
-				&invoice, payment_id, &&router, vec![], Bolt12InvoiceFeatures::empty(),
+				&invoice, payment_id, &NullCurrencyConversion, &&router, vec![], Bolt12InvoiceFeatures::empty(),
 				|| InFlightHtlcs::new(), &&keys_manager, &&keys_manager, &EmptyNodeIdLookUp {},
 				&secp_ctx, 0, &pending_events, |_| panic!(), &log
 			),
