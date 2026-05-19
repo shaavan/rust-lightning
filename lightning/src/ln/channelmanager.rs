@@ -17719,6 +17719,14 @@ impl<
 						log_trace!($logger, "{}", err_msg);
 						InvoiceError::from_string(err_msg.to_string())
 					},
+					Err(e @ (
+						Bolt12PaymentError::UnverifiableAmount
+						| Bolt12PaymentError::InsufficientAmount
+						| Bolt12PaymentError::ExcessiveAmount
+					)) => {
+						log_trace!($logger, "Failed paying invoice: {:?}", e);
+						InvoiceError::from_string(format!("{:?}", e))
+					},
 					Err(Bolt12PaymentError::UnexpectedInvoice)
 						| Err(Bolt12PaymentError::DuplicateInvoice)
 						| Ok(()) => return None,
