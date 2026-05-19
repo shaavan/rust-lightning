@@ -784,7 +784,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// [`Duration`]: core::time::Duration
 	#[cfg(feature = "std")]
 	pub fn respond_with<'a, CC: CurrencyConversion>(
-		&'a $self, converter: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+		&'a $self, converter: &CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError> {
 		let amount_msats = <$builder>::amount_msats(&$contents, converter)?;
 
@@ -821,7 +821,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
 	/// [`OfferBuilder::deriving_signing_pubkey`]: crate::offers::offer::OfferBuilder::deriving_signing_pubkey
 	pub fn respond_with_no_std<'a, CC: CurrencyConversion>(
-		&'a $self, converter: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+		&'a $self, converter: &CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError> {
 		let amount_msats = <$builder>::amount_msats(&$contents, converter)?;
@@ -848,7 +848,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	#[cfg(test)]
 	#[allow(dead_code)]
 	pub(super) fn respond_with_no_std_using_signing_pubkey<'a, CC: CurrencyConversion>(
-		&'a $self, converter: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+		&'a $self, converter: &CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration, signing_pubkey: PublicKey
 	) -> Result<$builder, Bolt12SemanticError> {
 		debug_assert!($contents.contents.inner.offer.issuer_signing_pubkey().is_none());
@@ -1029,7 +1029,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	#[cfg(feature = "std")]
 	pub fn respond_using_derived_keys<'a, CC: CurrencyConversion>(
-		&'a $self, converter: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
+		&'a $self, converter: &CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash
 	) -> Result<$builder, Bolt12SemanticError> {
 		let amount_msats = <$builder>::amount_msats(&$self.inner, converter)?;
 
@@ -1048,7 +1048,7 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn respond_using_derived_keys_no_std<'a, CC: CurrencyConversion>(
-		&'a $self, converter: &'a CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
+		&'a $self, converter: &CC, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,
 		created_at: core::time::Duration
 	) -> Result<$builder, Bolt12SemanticError> {
 		let amount_msats = <$builder>::amount_msats(&$self.inner, converter)?;
