@@ -2948,7 +2948,7 @@ mod tests {
 	use crate::offers::invoice::DEFAULT_RELATIVE_EXPIRY;
 	use crate::offers::invoice_request::InvoiceRequest;
 	use crate::offers::nonce::Nonce;
-	use crate::offers::offer::OfferBuilder;
+	use crate::offers::offer::{Amount, CurrencyCode, OfferBuilder};
 	use crate::offers::payer_proof::PaidBolt12Invoice;
 	use crate::offers::test_utils::*;
 	use crate::routing::gossip::NetworkGraph;
@@ -2963,7 +2963,7 @@ mod tests {
 	use crate::util::hash_tables::{new_hash_map, new_hash_set};
 	use crate::util::logger::WithContext;
 	use crate::util::ser::{MaybeReadable, Writeable};
-	use crate::util::test_utils;
+	use crate::util::test_utils::{self, TestCurrencyConversion};
 
 	use super::PaymentAttempts;
 
@@ -3587,6 +3587,137 @@ mod tests {
 			},
 			_ => panic!("expected a Retryable payment"),
 		}
+	}
+
+	/// Checks that invoice amount validation failures abandon the matched payment instead of leaving
+	/// it waiting for another invoice.
+	#[test]
+	fn rejects_unverifiable_and_excessive_bolt12_invoice_amounts() {
+		let logger = test_utils::TestLogger::new();
+		let logger_ref = &logger;
+		let log = WithContext::from(&logger_ref, None, None, Some(PaymentHash([0; 32])));
+		let network_graph = Arc::new(NetworkGraph::new(Network::Testnet, &logger));
+		let scorer = RwLock::new(test_utils::TestScorer::new());
+		let router = test_utils::TestRouter::new(network_graph, &logger, &scorer);
+		let secp_ctx = Secp256k1::new();
+		let keys_manager = test_utils::TestKeysInterface::new(&[0; 32], Network::Testnet);
+		let pending_events = Mutex::new(VecDeque::new());
+		let outbound_payments = OutboundPayments::new(new_hash_map());
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([0; 16]);
+		let payment_id = PaymentId([0; 32]);
+		let converter = TestCurrencyConversion {};
+		let expiration = StaleExpiration::AbsoluteTimeout(Duration::from_secs(100));
+
+		let invoice_request = OfferBuilder::new(recipient_pubkey())
+			.amount(Amount::Currency {
+				iso4217_code: CurrencyCode::new(*b"USD").unwrap(),
+				amount: 10,
+			})
+			.build()
+			.unwrap()
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let amount_msats = invoice_request.payable_amount_msats(&converter).unwrap();
+		let invoice = invoice_request
+			.respond_with_no_std(amount_msats, payment_paths(), payment_hash(), now())
+			.unwrap()
+			.amount_msats_unchecked(10_001)
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+
+		assert!(outbound_payments
+			.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				Retry::Attempts(0),
+				RouteParametersConfig::default(),
+				None,
+			)
+			.is_ok());
+		assert!(outbound_payments.has_pending_payments());
+		assert_eq!(
+			outbound_payments.send_payment_for_bolt12_invoice(
+				&invoice,
+				payment_id,
+				&NullCurrencyConversion,
+				&&router,
+				vec![],
+				Bolt12InvoiceFeatures::empty(),
+				|| InFlightHtlcs::new(),
+				&&keys_manager,
+				&&keys_manager,
+				&EmptyNodeIdLookUp {},
+				&secp_ctx,
+				0,
+				&pending_events,
+				|_| panic!(),
+				&log,
+			),
+			Err(Bolt12PaymentError::UnverifiableAmount),
+		);
+		assert!(!outbound_payments.has_pending_payments());
+		assert_eq!(
+			pending_events.lock().unwrap().pop_front(),
+			Some((
+				Event::PaymentFailed {
+					payment_id,
+					payment_hash: Some(invoice.payment_hash()),
+					reason: Some(PaymentFailureReason::UnexpectedError),
+				},
+				None
+			)),
+		);
+		assert!(pending_events.lock().unwrap().is_empty());
+
+		assert!(outbound_payments
+			.add_new_awaiting_invoice(
+				payment_id,
+				expiration,
+				Retry::Attempts(0),
+				RouteParametersConfig::default(),
+				None,
+			)
+			.is_ok());
+		assert!(outbound_payments.mark_invoice_received(&invoice, payment_id).is_ok());
+		assert!(outbound_payments.has_pending_payments());
+		assert_eq!(
+			outbound_payments.send_payment_for_bolt12_invoice(
+				&invoice,
+				payment_id,
+				&converter,
+				&&router,
+				vec![],
+				Bolt12InvoiceFeatures::empty(),
+				|| InFlightHtlcs::new(),
+				&&keys_manager,
+				&&keys_manager,
+				&EmptyNodeIdLookUp {},
+				&secp_ctx,
+				0,
+				&pending_events,
+				|_| panic!(),
+				&log,
+			),
+			Err(Bolt12PaymentError::ExcessiveAmount),
+		);
+		assert!(!outbound_payments.has_pending_payments());
+		assert_eq!(
+			pending_events.lock().unwrap().pop_front(),
+			Some((
+				Event::PaymentFailed {
+					payment_id,
+					payment_hash: Some(invoice.payment_hash()),
+					reason: Some(PaymentFailureReason::UnexpectedError),
+				},
+				None
+			)),
+		);
+		assert!(pending_events.lock().unwrap().is_empty());
 	}
 
 	#[rustfmt::skip]
