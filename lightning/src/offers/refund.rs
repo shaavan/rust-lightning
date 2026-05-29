@@ -1155,6 +1155,21 @@ mod tests {
 	}
 
 	#[test]
+	fn rejects_recurrence_in_refund() {
+		let refund =
+			RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap().build().unwrap();
+		let recurrence_period = crate::offers::offer::RecurrencePeriod::Months(1);
+
+		let mut tlv_stream = refund.as_tlv_stream();
+		tlv_stream.1.recurrence_compulsory = Some(&recurrence_period);
+
+		assert_eq!(
+			Refund::try_from(tlv_stream.to_bytes()),
+			Err(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)),
+		);
+	}
+
+	#[test]
 	fn builds_refund_with_metadata_derived() {
 		let node_id = payer_pubkey();
 		let expanded_key = ExpandedKey::new([42; 32]);
