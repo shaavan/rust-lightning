@@ -902,6 +902,12 @@ pub enum Event {
 		///
 		/// [`ChannelConfig::accept_underpaying_htlcs`]: crate::util::config::ChannelConfig::accept_underpaying_htlcs
 		amount_msat: u64,
+		/// The additional skimmed fee, in thousandths of a satoshi, that the receiver earns from
+		/// dummy hops preceding the final receipt, in addition to the `amount_msat`.
+		///
+		/// For backwards compatibility with older LDK versions where this TLV was not serialized,
+		/// this defaults to 0 when absent.
+		dummy_hop_fees_earned_msat: u64,
 		/// The value, in thousands of a satoshi, that was skimmed off of this payment as an extra fee
 		/// taken by our channel counterparty.
 		///
@@ -1891,6 +1897,7 @@ impl Writeable for Event {
 			&Event::PaymentClaimable {
 				ref payment_hash,
 				ref amount_msat,
+				dummy_hop_fees_earned_msat,
 				counterparty_skimmed_fee_msat,
 				ref purpose,
 				ref receiver_node_id,
@@ -1933,6 +1940,12 @@ impl Writeable for Event {
 						payment_preimage = Some(*preimage);
 					},
 				}
+
+				let dummy_fee_opt = match dummy_hop_fees_earned_msat {
+					0 => None,
+					amount => Some(amount),
+				};
+
 				let skimmed_fee_opt = if counterparty_skimmed_fee_msat == 0 {
 					None
 				} else {
@@ -1964,6 +1977,7 @@ impl Writeable for Event {
 					(11, payment_context, option),
 					(13, payment_id, option),
 					(15, *receiving_channel_ids, optional_vec),
+					(17, dummy_fee_opt, option),
 				});
 			},
 			&Event::PaymentSent {
@@ -2407,6 +2421,7 @@ impl MaybeReadable for Event {
 					let mut payment_preimage = None;
 					let mut payment_secret = None;
 					let mut amount_msat = 0;
+					let mut dummy_fee_opt = None;
 					let mut counterparty_skimmed_fee_msat_opt = None;
 					let mut receiver_node_id = None;
 					let mut _user_payment_id = None::<u64>; // Used in 0.0.103 and earlier, no longer written in 0.0.116+.
@@ -2432,6 +2447,7 @@ impl MaybeReadable for Event {
 						(11, payment_context, option),
 						(13, payment_id, option),
 						(15, receiving_channel_ids_opt, optional_vec),
+						(17, dummy_fee_opt, option)
 					});
 					let purpose = match payment_secret {
 						Some(secret) => {
@@ -2451,10 +2467,13 @@ impl MaybeReadable for Event {
 						})
 						.unwrap_or_default();
 
+					let dummy_hop_fees_earned_msat = dummy_fee_opt.unwrap_or(0);
+
 					Ok(Some(Event::PaymentClaimable {
 						receiver_node_id,
 						payment_hash,
 						amount_msat,
+						dummy_hop_fees_earned_msat,
 						counterparty_skimmed_fee_msat: counterparty_skimmed_fee_msat_opt
 							.unwrap_or(0),
 						purpose,

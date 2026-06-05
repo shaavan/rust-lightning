@@ -1212,6 +1212,7 @@ struct ClaimablePayment {
 	purpose: events::PaymentPurpose,
 	onion_fields: RecipientOnionFields,
 	htlcs: Vec<ClaimableHTLC>,
+	dummy_hop_fees_earned_msat: u64,
 }
 
 impl ClaimablePayment {
@@ -8283,6 +8284,7 @@ impl<
 										purpose: $purpose.clone(),
 										htlcs: Vec::new(),
 										onion_fields: onion_fields.clone(),
+										dummy_hop_fees_earned_msat: 0,
 									}
 								});
 							if $purpose != claimable_payment.purpose {
@@ -8322,6 +8324,8 @@ impl<
 									claimable_payment.htlcs.iter().map(|htlc| htlc.value).sum();
 								claimable_payment.htlcs.iter_mut()
 									.for_each(|htlc| htlc.total_value_received = Some(amount_msat));
+								let total_dummy_earned_msat: u64 = claimable_payment
+									.htlcs.iter().map(|htlc| htlc.dummy_hop_fees_earned_msat).sum();
 								let counterparty_skimmed_fee_msat = claimable_payment.htlcs.iter()
 									.map(|htlc| htlc.counterparty_skimmed_fee_msat.unwrap_or(0)).sum();
 								debug_assert!(total_intended_recvd_value.saturating_sub(amount_msat)
@@ -8334,6 +8338,7 @@ impl<
 									payment_hash,
 									purpose: $purpose,
 									amount_msat,
+									dummy_hop_fees_earned_msat: total_dummy_earned_msat,
 									counterparty_skimmed_fee_msat,
 									receiving_channel_ids: claimable_payment.receiving_channel_ids(),
 									claim_deadline: Some(earliest_expiry - HTLC_FAIL_BACK_BUFFER),
