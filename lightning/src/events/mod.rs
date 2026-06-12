@@ -909,6 +909,8 @@ pub enum Event {
 		///
 		/// [`ChannelConfig::accept_underpaying_htlcs`]: crate::util::config::ChannelConfig::accept_underpaying_htlcs
 		counterparty_skimmed_fee_msat: u64,
+		/// The value, in thousands of a satoshi, that was collected by locally-peeled dummy hops.
+		dummy_skimmed_fees_msat: u64,
 		/// Information for claiming this received payment, based on whether the purpose of the
 		/// payment is to pay an invoice or to send a spontaneous payment.
 		purpose: PaymentPurpose,
@@ -965,6 +967,8 @@ pub enum Event {
 		/// The value, in thousandths of a satoshi, that this payment is for. May be greater than the
 		/// invoice amount.
 		amount_msat: u64,
+		/// The value, in thousands of a satoshi, that was collected by locally-peeled dummy hops.
+		dummy_skimmed_fees_msat: u64,
 		/// The purpose of the claimed payment, i.e. whether the payment was for an invoice or a
 		/// spontaneous payment.
 		purpose: PaymentPurpose,
@@ -1892,6 +1896,7 @@ impl Writeable for Event {
 				ref payment_hash,
 				ref amount_msat,
 				counterparty_skimmed_fee_msat,
+				dummy_skimmed_fees_msat,
 				ref purpose,
 				ref receiver_node_id,
 				ref receiving_channel_ids,
@@ -1938,6 +1943,8 @@ impl Writeable for Event {
 				} else {
 					Some(counterparty_skimmed_fee_msat)
 				};
+				let dummy_skimmed_fees_opt =
+					if dummy_skimmed_fees_msat == 0 { None } else { Some(dummy_skimmed_fees_msat) };
 
 				let (receiving_channel_id_legacy, receiving_user_channel_id_legacy) =
 					match receiving_channel_ids.last() {
@@ -1964,6 +1971,7 @@ impl Writeable for Event {
 					(11, payment_context, option),
 					(13, payment_id, option),
 					(15, *receiving_channel_ids, optional_vec),
+					(17, dummy_skimmed_fees_opt, option),
 				});
 			},
 			&Event::PaymentSent {
@@ -2189,6 +2197,7 @@ impl Writeable for Event {
 			&Event::PaymentClaimed {
 				ref payment_hash,
 				ref amount_msat,
+				dummy_skimmed_fees_msat,
 				ref purpose,
 				ref receiver_node_id,
 				ref htlcs,
@@ -2206,6 +2215,7 @@ impl Writeable for Event {
 					(7, sender_intended_total_msat, option),
 					(9, onion_fields, option),
 					(11, payment_id, option),
+					(13, if dummy_skimmed_fees_msat == 0 { None } else { Some(dummy_skimmed_fees_msat) }, option),
 				});
 			},
 			&Event::ProbeSuccessful { ref payment_id, ref payment_hash, ref path } => {
@@ -2408,6 +2418,7 @@ impl MaybeReadable for Event {
 					let mut payment_secret = None;
 					let mut amount_msat = 0;
 					let mut counterparty_skimmed_fee_msat_opt = None;
+					let mut dummy_skimmed_fees_msat_opt = None;
 					let mut receiver_node_id = None;
 					let mut _user_payment_id = None::<u64>; // Used in 0.0.103 and earlier, no longer written in 0.0.116+.
 					let mut receiving_channel_id_legacy = None;
@@ -2432,6 +2443,7 @@ impl MaybeReadable for Event {
 						(11, payment_context, option),
 						(13, payment_id, option),
 						(15, receiving_channel_ids_opt, optional_vec),
+						(17, dummy_skimmed_fees_msat_opt, option),
 					});
 					let purpose = match payment_secret {
 						Some(secret) => {
@@ -2457,6 +2469,7 @@ impl MaybeReadable for Event {
 						amount_msat,
 						counterparty_skimmed_fee_msat: counterparty_skimmed_fee_msat_opt
 							.unwrap_or(0),
+						dummy_skimmed_fees_msat: dummy_skimmed_fees_msat_opt.unwrap_or(0),
 						purpose,
 						receiving_channel_ids,
 						claim_deadline,
@@ -2760,6 +2773,7 @@ impl MaybeReadable for Event {
 					let mut payment_hash = PaymentHash([0; 32]);
 					let mut purpose = UpgradableRequired(None);
 					let mut amount_msat = 0;
+					let mut dummy_skimmed_fees_msat = None;
 					let mut receiver_node_id = None;
 					let mut htlcs: Option<Vec<ClaimedHTLC>> = Some(vec![]);
 					let mut sender_intended_total_msat: Option<u64> = None;
@@ -2775,12 +2789,14 @@ impl MaybeReadable for Event {
 						(9, onion_fields, (option: ReadableArgs,
 							sender_intended_total_msat.unwrap_or(amount_msat))),
 						(11, payment_id, option),
+						(13, dummy_skimmed_fees_msat, option),
 					});
 					Ok(Some(Event::PaymentClaimed {
 						receiver_node_id,
 						payment_hash,
 						purpose: _init_tlv_based_struct_field!(purpose, upgradable_required),
 						amount_msat,
+						dummy_skimmed_fees_msat: dummy_skimmed_fees_msat.unwrap_or(0),
 						htlcs: htlcs.unwrap_or_default(),
 						sender_intended_total_msat,
 						onion_fields,
