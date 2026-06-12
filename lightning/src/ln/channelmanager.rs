@@ -436,6 +436,12 @@ pub struct PendingHTLCInfo {
 	pub incoming_accountable: bool,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PendingDecodeAddHTLC {
+	update_add_htlc: msgs::UpdateAddHTLC,
+	dummy_skimmed_msats: Option<u64>,
+}
+
 #[derive(Clone, Debug)] // See FundedChannel::revoke_and_ack for why, tl;dr: Rust bug
 pub(super) enum HTLCFailureMsg {
 	Relay(msgs::UpdateFailHTLC),
@@ -1534,7 +1540,7 @@ enum PostMonitorUpdateChanResume {
 		unbroadcasted_batch_funding_txid: Option<Txid>,
 		update_actions: Vec<MonitorUpdateCompletionAction>,
 		htlc_forwards: Vec<PendingAddHTLCInfo>,
-		decode_update_add_htlcs: Option<(u64, Vec<msgs::UpdateAddHTLC>)>,
+		decode_update_add_htlcs: Option<(u64, Vec<PendingDecodeAddHTLC>)>,
 		finalized_claimed_htlcs: Vec<(HTLCSource, Option<AttributionData>)>,
 		failed_htlcs: Vec<(HTLCSource, PaymentHash, HTLCFailReason)>,
 		committed_outbound_htlc_sources: Vec<(HTLCPreviousHopData, u64)>,
@@ -2808,7 +2814,7 @@ pub struct ChannelManager<
 	///
 	/// Note that no consistency guarantees are made about the existence of a channel with the
 	/// `short_channel_id` here, nor the `channel_id` in `UpdateAddHTLC`!
-	decode_update_add_htlcs: Mutex<HashMap<u64, Vec<msgs::UpdateAddHTLC>>>,
+	decode_update_add_htlcs: Mutex<HashMap<u64, Vec<PendingDecodeAddHTLC>>>,
 
 	/// The sets of payments which are claimable or currently being claimed. See
 	/// [`ClaimablePayments`]' individual field docs for more info.
@@ -5166,6 +5172,7 @@ impl<
 		&self, msg: &msgs::UpdateAddHTLC, shared_secret: [u8; 32],
 		decoded_hop: onion_utils::Hop, allow_underpay: bool,
 		next_packet_pubkey_opt: Option<Result<PublicKey, secp256k1::Error>>,
+		dummy_skimmed_msats: Option<u64>,
 	) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 		match decoded_hop {
 			onion_utils::Hop::Receive { .. } | onion_utils::Hop::BlindedReceive { .. } |
@@ -5178,7 +5185,7 @@ impl<
 				let current_height: u32 = self.best_block.read().unwrap().height;
 				create_recv_pending_htlc_info(decoded_hop, shared_secret, msg.payment_hash,
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
-					None, msg.accountable.unwrap_or(false), current_height)
+					dummy_skimmed_msats, msg.accountable.unwrap_or(false), current_height)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
@@ -7250,10 +7257,11 @@ impl<
 
 			let mut htlc_forwards = Vec::new();
 			let mut htlc_fails = Vec::new();
-			for update_add_htlc in &update_add_htlcs {
+			for pending_decode_add in &update_add_htlcs {
+				let update_add_htlc = &pending_decode_add.update_add_htlc;
 				let (next_hop, next_packet_details_opt) =
 					match decode_incoming_update_add_htlc_onion(
-						&update_add_htlc,
+						update_add_htlc,
 						&self.node_signer,
 						&self.logger,
 						&self.secp_ctx,
@@ -7278,11 +7286,28 @@ impl<
 										&self.node_signer,
 										&self.secp_ctx,
 									);
+								let skimmed_here = update_add_htlc
+									.amount_msat
+									.saturating_sub(new_update_add_htlc.amount_msat);
+								let total_dummy_skimmed_msats = pending_decode_add
+									.dummy_skimmed_msats
+									.unwrap_or(0)
+									.checked_add(skimmed_here)
+									.expect(
+										"dummy hop skim cannot overflow as it is bounded by the original HTLC amount",
+									);
 
 								dummy_update_add_htlcs
 									.entry(incoming_scid_alias)
 									.or_insert_with(Vec::new)
-									.push(new_update_add_htlc);
+									.push(PendingDecodeAddHTLC {
+										update_add_htlc: new_update_add_htlc,
+										dummy_skimmed_msats: if total_dummy_skimmed_msats == 0 {
+											None
+										} else {
+											Some(total_dummy_skimmed_msats)
+										},
+									});
 
 								continue;
 							},
@@ -7378,11 +7403,12 @@ impl<
 				}
 
 				match self.get_pending_htlc_info(
-					&update_add_htlc,
+					update_add_htlc,
 					shared_secret,
 					next_hop,
 					incoming_accept_underpaying_htlcs,
 					next_packet_details_opt.map(|d| d.next_packet_pubkey),
+					pending_decode_add.dummy_skimmed_msats,
 				) {
 					Ok(info) => {
 						let pending_add = PendingAddHTLCInfo {
@@ -10023,7 +10049,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 		&self, channel_id: ChannelId, counterparty_node_id: PublicKey, funding_txo: OutPoint,
 		user_channel_id: u128, unbroadcasted_batch_funding_txid: Option<Txid>,
 		update_actions: Vec<MonitorUpdateCompletionAction>, htlc_forwards: Vec<PendingAddHTLCInfo>,
-		decode_update_add_htlcs: Option<(u64, Vec<msgs::UpdateAddHTLC>)>,
+		decode_update_add_htlcs: Option<(u64, Vec<PendingDecodeAddHTLC>)>,
 		finalized_claimed_htlcs: Vec<(HTLCSource, Option<AttributionData>)>,
 		failed_htlcs: Vec<(HTLCSource, PaymentHash, HTLCFailReason)>,
 		committed_outbound_htlc_sources: Vec<(HTLCPreviousHopData, u64)>,
@@ -10713,7 +10739,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 		channel_ready: Option<msgs::ChannelReady>, announcement_sigs: Option<msgs::AnnouncementSignatures>,
 		tx_signatures: Option<msgs::TxSignatures>, tx_abort: Option<msgs::TxAbort>,
 		channel_ready_order: ChannelReadyOrder,
-	) -> (Vec<PendingAddHTLCInfo>, Option<(u64, Vec<msgs::UpdateAddHTLC>)>) {
+	) -> (Vec<PendingAddHTLCInfo>, Option<(u64, Vec<PendingDecodeAddHTLC>)>) {
 		let logger = WithChannelContext::from(&self.logger, &channel.context, None);
 		log_trace!(logger, "Handling channel resumption with {} RAA, {} commitment update, {} pending forwards, {} pending update_add_htlcs, {}broadcasting funding, {} channel ready, {} announcement, {} tx_signatures, {} tx_abort",
 			if raa.is_some() { "an" } else { "no" },
@@ -10745,7 +10771,16 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 		}
 		let mut decode_update_add_htlcs = None;
 		if !pending_update_adds.is_empty() {
-			decode_update_add_htlcs = Some((outbound_scid_alias, pending_update_adds));
+			decode_update_add_htlcs = Some((
+				outbound_scid_alias,
+				pending_update_adds
+					.into_iter()
+					.map(|update_add_htlc| PendingDecodeAddHTLC {
+						update_add_htlc,
+						dummy_skimmed_msats: None,
+					})
+					.collect(),
+			));
 		}
 
 		if channel.context.is_connected() {
@@ -12636,7 +12671,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 		}
 	}
 
-	fn push_decode_update_add_htlcs(&self, mut update_add_htlcs: (u64, Vec<msgs::UpdateAddHTLC>)) {
+	fn push_decode_update_add_htlcs(&self, mut update_add_htlcs: (u64, Vec<PendingDecodeAddHTLC>)) {
 		let mut decode_update_add_htlcs = self.decode_update_add_htlcs.lock().unwrap();
 		let src_outbound_scid_alias = update_add_htlcs.0;
 		match decode_update_add_htlcs.entry(src_outbound_scid_alias) {
@@ -16973,7 +17008,8 @@ impl<
 				// map's lock but before acquiring the `decode_update_add_htlcs` lock.
 				let mut decode_update_add_htlcs = self.decode_update_add_htlcs.lock().unwrap();
 				if let Some(htlcs) = decode_update_add_htlcs.get_mut(&prev_outbound_scid_alias) {
-					for update_add in htlcs.iter_mut() {
+					for pending_decode_add in htlcs.iter_mut() {
+						let update_add = &mut pending_decode_add.update_add_htlc;
 						if update_add.htlc_id == htlc_id {
 							log_trace!(
 								self.logger,
@@ -17326,6 +17362,35 @@ impl_writeable_tlv_based!(PendingHTLCInfo, {
 	(10, skimmed_fee_msat, option),
 	(11, incoming_accountable, (default_value, false)),
 });
+
+impl_writeable_tlv_based!(PendingDecodeAddHTLC, {
+	(0, update_add_htlc, required),
+	(2, dummy_skimmed_msats, option),
+});
+
+impl Writeable for Vec<PendingDecodeAddHTLC> {
+	fn write<W: Writer>(&self, writer: &mut W) -> Result<(), io::Error> {
+		(self.len() as u64).write(writer)?;
+		for pending_decode_add in self.iter() {
+			pending_decode_add.write(writer)?;
+		}
+		Ok(())
+	}
+}
+
+impl Readable for Vec<PendingDecodeAddHTLC> {
+	fn read<R: Read>(reader: &mut R) -> Result<Self, DecodeError> {
+		const MAX_ALLOC_SIZE: usize = 1024 * 64;
+		let len: u64 = Readable::read(reader)?;
+		let mut res = Vec::new();
+		res.try_reserve(cmp::min(len as usize, MAX_ALLOC_SIZE / 64))
+			.map_err(|_| DecodeError::InvalidValue)?;
+		for _ in 0..len {
+			res.push(Readable::read(reader)?);
+		}
+		Ok(res)
+	}
+}
 
 impl Writeable for HTLCFailureMsg {
 	#[rustfmt::skip]
@@ -17755,7 +17820,7 @@ impl<
 		let mut decode_update_add_htlcs_opt = None;
 		let decode_update_add_htlcs = self.decode_update_add_htlcs.lock().unwrap();
 		if !decode_update_add_htlcs.is_empty() {
-			decode_update_add_htlcs_opt = Some(decode_update_add_htlcs);
+			decode_update_add_htlcs_opt = Some(&*decode_update_add_htlcs);
 		}
 
 		let claimable_payments = self.claimable_payments.lock().unwrap();
@@ -17947,8 +18012,9 @@ impl<
 			(10, legacy_in_flight_monitor_updates, option),
 			(11, self.probing_cookie_secret, required),
 			(13, htlc_onion_fields, optional_vec),
-			(14, decode_update_add_htlcs_opt, option),
+			(14, None::<&HashMap<u64, Vec<msgs::UpdateAddHTLC>>>, option),
 			(15, self.inbound_payment_id_secret, required),
+			(16, decode_update_add_htlcs_opt, option),
 			(17, in_flight_monitor_updates, option),
 			(19, peer_storage_dir, optional_vec),
 			(21, WithoutLength(&self.flow.writeable_async_receive_offer_cache()), required),
@@ -18044,7 +18110,7 @@ pub(super) struct ChannelManagerData<SP: SignerProvider> {
 	// `Channel{Monitor}` data.
 	forward_htlcs_legacy: HashMap<u64, Vec<HTLCForwardInfo>>,
 	pending_intercepted_htlcs_legacy: HashMap<InterceptId, PendingAddHTLCInfo>,
-	decode_update_add_htlcs_legacy: HashMap<u64, Vec<msgs::UpdateAddHTLC>>,
+	decode_update_add_htlcs_legacy: HashMap<u64, Vec<PendingDecodeAddHTLC>>,
 	// The `ChannelManager` version that was written.
 	version: u8,
 }
@@ -18228,6 +18294,7 @@ impl<'a, ES: EntropySource, SP: SignerProvider, L: Logger>
 			HashMap<(PublicKey, ChannelId), Vec<ChannelMonitorUpdate>>,
 		> = None;
 		let mut inbound_payment_id_secret = None;
+		let mut decode_update_add_htlcs: Option<HashMap<u64, Vec<PendingDecodeAddHTLC>>> = None;
 		let mut peer_storage_dir: Option<Vec<(PublicKey, Vec<u8>)>> = None;
 		let mut async_receive_offer_cache: AsyncReceiveOfferCache = AsyncReceiveOfferCache::new();
 		read_tlv_fields!(reader, {
@@ -18245,6 +18312,7 @@ impl<'a, ES: EntropySource, SP: SignerProvider, L: Logger>
 			(13, amountless_claimable_htlc_onion_fields, optional_vec),
 			(14, decode_update_add_htlcs_legacy, option),
 			(15, inbound_payment_id_secret, option),
+			(16, decode_update_add_htlcs, option),
 			(17, in_flight_monitor_updates, option),
 			(19, peer_storage_dir, optional_vec),
 			(21, async_receive_offer_cache, (default_value, async_receive_offer_cache)),
@@ -18359,8 +18427,24 @@ impl<'a, ES: EntropySource, SP: SignerProvider, L: Logger>
 				.unwrap_or_else(Vec::new),
 			fake_scid_rand_bytes,
 			probing_cookie_secret,
-			decode_update_add_htlcs_legacy: decode_update_add_htlcs_legacy
-				.unwrap_or_else(new_hash_map),
+			decode_update_add_htlcs_legacy: decode_update_add_htlcs.unwrap_or_else(|| {
+				decode_update_add_htlcs_legacy
+					.unwrap_or_else(new_hash_map)
+					.into_iter()
+					.map(|(scid, htlcs)| {
+						(
+							scid,
+							htlcs
+								.into_iter()
+								.map(|update_add_htlc| PendingDecodeAddHTLC {
+									update_add_htlc,
+									dummy_skimmed_msats: None,
+								})
+								.collect(),
+						)
+					})
+					.collect()
+			}),
 			inbound_payment_id_secret,
 			in_flight_monitor_updates: in_flight_monitor_updates.unwrap_or_default(),
 			peer_storage_dir: peer_storage_dir.unwrap_or_default(),
@@ -18532,24 +18616,24 @@ impl<
 // If the HTLC corresponding to `prev_hop_data` is present in `decode_update_add_htlcs`, remove it
 // from the map as it is already being stored and processed elsewhere.
 fn dedup_decode_update_add_htlcs<L: Logger>(
-	decode_update_add_htlcs: &mut HashMap<u64, Vec<msgs::UpdateAddHTLC>>,
+	decode_update_add_htlcs: &mut HashMap<u64, Vec<PendingDecodeAddHTLC>>,
 	prev_hop_data: &HTLCPreviousHopData, removal_reason: &'static str, logger: &L,
 ) {
 	match decode_update_add_htlcs.entry(prev_hop_data.prev_outbound_scid_alias) {
 		hash_map::Entry::Occupied(mut update_add_htlcs) => {
 			update_add_htlcs.get_mut().retain(|update_add| {
-				let matches = update_add.htlc_id == prev_hop_data.htlc_id;
+				let matches = update_add.update_add_htlc.htlc_id == prev_hop_data.htlc_id;
 				if matches {
 					let logger = WithContext::from(
 						logger,
 						prev_hop_data.counterparty_node_id,
-						Some(update_add.channel_id),
-						Some(update_add.payment_hash),
+						Some(update_add.update_add_htlc.channel_id),
+						Some(update_add.update_add_htlc.payment_hash),
 					);
 					log_info!(
 						logger,
 						"Removing pending to-decode HTLC with id {}: {}",
-						update_add.htlc_id,
+						update_add.update_add_htlc.htlc_id,
 						removal_reason
 					);
 				}
@@ -18951,7 +19035,7 @@ impl<
 		}
 
 		// Post-deserialization processing
-		let mut decode_update_add_htlcs: HashMap<u64, Vec<msgs::UpdateAddHTLC>> = new_hash_map();
+		let mut decode_update_add_htlcs: HashMap<u64, Vec<PendingDecodeAddHTLC>> = new_hash_map();
 		if fake_scid_rand_bytes.is_none() {
 			fake_scid_rand_bytes = Some(args.entropy_source.get_secure_random_bytes());
 		}
@@ -19295,7 +19379,10 @@ impl<
 									decode_update_add_htlcs
 										.entry(scid_alias)
 										.or_insert_with(Vec::new)
-										.push(update_add_htlc);
+										.push(PendingDecodeAddHTLC {
+											update_add_htlc,
+											dummy_skimmed_msats: None,
+										});
 								}
 								for (payment_hash, prev_hop, next_hop) in
 									funded_chan.inbound_forwarded_htlcs()
@@ -20300,8 +20387,8 @@ fn reconcile_pending_htlcs_with_monitor(
 	forward_htlcs_legacy: &mut HashMap<u64, Vec<HTLCForwardInfo>>,
 	pending_events_read: &mut VecDeque<(Event, Option<EventCompletionAction>)>,
 	pending_intercepted_htlcs_legacy: &mut HashMap<InterceptId, PendingAddHTLCInfo>,
-	decode_update_add_htlcs: &mut HashMap<u64, Vec<msgs::UpdateAddHTLC>>,
-	decode_update_add_htlcs_legacy: &mut HashMap<u64, Vec<msgs::UpdateAddHTLC>>,
+	decode_update_add_htlcs: &mut HashMap<u64, Vec<PendingDecodeAddHTLC>>,
+	decode_update_add_htlcs_legacy: &mut HashMap<u64, Vec<PendingDecodeAddHTLC>>,
 	prev_hop_data: HTLCPreviousHopData, logger: &impl Logger, payment_hash: PaymentHash,
 	channel_id: ChannelId,
 ) {
