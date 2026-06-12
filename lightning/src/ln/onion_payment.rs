@@ -281,7 +281,8 @@ pub(super) fn create_fwd_pending_htlc_info(
 pub(super) fn create_recv_pending_htlc_info(
 	hop_data: onion_utils::Hop, shared_secret: [u8; 32], payment_hash: PaymentHash,
 	amt_msat: u64, cltv_expiry: u32, phantom_shared_secret: Option<[u8; 32]>, allow_underpay: bool,
-	counterparty_skimmed_fee_msat: Option<u64>, incoming_accountable: bool, current_height: u32
+	counterparty_skimmed_fee_msat: Option<u64>, dummy_skimmed_msats: Option<u64>,
+	incoming_accountable: bool, current_height: u32
 ) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 	let (
 		payment_data, keysend_preimage, custom_tlvs, onion_amt_msat, onion_cltv_expiry,
@@ -436,6 +437,7 @@ pub(super) fn create_recv_pending_htlc_info(
 		}
 		PendingHTLCRouting::ReceiveKeysend {
 			payment_data,
+			dummy_skimmed_msats,
 			payment_preimage,
 			payment_metadata,
 			incoming_cltv_expiry: cltv_expiry,
@@ -448,6 +450,7 @@ pub(super) fn create_recv_pending_htlc_info(
 	} else if let Some(data) = payment_data {
 		PendingHTLCRouting::Receive {
 			payment_data: data,
+			dummy_skimmed_msats,
 			payment_metadata,
 			payment_context,
 			incoming_cltv_expiry: cltv_expiry,
@@ -489,34 +492,57 @@ pub fn peel_payment_onion<NS: NodeSigner, L: Logger, T: secp256k1::Verification>
 	msg: &msgs::UpdateAddHTLC, node_signer: NS, logger: L, secp_ctx: &Secp256k1<T>,
 	cur_height: u32, allow_skimmed_fees: bool,
 ) -> Result<PendingHTLCInfo, InboundHTLCErr> {
+	peel_payment_onion_with_dummy_skim(
+		msg,
+		node_signer,
+		logger,
+		secp_ctx,
+		cur_height,
+		allow_skimmed_fees,
+		0,
+	)
+}
+
+fn peel_payment_onion_with_dummy_skim<NS: NodeSigner, L: Logger, T: secp256k1::Verification>(
+	msg: &msgs::UpdateAddHTLC, node_signer: NS, logger: L, secp_ctx: &Secp256k1<T>,
+	cur_height: u32, allow_skimmed_fees: bool, accumulated_dummy_skim_msats: u64,
+) -> Result<PendingHTLCInfo, InboundHTLCErr> {
 	let (hop, next_packet_details_opt) =
-		decode_incoming_update_add_htlc_onion(msg, &node_signer, &logger, secp_ctx
-	).map_err(|(msg, failure_reason)| {
-		let (reason, err_data) = match msg {
-			HTLCFailureMsg::Malformed(_) => (failure_reason, Vec::new()),
-			HTLCFailureMsg::Relay(r) => (LocalHTLCFailureReason::InvalidOnionPayload, r.reason),
-		};
-		let msg = "Failed to decode update add htlc onion";
-		InboundHTLCErr { msg, reason, err_data }
-	})?;
+		decode_incoming_update_add_htlc_onion(msg, &node_signer, &logger, secp_ctx).map_err(
+			|(msg, failure_reason)| {
+				let (reason, err_data) = match msg {
+					HTLCFailureMsg::Malformed(_) => (failure_reason, Vec::new()),
+					HTLCFailureMsg::Relay(r) => {
+						(LocalHTLCFailureReason::InvalidOnionPayload, r.reason)
+					},
+				};
+				let msg = "Failed to decode update add htlc onion";
+				InboundHTLCErr { msg, reason, err_data }
+			},
+		)?;
 	Ok(match hop {
-		onion_utils::Hop::Forward { shared_secret, .. } |
-		onion_utils::Hop::BlindedForward { shared_secret, .. } => {
+		onion_utils::Hop::Forward { shared_secret, .. }
+		| onion_utils::Hop::BlindedForward { shared_secret, .. } => {
 			let NextPacketDetails {
-				next_packet_pubkey, outgoing_amt_msat: _, outgoing_connector: _, outgoing_cltv_value
+				next_packet_pubkey,
+				outgoing_amt_msat: _,
+				outgoing_connector: _,
+				outgoing_cltv_value,
 			} = match next_packet_details_opt {
 				Some(next_packet_details) => next_packet_details,
 				// Forward should always include the next hop details
-				None => return Err(InboundHTLCErr {
-					msg: "Failed to decode update add htlc onion",
-					reason: LocalHTLCFailureReason::InvalidOnionPayload,
-					err_data: Vec::new(),
-				}),
+				None => {
+					return Err(InboundHTLCErr {
+						msg: "Failed to decode update add htlc onion",
+						reason: LocalHTLCFailureReason::InvalidOnionPayload,
+						err_data: Vec::new(),
+					})
+				},
 			};
 
-			if let Err(reason) = check_incoming_htlc_cltv(
-				cur_height, outgoing_cltv_value, msg.cltv_expiry,
-			) {
+			if let Err(reason) =
+				check_incoming_htlc_cltv(cur_height, outgoing_cltv_value, msg.cltv_expiry)
+			{
 				return Err(InboundHTLCErr {
 					msg: "incoming cltv check failed",
 					reason,
@@ -526,17 +552,24 @@ pub fn peel_payment_onion<NS: NodeSigner, L: Logger, T: secp256k1::Verification>
 
 			// TODO: If this is potentially a phantom payment we should decode the phantom payment
 			// onion here and check it.
-			create_fwd_pending_htlc_info(msg, hop, shared_secret.secret_bytes(), Some(next_packet_pubkey))?
+			create_fwd_pending_htlc_info(
+				msg,
+				hop,
+				shared_secret.secret_bytes(),
+				Some(next_packet_pubkey),
+			)?
 		},
 		onion_utils::Hop::Dummy { dummy_hop_data, next_hop_hmac, new_packet_bytes, .. } => {
 			let next_packet_details = match next_packet_details_opt {
 				Some(next_packet_details) => next_packet_details,
 				// Dummy Hops should always include the next hop details
-				None => return Err(InboundHTLCErr {
-					msg: "Failed to decode update add htlc onion",
-					reason: LocalHTLCFailureReason::InvalidOnionPayload,
-					err_data: Vec::new(),
-				}),
+				None => {
+					return Err(InboundHTLCErr {
+						msg: "Failed to decode update add htlc onion",
+						reason: LocalHTLCFailureReason::InvalidOnionPayload,
+						err_data: Vec::new(),
+					})
+				},
 			};
 
 			let new_update_add_htlc = onion_utils::peel_dummy_hop_update_add_htlc(
@@ -546,19 +579,47 @@ pub fn peel_payment_onion<NS: NodeSigner, L: Logger, T: secp256k1::Verification>
 				new_packet_bytes,
 				next_packet_details,
 				&node_signer,
-				secp_ctx
+				secp_ctx,
 			);
 
-			peel_payment_onion(&new_update_add_htlc, node_signer, logger, secp_ctx, cur_height, allow_skimmed_fees)?
+			let accumulated_dummy_skim_msats = accumulated_dummy_skim_msats
+				.checked_add(msg.amount_msat.saturating_sub(new_update_add_htlc.amount_msat))
+				.ok_or(InboundHTLCErr {
+					msg: "Dummy hop fee accumulation overflowed",
+					reason: LocalHTLCFailureReason::InvalidOnionBlinding,
+					err_data: vec![0; 32],
+				})?;
+
+			peel_payment_onion_with_dummy_skim(
+				&new_update_add_htlc,
+				node_signer,
+				logger,
+				secp_ctx,
+				cur_height,
+				allow_skimmed_fees,
+				accumulated_dummy_skim_msats,
+			)?
 		},
 		_ => {
 			let shared_secret = hop.shared_secret().secret_bytes();
 			create_recv_pending_htlc_info(
-				hop, shared_secret, msg.payment_hash, msg.amount_msat, msg.cltv_expiry,
-				None, allow_skimmed_fees, msg.skimmed_fee_msat,
-				msg.accountable.unwrap_or(false), cur_height,
+				hop,
+				shared_secret,
+				msg.payment_hash,
+				msg.amount_msat,
+				msg.cltv_expiry,
+				None,
+				allow_skimmed_fees,
+				msg.skimmed_fee_msat,
+				if accumulated_dummy_skim_msats == 0 {
+					None
+				} else {
+					Some(accumulated_dummy_skim_msats)
+				},
+				msg.accountable.unwrap_or(false),
+				cur_height,
 			)?
-		}
+		},
 	})
 }
 

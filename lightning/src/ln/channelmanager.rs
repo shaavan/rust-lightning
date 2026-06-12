@@ -255,6 +255,8 @@ pub enum PendingHTLCRouting {
 		/// is a payment for an invoice we generated. This proof of payment is is also used for
 		/// linking MPP parts of a larger payment.
 		payment_data: msgs::FinalOnionHopData,
+		/// The fee collected by any dummy hops peeled locally before reaching this receive payload.
+		dummy_skimmed_msats: Option<u64>,
 		/// Additional data which we (allegedly) instructed the sender to include in the onion.
 		///
 		/// For HTLCs received by LDK, this will ultimately be exposed in
@@ -296,6 +298,8 @@ pub enum PendingHTLCRouting {
 		/// This will only be filled in if receiving MPP keysend payments is enabled, and it being
 		/// present will cause deserialization to fail on versions of LDK prior to 0.0.116.
 		payment_data: Option<msgs::FinalOnionHopData>,
+		/// The fee collected by any dummy hops peeled locally before reaching this receive payload.
+		dummy_skimmed_msats: Option<u64>,
 		/// Preimage for this onion payment. This preimage is provided by the sender and will be
 		/// used to settle the spontaneous payment.
 		payment_preimage: PaymentPreimage,
@@ -5174,7 +5178,7 @@ impl<
 				let current_height: u32 = self.best_block.read().unwrap().height;
 				create_recv_pending_htlc_info(decoded_hop, shared_secret, msg.payment_hash,
 					msg.amount_msat, msg.cltv_expiry, None, allow_underpay, msg.skimmed_fee_msat,
-					msg.accountable.unwrap_or(false), current_height)
+					None, msg.accountable.unwrap_or(false), current_height)
 			},
 			onion_utils::Hop::Forward { .. } | onion_utils::Hop::BlindedForward { .. } => {
 				create_fwd_pending_htlc_info(msg, decoded_hop, shared_secret, next_packet_pubkey_opt)
@@ -7768,6 +7772,7 @@ impl<
 								Some(phantom_shared_secret),
 								false,
 								None,
+								None,
 								incoming_accountable,
 								current_height,
 							);
@@ -8147,6 +8152,7 @@ impl<
 							phantom_shared_secret,
 							trampoline_shared_secret,
 							custom_tlvs,
+							dummy_skimmed_msats: _,
 							requires_blinded_error: _,
 						} => {
 							let _legacy_hop_data = Some(payment_data.clone());
@@ -8174,6 +8180,7 @@ impl<
 							payment_metadata,
 							incoming_cltv_expiry,
 							custom_tlvs,
+							dummy_skimmed_msats: _,
 							requires_blinded_error: _,
 							has_recipient_created_payment_secret,
 							payment_context,
@@ -17286,6 +17293,7 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(7, requires_blinded_error, (default_value, false)),
 		(9, payment_context, option),
 		(11, trampoline_shared_secret, option),
+		(13, dummy_skimmed_msats, option),
 	},
 	(2, ReceiveKeysend) => {
 		(0, payment_preimage, required),
@@ -17297,6 +17305,7 @@ impl_writeable_tlv_based_enum!(PendingHTLCRouting,
 		(7, has_recipient_created_payment_secret, (default_value, false)),
 		(9, payment_context, option),
 		(11, invoice_request, option),
+		(13, dummy_skimmed_msats, option),
 	},
 	(3, TrampolineForward) => {
 		(0, incoming_shared_secret, required),
@@ -21227,7 +21236,7 @@ mod tests {
 		if let Err(crate::ln::channelmanager::InboundHTLCErr { reason, .. }) =
 			create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
 				sender_intended_amt_msat - extra_fee_msat - 1, 42, None, true, Some(extra_fee_msat),
-				false, current_height)
+				None, false, current_height)
 		{
 			assert_eq!(reason, LocalHTLCFailureReason::FinalIncorrectHTLCAmount);
 		} else { panic!(); }
@@ -21250,7 +21259,7 @@ mod tests {
 		let current_height: u32 = node[0].node.best_block.read().unwrap().height;
 		assert!(create_recv_pending_htlc_info(hop_data, [0; 32], PaymentHash([0; 32]),
 			sender_intended_amt_msat - extra_fee_msat, 42, None, true, Some(extra_fee_msat),
-			false, current_height).is_ok());
+			None, false, current_height).is_ok());
 	}
 
 	#[test]
@@ -21275,7 +21284,7 @@ mod tests {
 				custom_tlvs: Vec::new(),
 			},
 			shared_secret: SharedSecret::from_bytes([0; 32]),
-		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, false, current_height);
+		}, [0; 32], PaymentHash([0; 32]), 100, TEST_FINAL_CLTV + 1, None, true, None, None, false, current_height);
 
 		// Should not return an error as this condition:
 		// https://github.com/lightning/bolts/blob/4dcc377209509b13cf89a4b91fde7d478f5b46d8/04-onion-routing.md?plain=1#L334
