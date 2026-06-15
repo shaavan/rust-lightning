@@ -2910,17 +2910,37 @@ pub fn check_payment_claimable(
 	expected_recv_value: u64, expected_payment_preimage: Option<PaymentPreimage>,
 	expected_receiver_node_id: PublicKey,
 ) {
+	check_payment_claimable_with_dummy_fees(
+		event,
+		expected_payment_hash,
+		expected_payment_secret,
+		expected_recv_value,
+		expected_payment_preimage,
+		expected_receiver_node_id,
+		None,
+	);
+}
+
+pub fn check_payment_claimable_with_dummy_fees(
+	event: &Event, expected_payment_hash: PaymentHash, expected_payment_secret: PaymentSecret,
+	expected_recv_value: u64, expected_payment_preimage: Option<PaymentPreimage>,
+	expected_receiver_node_id: PublicKey, expected_dummy_skimmed_fees_msat: Option<u64>,
+) {
 	match event {
 		Event::PaymentClaimable {
 			ref payment_hash,
 			ref purpose,
 			amount_msat,
+			dummy_skimmed_fees_msat,
 			receiver_node_id,
 			..
 		} => {
 			assert_eq!(expected_payment_hash, *payment_hash);
 			assert_eq!(expected_recv_value, *amount_msat);
 			assert_eq!(expected_receiver_node_id, receiver_node_id.unwrap());
+			if let Some(expected_dummy_skimmed_fees_msat) = expected_dummy_skimmed_fees_msat {
+				assert_eq!(expected_dummy_skimmed_fees_msat, *dummy_skimmed_fees_msat);
+			}
 			match purpose {
 				PaymentPurpose::Bolt11InvoicePayment {
 					payment_preimage, payment_secret, ..
@@ -2955,36 +2975,69 @@ macro_rules! expect_payment_claimable {
 			$expected_payment_secret,
 			$expected_recv_value,
 			None,
-			$node.node.get_our_node_id()
+			$node.node.get_our_node_id(),
+			None
 		)
 	};
 	($node: expr, $expected_payment_hash: expr, $expected_payment_secret: expr, $expected_recv_value: expr, $expected_payment_preimage: expr, $expected_receiver_node_id: expr) => {
+		$crate::expect_payment_claimable!(
+			$node,
+			$expected_payment_hash,
+			$expected_payment_secret,
+			$expected_recv_value,
+			$expected_payment_preimage,
+			$expected_receiver_node_id,
+			None
+		)
+	};
+	($node: expr, $expected_payment_hash: expr, $expected_payment_secret: expr, $expected_recv_value: expr, $expected_payment_preimage: expr, $expected_receiver_node_id: expr, $expected_dummy_skimmed_fees_msat: expr) => {
 		let events = $node.node.get_and_clear_pending_events();
 		assert_eq!(events.len(), 1);
-		$crate::ln::functional_test_utils::check_payment_claimable(
+		$crate::ln::functional_test_utils::check_payment_claimable_with_dummy_fees(
 			&events[0],
 			$expected_payment_hash,
 			$expected_payment_secret,
 			$expected_recv_value,
 			$expected_payment_preimage,
 			$expected_receiver_node_id,
+			$expected_dummy_skimmed_fees_msat,
 		)
 	};
+}
+
+pub fn check_payment_claimed(
+	event: &Event, expected_payment_hash: PaymentHash, expected_recv_value: u64,
+	expected_dummy_skimmed_fees_msat: Option<u64>,
+) {
+	match event {
+		Event::PaymentClaimed {
+			ref payment_hash, amount_msat, dummy_skimmed_fees_msat, ..
+		} => {
+			assert_eq!(expected_payment_hash, *payment_hash);
+			assert_eq!(expected_recv_value, *amount_msat);
+			if let Some(expected_dummy_skimmed_fees_msat) = expected_dummy_skimmed_fees_msat {
+				assert_eq!(expected_dummy_skimmed_fees_msat, *dummy_skimmed_fees_msat);
+			}
+		},
+		_ => panic!("Unexpected event"),
+	}
 }
 
 #[macro_export]
 #[cfg(any(test, ldk_bench, feature = "_test_utils"))]
 macro_rules! expect_payment_claimed {
 	($node: expr, $expected_payment_hash: expr, $expected_recv_value: expr) => {
+		$crate::expect_payment_claimed!($node, $expected_payment_hash, $expected_recv_value, None)
+	};
+	($node: expr, $expected_payment_hash: expr, $expected_recv_value: expr, $expected_dummy_skimmed_fees_msat: expr) => {
 		let events = $node.node.get_and_clear_pending_events();
 		assert_eq!(events.len(), 1);
-		match events[0] {
-			$crate::events::Event::PaymentClaimed { ref payment_hash, amount_msat, .. } => {
-				assert_eq!($expected_payment_hash, *payment_hash);
-				assert_eq!($expected_recv_value, amount_msat);
-			},
-			_ => panic!("Unexpected event"),
-		}
+		$crate::ln::functional_test_utils::check_payment_claimed(
+			&events[0],
+			$expected_payment_hash,
+			$expected_recv_value,
+			$expected_dummy_skimmed_fees_msat,
+		)
 	};
 }
 
