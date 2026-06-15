@@ -404,6 +404,35 @@ impl Default for DummyTlvs {
 	}
 }
 
+impl DummyTlvs {
+	/// Constructs dummy hop TLVs using relay parameters that blend with nearby
+	/// blinded forwarding hops instead of advertising a distinct dummy-hop profile.
+	pub(crate) fn select_relay(previous_hop_relay: Option<&PaymentRelay>) -> Self {
+		let payment_relay = match previous_hop_relay {
+			Some(payment_relay)
+				if payment_relay.fee_base_msat <= 1_000
+					&& payment_relay.fee_proportional_millionths <= 1 =>
+			{
+				*payment_relay
+			},
+			Some(payment_relay) => PaymentRelay {
+				cltv_expiry_delta: payment_relay.cltv_expiry_delta,
+				fee_proportional_millionths: 1,
+				fee_base_msat: 1_000,
+			},
+			None => PaymentRelay {
+				cltv_expiry_delta: 40,
+				fee_proportional_millionths: 1,
+				fee_base_msat: 1_000,
+			},
+		};
+		let payment_constraints =
+			PaymentConstraints { max_cltv_expiry: u32::MAX, htlc_minimum_msat: 0 };
+
+		Self { payment_relay, payment_constraints }
+	}
+}
+
 /// Data to construct a [`BlindedHop`] for receiving a payment. This payload is custom to LDK and
 /// may not be valid if received by another lightning implementation.
 #[derive(Clone, Debug)]
@@ -553,8 +582,43 @@ impl TryFrom<CounterpartyForwardingInfo> for PaymentRelay {
 			145..=216 => 216,
 			_ => return Err(()),
 		};
+		let fee_proportional_millionths =
+			bucket_fee_proportional_millionths(fee_proportional_millionths).ok_or(())?;
+		let fee_base_msat = bucket_fee_base_msat(fee_base_msat).ok_or(())?;
 
 		Ok(Self { cltv_expiry_delta, fee_proportional_millionths, fee_base_msat })
+	}
+}
+
+// Avoid exposing precise relay fees in blinded path payloads by rounding up to
+// coarse buckets that still look like plausible network policy choices.
+fn bucket_fee_proportional_millionths(fee_proportional_millionths: u32) -> Option<u32> {
+	match fee_proportional_millionths {
+		0 => Some(0),
+		1 => Some(1),
+		2..=10 => Some(10),
+		11..=100 => Some(100),
+		101..=250 => Some(250),
+		251..=500 => Some(500),
+		501..=1_000 => Some(1_000),
+		1_001..=2_500 => Some(2_500),
+		2_501..=5_000 => Some(5_000),
+		5_001..=10_000 => Some(10_000),
+		_ => None,
+	}
+}
+
+// Keep dummy-hop fee selection aligned with same rounded fee buckets used for
+// real blinded forwarding hops.
+fn bucket_fee_base_msat(fee_base_msat: u32) -> Option<u32> {
+	match fee_base_msat {
+		0 => Some(0),
+		1..=500 => Some(500),
+		501..=1_000 => Some(1_000),
+		1_001..=5_000 => Some(5_000),
+		5_001..=10_000 => Some(10_000),
+		10_001..=50_000 => Some(50_000),
+		_ => None,
 	}
 }
 

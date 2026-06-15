@@ -196,8 +196,10 @@ where
 				})
 			})
 			.map(|forward_node| {
+				let dummy_tlvs =
+					[DummyTlvs::select_relay(Some(&forward_node.tlvs.payment_relay)); DEFAULT_PAYMENT_DUMMY_HOPS];
 				BlindedPaymentPath::new_with_dummy_hops(
-					&[forward_node], recipient, &[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS],
+					&[forward_node], recipient, &dummy_tlvs,
 					local_node_receive_key, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &self.entropy_source, secp_ctx
 				)
 			})
@@ -208,8 +210,9 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
+					let dummy_tlvs = [DummyTlvs::select_relay(None); DEFAULT_PAYMENT_DUMMY_HOPS];
 					BlindedPaymentPath::new_with_dummy_hops(
-						&[], recipient, &[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS],
+						&[], recipient, &dummy_tlvs,
 						local_node_receive_key, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &self.entropy_source, secp_ctx
 					).map(|path| vec![path])
 				} else {
