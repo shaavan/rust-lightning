@@ -550,6 +550,8 @@ struct ClaimableHTLC {
 	/// The total value received for a payment (sum of all MPP parts if the payment is a MPP).
 	/// Gets set to the amount reported when pushing [`Event::PaymentClaimable`].
 	total_value_received: Option<u64>,
+	/// The fee collected by locally-peeled dummy hops for this HTLC.
+	dummy_skimmed_fee_msat: Option<u64>,
 	/// The extra fee our counterparty skimmed off the top of this HTLC.
 	counterparty_skimmed_fee_msat: Option<u64>,
 }
@@ -1190,6 +1192,7 @@ pub(super) enum ChannelReadyOrder {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ClaimingPayment {
 	amount_msat: u64,
+	dummy_skimmed_fees_msat: u64,
 	payment_purpose: events::PaymentPurpose,
 	receiver_node_id: PublicKey,
 	htlcs: Vec<events::ClaimedHTLC>,
@@ -1216,6 +1219,7 @@ impl_writeable_tlv_based!(ClaimingPayment, {
 	// onion_fields was added (and always set for new payments) in 0.0.124
 	(9, onion_fields, (required: ReadableArgs, amount_msat.0.unwrap())),
 	(11, payment_id, option),
+	(13, dummy_skimmed_fees_msat, (default_value, 0u64)),
 });
 
 struct ClaimablePayment {
@@ -1373,6 +1377,11 @@ impl ClaimablePayments {
 						debug_assert!(durable_preimage_channel.is_some());
 						ClaimingPayment {
 							amount_msat: payment.htlcs.iter().map(|source| source.value).sum(),
+							dummy_skimmed_fees_msat: payment
+								.htlcs
+								.iter()
+								.map(|htlc| htlc.dummy_skimmed_fee_msat.unwrap_or(0))
+								.sum(),
 							payment_purpose: payment.purpose,
 							receiver_node_id,
 							htlcs,
@@ -8164,6 +8173,7 @@ impl<
 						cltv_expiry,
 						onion_payload,
 						payment_data,
+						dummy_skimmed_msats,
 						payment_context,
 						phantom_shared_secret,
 						mut onion_fields,
@@ -8173,13 +8183,13 @@ impl<
 					) = match routing {
 						PendingHTLCRouting::Receive {
 							payment_data,
+							dummy_skimmed_msats,
 							payment_metadata,
 							payment_context,
 							incoming_cltv_expiry,
 							phantom_shared_secret,
 							trampoline_shared_secret,
 							custom_tlvs,
-							dummy_skimmed_msats: _,
 							requires_blinded_error: _,
 						} => {
 							let _legacy_hop_data = Some(payment_data.clone());
@@ -8193,6 +8203,7 @@ impl<
 								incoming_cltv_expiry,
 								OnionPayload::Invoice { _legacy_hop_data },
 								Some(payment_data),
+								dummy_skimmed_msats,
 								payment_context,
 								phantom_shared_secret,
 								onion_fields,
@@ -8203,11 +8214,11 @@ impl<
 						},
 						PendingHTLCRouting::ReceiveKeysend {
 							payment_data,
+							dummy_skimmed_msats,
 							payment_preimage,
 							payment_metadata,
 							incoming_cltv_expiry,
 							custom_tlvs,
-							dummy_skimmed_msats: _,
 							requires_blinded_error: _,
 							has_recipient_created_payment_secret,
 							payment_context,
@@ -8228,6 +8239,7 @@ impl<
 								incoming_cltv_expiry,
 								OnionPayload::Spontaneous(payment_preimage),
 								payment_data,
+								dummy_skimmed_msats,
 								payment_context,
 								None,
 								onion_fields,
@@ -8249,6 +8261,7 @@ impl<
 						sender_intended_value: outgoing_amt_msat,
 						timer_ticks: 0,
 						total_value_received: None,
+						dummy_skimmed_fee_msat: dummy_skimmed_msats,
 						cltv_expiry,
 						onion_payload,
 						counterparty_skimmed_fee_msat: skimmed_fee_msat,
@@ -8356,6 +8369,8 @@ impl<
 									claimable_payment.htlcs.iter().map(|htlc| htlc.value).sum();
 								claimable_payment.htlcs.iter_mut()
 									.for_each(|htlc| htlc.total_value_received = Some(amount_msat));
+								let dummy_skimmed_fees_msat = claimable_payment.htlcs.iter()
+									.map(|htlc| htlc.dummy_skimmed_fee_msat.unwrap_or(0)).sum();
 								let counterparty_skimmed_fee_msat = claimable_payment.htlcs.iter()
 									.map(|htlc| htlc.counterparty_skimmed_fee_msat.unwrap_or(0)).sum();
 								debug_assert!(total_intended_recvd_value.saturating_sub(amount_msat)
@@ -8368,6 +8383,7 @@ impl<
 									payment_hash,
 									purpose: $purpose,
 									amount_msat,
+									dummy_skimmed_fees_msat,
 									counterparty_skimmed_fee_msat,
 									receiving_channel_ids: claimable_payment.receiving_channel_ids(),
 									claim_deadline: Some(earliest_expiry - HTLC_FAIL_BACK_BUFFER),
@@ -10210,6 +10226,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 						.remove(&payment_hash);
 					if let Some(ClaimingPayment {
 						amount_msat,
+						dummy_skimmed_fees_msat,
 						payment_purpose: purpose,
 						receiver_node_id,
 						htlcs,
@@ -10223,6 +10240,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 							payment_hash,
 							purpose,
 							amount_msat,
+							dummy_skimmed_fees_msat,
 							receiver_node_id: Some(receiver_node_id),
 							htlcs,
 							sender_intended_total_msat,
@@ -17485,6 +17503,7 @@ fn write_claimable_htlc<W: Writer>(
 		(6, htlc.cltv_expiry, required),
 		(8, keysend_preimage, option),
 		(10, htlc.counterparty_skimmed_fee_msat, option),
+		(12, htlc.dummy_skimmed_fee_msat, option),
 	});
 	Ok(())
 }
@@ -17502,6 +17521,7 @@ impl Readable for (ClaimableHTLC, u64) {
 			(6, cltv_expiry, required),
 			(8, keysend_preimage, option),
 			(10, counterparty_skimmed_fee_msat, option),
+			(12, dummy_skimmed_fee_msat, option),
 		});
 		let payment_data: Option<msgs::FinalOnionHopData> = payment_data_opt;
 		let value = value_ser.0.unwrap();
@@ -17522,6 +17542,7 @@ impl Readable for (ClaimableHTLC, u64) {
 			total_value_received,
 			onion_payload,
 			cltv_expiry: cltv_expiry.0.unwrap(),
+			dummy_skimmed_fee_msat,
 			counterparty_skimmed_fee_msat,
 		}, total_msat.0.expect("required field")))
 	}
@@ -20247,12 +20268,18 @@ impl<
 							payment.inbound_payment_id(&inbound_payment_id_secret.unwrap());
 						let htlcs = payment.htlcs.iter().map(events::ClaimedHTLC::from).collect();
 						let sender_intended_total_msat = payment.onion_fields.total_mpp_amount_msat;
+						let dummy_skimmed_fees_msat = payment
+							.htlcs
+							.iter()
+							.map(|htlc| htlc.dummy_skimmed_fee_msat.unwrap_or(0))
+							.sum();
 						pending_events.push_back((
 							events::Event::PaymentClaimed {
 								receiver_node_id,
 								payment_hash,
 								purpose: payment.purpose,
 								amount_msat: claimable_amt_msat,
+								dummy_skimmed_fees_msat,
 								htlcs,
 								sender_intended_total_msat: Some(sender_intended_total_msat),
 								onion_fields: Some(payment.onion_fields),
