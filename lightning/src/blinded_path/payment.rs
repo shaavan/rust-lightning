@@ -535,6 +535,63 @@ pub struct AsyncBolt12OfferContext {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Bolt12RefundContext {}
 
+fn bucket_cltv_expiry_delta(cltv_expiry_delta: u16) -> Result<u16, ()> {
+	// Avoid exposing esoteric CLTV expiry deltas.
+	match cltv_expiry_delta {
+		0..=40 => Ok(40),
+		41..=80 => Ok(80),
+		81..=144 => Ok(144),
+		145..=216 => Ok(216),
+		_ => Err(()),
+	}
+}
+
+fn bucket_fee_base_msat(fee_base_msat: u32) -> u32 {
+	// Preserve the most common base fee settings while rounding uncommon values upward to avoid
+	// underfunding blinded forwarding fees.
+	const BUCKETS: &[u32] =
+		&[0, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, u32::MAX];
+	bucket_fee(fee_base_msat, BUCKETS)
+}
+
+fn bucket_fee_proportional_millionths(fee_proportional_millionths: u32) -> u32 {
+	// Preserve the most common proportional fee settings while rounding uncommon values upward to
+	// avoid underfunding blinded forwarding fees.
+	const BUCKETS: &[u32] = &[
+		0,
+		1,
+		5,
+		10,
+		20,
+		50,
+		100,
+		200,
+		500,
+		1_000,
+		2_500,
+		5_000,
+		10_000,
+		20_000,
+		50_000,
+		100_000,
+		200_000,
+		500_000,
+		1_000_000,
+		u32::MAX,
+	];
+	bucket_fee(fee_proportional_millionths, BUCKETS)
+}
+
+fn bucket_fee(fee: u32, buckets: &[u32]) -> u32 {
+	for bucket in buckets {
+		if fee <= *bucket {
+			return *bucket;
+		}
+	}
+	debug_assert!(false, "fee buckets must include an upper bound");
+	u32::MAX
+}
+
 impl TryFrom<CounterpartyForwardingInfo> for PaymentRelay {
 	type Error = ();
 
@@ -545,14 +602,10 @@ impl TryFrom<CounterpartyForwardingInfo> for PaymentRelay {
 			cltv_expiry_delta,
 		} = info;
 
-		// Avoid exposing esoteric CLTV expiry deltas
-		let cltv_expiry_delta = match cltv_expiry_delta {
-			0..=40 => 40,
-			41..=80 => 80,
-			81..=144 => 144,
-			145..=216 => 216,
-			_ => return Err(()),
-		};
+		let cltv_expiry_delta = bucket_cltv_expiry_delta(cltv_expiry_delta)?;
+		let fee_base_msat = bucket_fee_base_msat(fee_base_msat);
+		let fee_proportional_millionths =
+			bucket_fee_proportional_millionths(fee_proportional_millionths);
 
 		Ok(Self { cltv_expiry_delta, fee_proportional_millionths, fee_base_msat })
 	}
