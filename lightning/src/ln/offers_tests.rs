@@ -200,7 +200,7 @@ fn route_bolt12_payment<'a, 'b, 'c>(
 	let payment_hash = invoice.payment_hash();
 	let args = PassAlongPathArgs::new(node, path, amount_msats, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 }
 
@@ -2481,7 +2481,7 @@ fn rejects_keysend_to_non_static_invoice_path() {
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
 		.with_payment_preimage(payment_preimage)
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash })
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 	let mut updates = get_htlc_update_msgs(&nodes[1], &nodes[0].node.get_our_node_id());
 	nodes[0].node.handle_update_fail_malformed_htlc(nodes[1].node.get_our_node_id(), &updates.update_fail_malformed_htlcs[0]);
@@ -2546,13 +2546,13 @@ fn no_double_pay_with_stale_channelmanager() {
 	let ev = remove_first_msg_event_to_node(&bob_id, &mut events);
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	let ev = remove_first_msg_event_to_node(&bob_id, &mut events);
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::Pending, payment_id);
