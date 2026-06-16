@@ -373,6 +373,14 @@ pub struct TrampolineForwardTlvs {
 	pub next_blinding_override: Option<PublicKey>,
 }
 
+/// The most common network-wide base fee, used as the fallback and upper bound for dummy hops.
+const MOST_COMMON_NETWORK_BASE_FEE_MSAT: u32 = 1_000;
+/// The most common network-wide proportional fee, used as the fallback and upper bound for dummy
+/// hops.
+const MOST_COMMON_NETWORK_PROPORTIONAL_MILLIONTHS: u32 = 1;
+/// The default dummy-hop CLTV delta when there is no nearby forwarding hop to mirror.
+const DEFAULT_DUMMY_CLTV_EXPIRY_DELTA: u16 = 40;
+
 /// TLVs carried by a dummy hop within a blinded payment path.
 ///
 /// Dummy hops do not correspond to real forwarding decisions, but are processed
@@ -392,10 +400,38 @@ pub struct DummyTlvs {
 	pub payment_constraints: PaymentConstraints,
 }
 
-impl Default for DummyTlvs {
-	fn default() -> Self {
-		let payment_relay =
-			PaymentRelay { cltv_expiry_delta: 0, fee_proportional_millionths: 0, fee_base_msat: 0 };
+impl DummyTlvs {
+	/// Constructs dummy-hop relay parameters from a nearby real forwarding hop when available.
+	///
+	/// Nearby fees are bucketed and capped at the network's most common fee settings to avoid
+	/// exposing unusually expensive hops.
+	pub(crate) fn new(nearby_forward_tlvs: Option<&ForwardTlvs>) -> Self {
+		let payment_relay = match nearby_forward_tlvs {
+			Some(forward_tlvs) => {
+				let nearby_payment_relay = forward_tlvs.payment_relay;
+				let fee_base_msat = core::cmp::min(
+					bucket_fee_base_msat(nearby_payment_relay.fee_base_msat),
+					MOST_COMMON_NETWORK_BASE_FEE_MSAT,
+				);
+				let fee_proportional_millionths = core::cmp::min(
+					bucket_fee_proportional_millionths(
+						nearby_payment_relay.fee_proportional_millionths,
+					),
+					MOST_COMMON_NETWORK_PROPORTIONAL_MILLIONTHS,
+				);
+
+				let cltv_expiry_delta =
+					bucket_cltv_expiry_delta(nearby_payment_relay.cltv_expiry_delta)
+						.unwrap_or(DEFAULT_DUMMY_CLTV_EXPIRY_DELTA);
+
+				PaymentRelay { cltv_expiry_delta, fee_proportional_millionths, fee_base_msat }
+			},
+			None => PaymentRelay {
+				cltv_expiry_delta: DEFAULT_DUMMY_CLTV_EXPIRY_DELTA,
+				fee_proportional_millionths: MOST_COMMON_NETWORK_PROPORTIONAL_MILLIONTHS,
+				fee_base_msat: MOST_COMMON_NETWORK_BASE_FEE_MSAT,
+			},
+		};
 
 		let payment_constraints =
 			PaymentConstraints { max_cltv_expiry: u32::MAX, htlc_minimum_msat: 0 };

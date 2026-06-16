@@ -983,7 +983,7 @@ fn ignore_duplicate_invoice() {
 
 	let route: &[&[&Node]] = &[&[always_online_node, async_recipient]];
 	let args = PassAlongPathArgs::new(sender, route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let (res, _) =
@@ -1063,7 +1063,7 @@ fn ignore_duplicate_invoice() {
 
 	let args = PassAlongPathArgs::new(sender, route[0], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	let payment_preimage = match get_event!(async_recipient, Event::PaymentClaimable) {
@@ -1139,7 +1139,7 @@ fn async_receive_flow_success() {
 
 	let route: &[&[&Node]] = &[&[&nodes[1], &nodes[2]]];
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let (res, _) =
@@ -1377,12 +1377,12 @@ fn async_receive_mpp() {
 
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
 		.without_claimable_event()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	let ev = remove_first_msg_event_to_node(&nodes[2].node.get_our_node_id(), &mut events);
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[1], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = match claimable_ev {
 		Event::PaymentClaimable {
@@ -1501,7 +1501,7 @@ fn amount_doesnt_match_invreq() {
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
 		.without_claimable_event()
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash })
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	// Modify the invoice request stored in our outbounds to be the correct one, to make sure the
@@ -1526,7 +1526,7 @@ fn amount_doesnt_match_invreq() {
 	check_added_monitors(&nodes[0], 1);
 	let route: &[&[&Node]] = &[&[&nodes[2], &nodes[3]]];
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage));
@@ -1718,7 +1718,7 @@ fn invalid_async_receive_with_retry<F1, F2>(
 
 	let route: &[&[&Node]] = &[&[&nodes[1], &nodes[2]]];
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	// Fail the HTLC backwards to enable us to more easily modify the now-Retryable outbound to test
@@ -1746,7 +1746,7 @@ fn invalid_async_receive_with_retry<F1, F2>(
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
 		.without_claimable_event()
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash })
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 	fail_blinded_htlc_backwards(payment_hash, 1, &[&nodes[0], &nodes[1], &nodes[2]], true);
 
@@ -1759,7 +1759,7 @@ fn invalid_async_receive_with_retry<F1, F2>(
 	check_added_monitors(&nodes[0], 1);
 	let route: &[&[&Node]] = &[&[&nodes[1], &nodes[2]]];
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	claim_payment_along_route(ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage));
@@ -1936,7 +1936,7 @@ fn expired_static_invoice_payment_path() {
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
 		.without_claimable_event()
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash })
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 	fail_blinded_htlc_backwards(payment_hash, 1, &[&nodes[0], &nodes[1], &nodes[2]], false);
 	nodes[2].logger.assert_log_contains(
@@ -2380,7 +2380,7 @@ fn refresh_static_invoices_for_used_offers() {
 
 	let route: &[&[&Node]] = &[&[server, recipient]];
 	let args = PassAlongPathArgs::new(sender, route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let res = claim_payment_along_route(ClaimAlongRouteArgs::new(sender, route, keysend_preimage));
@@ -2715,7 +2715,7 @@ fn invoice_server_is_not_channel_peer() {
 
 	let route: &[&[&Node]] = &[&[forwarding_node, recipient]];
 	let args = PassAlongPathArgs::new(sender, route[0], amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let res = claim_payment_along_route(ClaimAlongRouteArgs::new(sender, route, keysend_preimage));
@@ -2955,7 +2955,7 @@ fn async_payment_e2e() {
 
 	let path: &[&Node] = &[invoice_server, recipient];
 	let args = PassAlongPathArgs::new(sender_lsp, path, amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 
 	let route: &[&[&Node]] = &[&[sender_lsp, invoice_server, recipient]];
@@ -3192,7 +3192,7 @@ fn intercepted_hold_htlc() {
 
 	let path: &[&Node] = &[recipient];
 	let args = PassAlongPathArgs::new(lsp, path, amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 
 	let route: &[&[&Node]] = &[&[lsp, recipient]];
@@ -3296,7 +3296,7 @@ fn async_payment_mpp() {
 	let ev = remove_first_msg_event_to_node(&recipient.node.get_our_node_id(), &mut events);
 	let args = PassAlongPathArgs::new(lsp_a, expected_path, amt_msat, payment_hash, ev)
 		.without_claimable_event()
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	do_pass_along_path(args);
 
 	lsp_b.node.process_pending_htlc_forwards();
@@ -3305,7 +3305,7 @@ fn async_payment_mpp() {
 	assert_eq!(events.len(), 1);
 	let ev = remove_first_msg_event_to_node(&recipient.node.get_our_node_id(), &mut events);
 	let args = PassAlongPathArgs::new(lsp_b, expected_path, amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 
 	let keysend_preimage = match claimable_ev {
@@ -3442,7 +3442,7 @@ fn release_htlc_races_htlc_onion_decode() {
 
 	let path: &[&Node] = &[invoice_server, recipient];
 	let args = PassAlongPathArgs::new(sender_lsp, path, amt_msat, payment_hash, ev)
-		.with_dummy_tlvs(&[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 
 	let route: &[&[&Node]] = &[&[sender_lsp, invoice_server, recipient]];

@@ -219,7 +219,7 @@ fn one_hop_blinded_path_with_dummy_hops() {
 		payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {}),
 	};
 	let receive_auth_key = chanmon_cfgs[1].keys_manager.get_receive_auth_key();
-	let dummy_tlvs = [DummyTlvs::default(); 2];
+	let dummy_tlvs = [DummyTlvs::new(None); 2];
 
 	let mut secp_ctx = Secp256k1::new();
 	let blinded_path = BlindedPaymentPath::new_with_dummy_hops(
