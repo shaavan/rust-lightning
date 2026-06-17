@@ -47,7 +47,7 @@ use bitcoin::secp256k1::{PublicKey, Secp256k1};
 use core::time::Duration;
 use crate::blinded_path::IntroductionNode;
 use crate::blinded_path::message::BlindedMessagePath;
-use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, DummyTlvs, PaymentContext};
+use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, PaymentContext};
 use crate::blinded_path::message::OffersContext;
 use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, self};
@@ -64,7 +64,7 @@ use crate::offers::parse::Bolt12SemanticError;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, DUMMY_HOPS_PATH_LENGTH, QR_CODED_DUMMY_HOPS_PATH_LENGTH};
 use crate::onion_message::offers::OffersMessage;
 use crate::routing::gossip::{NodeAlias, NodeId};
-use crate::routing::router::{DEFAULT_PAYMENT_DUMMY_HOPS, PaymentParameters, RouteParameters, RouteParametersConfig};
+use crate::routing::router::{PaymentParameters, RouteParameters, RouteParametersConfig};
 use crate::sign::{NodeSigner, Recipient};
 use crate::util::ser::Writeable;
 
@@ -198,9 +198,10 @@ fn route_bolt12_payment<'a, 'b, 'c>(
 	// invoice contains the payment_hash but it was encrypted inside an onion message.
 	let amount_msats = invoice.amount_msats();
 	let payment_hash = invoice.payment_hash();
+	let dummy_tlvs = payment_path_dummy_tlvs(path);
 	let args = PassAlongPathArgs::new(node, path, amount_msats, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&dummy_tlvs);
 	do_pass_along_path(args);
 }
 
@@ -240,15 +241,18 @@ fn claim_bolt12_payment_with_extra_fees<'a, 'b, 'c>(
 	assert_eq!(context, expected_payment_context);
 
 	let expected_paths = [path];
+	let dummy_tlvs = payment_path_dummy_tlvs(path);
+	let expected_dummy_extra_fees_msat =
+		expected_dummy_hop_extra_total_fees_msat(invoice.amount_msats(), &dummy_tlvs).unwrap();
 	let mut args = ClaimAlongRouteArgs::new(
 		node,
 		&expected_paths,
 		payment_preimage,
 	);
-
-	if let Some(extra) = expected_extra_fees_msat {
-		args = args.with_expected_extra_total_fees_msat(extra);
-	}
+	args = args.with_expected_extra_fees(vec![expected_dummy_extra_fees_msat as u32]);
+	args = args.with_expected_extra_total_fees_msat(
+		expected_extra_fees_msat.unwrap_or(0) + expected_dummy_extra_fees_msat,
+	);
 
 	let (inv, _) = claim_payment_along_route(args);
 	assert_eq!(inv, Some(PaidBolt12Invoice::Bolt12Invoice(invoice.clone())));
@@ -2454,7 +2458,15 @@ fn rejects_keysend_to_non_static_invoice_path() {
 		_ => panic!()
 	};
 
-	claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
+	let route: &[&[&Node]] = &[&[&nodes[1]]];
+	let dummy_tlvs = payment_path_dummy_tlvs(route[0]);
+	let expected_extra_total_fees_msat =
+		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
+	claim_payment_along_route(
+		ClaimAlongRouteArgs::new(&nodes[0], route, payment_preimage)
+			.with_expected_forwarded_extra_fees(vec![expected_dummy_hop_forwarded_extra_fee_msat(amt_msat, &dummy_tlvs).unwrap() as u32])
+			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+	);
 	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 
 	// Time out the payment from recent payments so we can attempt to pay it again via keysend.
@@ -2481,7 +2493,7 @@ fn rejects_keysend_to_non_static_invoice_path() {
 	let args = PassAlongPathArgs::new(&nodes[0], route[0], amt_msat, payment_hash, ev)
 		.with_payment_preimage(payment_preimage)
 		.expect_failure(HTLCHandlingFailureType::Receive { payment_hash })
-		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&payment_path_dummy_tlvs(route[0]));
 	do_pass_along_path(args);
 	let mut updates = get_htlc_update_msgs(&nodes[1], &nodes[0].node.get_our_node_id());
 	nodes[0].node.handle_update_fail_malformed_htlc(nodes[1].node.get_our_node_id(), &updates.update_fail_malformed_htlcs[0]);
@@ -2546,13 +2558,13 @@ fn no_double_pay_with_stale_channelmanager() {
 	let ev = remove_first_msg_event_to_node(&bob_id, &mut events);
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&payment_path_dummy_tlvs(expected_route[0]));
 	do_pass_along_path(args);
 
 	let ev = remove_first_msg_event_to_node(&bob_id, &mut events);
 	let args = PassAlongPathArgs::new(&nodes[0], expected_route[0], amt_msat, payment_hash, ev)
 		.without_clearing_recipient_events()
-		.with_dummy_tlvs(&[DummyTlvs::new(None); DEFAULT_PAYMENT_DUMMY_HOPS]);
+		.with_dummy_tlvs(&payment_path_dummy_tlvs(expected_route[0]));
 	do_pass_along_path(args);
 
 	expect_recent_payment!(nodes[0], RecentPaymentDetails::Pending, payment_id);
