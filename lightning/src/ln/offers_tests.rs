@@ -249,7 +249,7 @@ fn claim_bolt12_payment_with_extra_fees<'a, 'b, 'c>(
 		&expected_paths,
 		payment_preimage,
 	);
-	args = args.with_expected_extra_fees(vec![expected_dummy_extra_fees_msat as u32]);
+	args = args.with_expected_extra_fees(vec![expected_extra_fees_msat.unwrap_or(0) as u32]);
 	args = args.with_expected_extra_total_fees_msat(
 		expected_extra_fees_msat.unwrap_or(0) + expected_dummy_extra_fees_msat,
 	);
@@ -2464,7 +2464,6 @@ fn rejects_keysend_to_non_static_invoice_path() {
 		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
 		ClaimAlongRouteArgs::new(&nodes[0], route, payment_preimage)
-			.with_expected_forwarded_extra_fees(vec![expected_dummy_hop_forwarded_extra_fee_msat(amt_msat, &dummy_tlvs).unwrap() as u32])
 			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
 	);
 	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
