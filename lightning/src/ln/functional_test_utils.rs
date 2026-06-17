@@ -10,7 +10,10 @@
 //! A bunch of useful utilities for building networks of nodes and exchanging messages between
 //! nodes for functional tests.
 
-use crate::blinded_path::payment::DummyTlvs;
+use crate::blinded_path::payment::{
+	amt_to_forward_msat, compute_aggregated_base_prop_fee, DummyTlvs, ForwardTlvs,
+	PaymentConstraints,
+};
 use crate::chain::channelmonitor::{ChannelMonitor, HTLC_FAIL_BACK_BUFFER};
 use crate::chain::transaction::OutPoint;
 use crate::chain::{BestBlock, ChannelMonitorUpdateStatus, Confirm, Listen, Watch};
@@ -41,6 +44,7 @@ use crate::onion_message::messenger::OnionMessenger;
 use crate::routing::gossip::{NetworkGraph, NetworkUpdate, P2PGossipSync};
 use crate::routing::router::{self, PaymentParameters, Route, RouteParameters};
 use crate::sign::{EntropySource, RandomBytes};
+use crate::types::features::BlindedHopFeatures;
 use crate::types::features::ChannelTypeFeatures;
 use crate::types::features::InitFeatures;
 use crate::types::payment::{PaymentHash, PaymentPreimage, PaymentSecret};
@@ -73,6 +77,7 @@ use crate::io;
 use crate::prelude::*;
 use crate::sync::{Arc, LockTestExt, Mutex, RwLock};
 use alloc::rc::Rc;
+use lightning_types::routing::RoutingFees;
 use core::cell::RefCell;
 use core::iter::repeat;
 use core::mem;
@@ -3614,6 +3619,99 @@ impl<'a, 'b, 'c, 'd> PassAlongPathArgs<'a, 'b, 'c, 'd> {
 	}
 }
 
+/// Computes the extra amount the sender adds to cover the dummy-hop segment.
+///
+/// This mirrors route construction, where the dummy-hop fee schedule is aggregated into a single
+/// effective fee before being applied to the receiver amount.
+pub fn expected_dummy_hop_extra_total_fees_msat(recv_value: u64, dummy_tlvs: &[DummyTlvs]) -> Option<u64> {
+	if dummy_tlvs.is_empty() {
+		return Some(0);
+	}
+	let routing_fees = dummy_tlvs.iter().map(|tlvs| RoutingFees {
+		base_msat: tlvs.payment_relay.fee_base_msat,
+		proportional_millionths: tlvs.payment_relay.fee_proportional_millionths,
+	});
+	let (aggregated_base_fee, aggregated_prop_fee) =
+		compute_aggregated_base_prop_fee(routing_fees).ok()?;
+	let extra_total_fees_msat = (aggregated_base_fee as u128)
+		.checked_add((recv_value as u128).checked_mul(aggregated_prop_fee as u128)? / 1_000_000)?;
+	u64::try_from(extra_total_fees_msat).ok()
+}
+
+/// Computes the extra fee a forwarding event records for a blinded tail with dummy hops.
+///
+/// This includes the full dummy-tail surcharge plus the first dummy hop's fee, which remains with
+/// the introduction node when the blinded path is advanced by one hop.
+pub fn expected_dummy_hop_forwarded_extra_fee_msat(recv_value: u64, dummy_tlvs: &[DummyTlvs]) -> Option<u64> {
+	let first_dummy_tlvs = match dummy_tlvs.first() {
+		Some(tlvs) => tlvs,
+		None => return Some(0),
+	};
+
+	let extra_total_fees_msat = expected_dummy_hop_extra_total_fees_msat(recv_value, dummy_tlvs)?;
+	let intro_amt_msat = recv_value.checked_add(extra_total_fees_msat)?;
+	let amt_after_first_dummy =
+		amt_to_forward_msat(intro_amt_msat, &first_dummy_tlvs.payment_relay)?;
+	let intro_dummy_fee_msat = intro_amt_msat.checked_sub(amt_after_first_dummy)?;
+
+	extra_total_fees_msat.checked_add(intro_dummy_fee_msat)
+}
+
+/// Reconstructs the dummy-hop TLVs the router uses for the blinded tail of a test path.
+///
+/// For one-hop blinded paths we fall back to the default dummy values. Otherwise we derive the
+/// dummy hop parameters from the final real forwarding hop into the recipient.
+pub fn payment_path_dummy_tlvs<'a, 'b, 'c>(path: &[&Node<'a, 'b, 'c>]) -> Vec<DummyTlvs> {
+	if path.len() < 2 {
+		return vec![DummyTlvs::new(None); router::DEFAULT_PAYMENT_DUMMY_HOPS];
+	}
+
+	let forwarding_node = path[path.len() - 2];
+	let recipient_node_id = path.last().unwrap().node.get_our_node_id();
+	let channel = forwarding_node
+		.node
+		.list_channels()
+		.into_iter()
+		.find(|details| details.counterparty.node_id == recipient_node_id)
+		.expect("expected a forwarding channel into the blinded payment recipient");
+	let payment_relay = channel
+		.counterparty
+		.forwarding_info
+		.expect("expected forwarding info for the blinded payment recipient channel")
+		.try_into()
+		.expect("expected valid forwarding info for the blinded payment recipient channel");
+	let forward_tlvs = ForwardTlvs {
+		short_channel_id: 0,
+		payment_relay,
+		payment_constraints: PaymentConstraints {
+			max_cltv_expiry: u32::MAX,
+			htlc_minimum_msat: channel.inbound_htlc_minimum_msat.unwrap_or(0),
+		},
+		features: BlindedHopFeatures::empty(),
+		next_blinding_override: None,
+	};
+
+	vec![DummyTlvs::new(Some(&forward_tlvs)); router::DEFAULT_PAYMENT_DUMMY_HOPS]
+}
+
+/// Computes the receive-side expectations after peeling locally-processed dummy hops.
+///
+/// Returns `(payment_claimable_amount_msat, dummy_skimmed_fees_msat)` by replaying the dummy-hop
+/// fee deductions with the same per-hop rounding behavior used while peeling payment onions.
+fn expected_dummy_hop_receive_outcome(recv_value: u64, dummy_tlvs: &[DummyTlvs]) -> Option<(u64, u64)> {
+	let extra_total_fees_msat = expected_dummy_hop_extra_total_fees_msat(recv_value, dummy_tlvs)?;
+	let intro_amt_msat = (recv_value as u128)
+		.checked_add(extra_total_fees_msat as u128)?;
+	let intro_amt_msat = u64::try_from(intro_amt_msat).ok()?;
+
+	let expected_recv_value = dummy_tlvs.iter().try_fold(intro_amt_msat, |amt_msat, tlvs| {
+		amt_to_forward_msat(amt_msat, &tlvs.payment_relay)
+	})?;
+	let expected_dummy_skimmed_fees_msat = intro_amt_msat.checked_sub(expected_recv_value)?;
+
+	Some((expected_recv_value, expected_dummy_skimmed_fees_msat))
+}
+
 pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> {
 	let PassAlongPathArgs {
 		origin_node,
@@ -3632,6 +3730,11 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 		expected_failure,
 		payment_claimable_cltv,
 	} = args;
+	// `expected_recv_value` may differ slightly from `recv_value` due to rounding differences between
+	// aggregate dummy-hop fee calculation and per-hop fee peeling.
+	let (expected_recv_value, expected_dummy_skimmed_fees_msat) =
+		expected_dummy_hop_receive_outcome(recv_value, &dummy_tlvs)
+			.expect("dummy hop fee calculation should not overflow");
 
 	let mut payment_event = SendEvent::from_event(ev);
 	let mut prev_node = origin_node;
@@ -3673,6 +3776,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 						ref payment_hash,
 						ref purpose,
 						amount_msat,
+						dummy_skimmed_fees_msat,
 						receiver_node_id,
 						ref receiving_channel_ids,
 						claim_deadline,
@@ -3736,7 +3840,8 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 								);
 							},
 						}
-						assert_eq!(*amount_msat, recv_value);
+						assert_eq!(*amount_msat, expected_recv_value);
+						assert_eq!(*dummy_skimmed_fees_msat, expected_dummy_skimmed_fees_msat);
 						let channels = node.node.list_channels();
 						for (chan_id, user_chan_id) in receiving_channel_ids {
 							let chan = channels
@@ -3882,6 +3987,7 @@ pub struct ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	pub origin_node: &'a Node<'b, 'c, 'd>,
 	pub expected_paths: &'a [&'a [&'a Node<'b, 'c, 'd>]],
 	pub expected_extra_fees: Vec<u32>,
+	pub expected_forwarded_extra_fees: Vec<u32>,
 	/// A one-off adjustment used only in tests to account for an existing
 	/// fee-handling trade-off in LDK.
 	///
@@ -3928,6 +4034,7 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 			origin_node,
 			expected_paths,
 			expected_extra_fees: vec![0; expected_paths.len()],
+			expected_forwarded_extra_fees: vec![0; expected_paths.len()],
 			expected_extra_total_fees_msat: 0,
 			expected_min_htlc_overpay: vec![0; expected_paths.len()],
 			skip_last: false,
@@ -3942,6 +4049,10 @@ impl<'a, 'b, 'c, 'd> ClaimAlongRouteArgs<'a, 'b, 'c, 'd> {
 	}
 	pub fn with_expected_extra_fees(mut self, extra_fees: Vec<u32>) -> Self {
 		self.expected_extra_fees = extra_fees;
+		self
+	}
+	pub fn with_expected_forwarded_extra_fees(mut self, extra_fees: Vec<u32>) -> Self {
+		self.expected_forwarded_extra_fees = extra_fees;
 		self
 	}
 	pub fn with_expected_extra_total_fees_msat(mut self, extra_total_fees: u64) -> Self {
@@ -4075,6 +4186,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 		origin_node,
 		expected_paths,
 		expected_extra_fees,
+		expected_forwarded_extra_fees,
 		expected_min_htlc_overpay,
 		skip_last,
 		payment_preimage: our_payment_preimage,
@@ -4139,7 +4251,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 
 				let mut expected_extra_fee = None;
 				if $idx == 1 {
-					fee += expected_extra_fees[i];
+					fee += expected_forwarded_extra_fees[i];
 					fee += expected_min_htlc_overpay[i];
 					expected_extra_fee = if expected_extra_fees[i] > 0 {
 						Some(expected_extra_fees[i] as u64)
