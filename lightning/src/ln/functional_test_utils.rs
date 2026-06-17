@@ -3638,25 +3638,6 @@ pub fn expected_dummy_hop_extra_total_fees_msat(recv_value: u64, dummy_tlvs: &[D
 	u64::try_from(extra_total_fees_msat).ok()
 }
 
-/// Computes the extra fee a forwarding event records for a blinded tail with dummy hops.
-///
-/// This includes the full dummy-tail surcharge plus the first dummy hop's fee, which remains with
-/// the introduction node when the blinded path is advanced by one hop.
-pub fn expected_dummy_hop_forwarded_extra_fee_msat(recv_value: u64, dummy_tlvs: &[DummyTlvs]) -> Option<u64> {
-	let first_dummy_tlvs = match dummy_tlvs.first() {
-		Some(tlvs) => tlvs,
-		None => return Some(0),
-	};
-
-	let extra_total_fees_msat = expected_dummy_hop_extra_total_fees_msat(recv_value, dummy_tlvs)?;
-	let intro_amt_msat = recv_value.checked_add(extra_total_fees_msat)?;
-	let amt_after_first_dummy =
-		amt_to_forward_msat(intro_amt_msat, &first_dummy_tlvs.payment_relay)?;
-	let intro_dummy_fee_msat = intro_amt_msat.checked_sub(amt_after_first_dummy)?;
-
-	extra_total_fees_msat.checked_add(intro_dummy_fee_msat)
-}
-
 /// Reconstructs the dummy-hop TLVs the router uses for the blinded tail of a test path.
 ///
 /// For one-hop blinded paths we fall back to the default dummy values. Otherwise we derive the
@@ -4186,7 +4167,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 		origin_node,
 		expected_paths,
 		expected_extra_fees,
-		expected_forwarded_extra_fees,
+		expected_forwarded_extra_fees: _,
 		expected_min_htlc_overpay,
 		skip_last,
 		payment_preimage: our_payment_preimage,
@@ -4251,9 +4232,9 @@ pub fn pass_claimed_payment_along_route_from_ev(
 
 				let mut expected_extra_fee = None;
 				if $idx == 1 {
-					fee += expected_forwarded_extra_fees[i];
 					fee += expected_min_htlc_overpay[i];
 					expected_extra_fee = if expected_extra_fees[i] > 0 {
+						fee += expected_extra_fees[i];
 						Some(expected_extra_fees[i] as u64)
 					} else {
 						None
