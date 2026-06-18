@@ -4165,7 +4165,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 		origin_node,
 		expected_paths,
 		expected_extra_fees,
-		expected_forwarded_extra_fees: _,
+		expected_forwarded_extra_fees,
 		expected_min_htlc_overpay,
 		skip_last,
 		payment_preimage: our_payment_preimage,
@@ -4229,6 +4229,7 @@ pub fn pass_claimed_payment_along_route_from_ev(
 				};
 
 				let mut expected_extra_fee = None;
+				fee += expected_forwarded_extra_fees[i];
 				if $idx == 1 {
 					fee += expected_min_htlc_overpay[i];
 					expected_extra_fee = if expected_extra_fees[i] > 0 {

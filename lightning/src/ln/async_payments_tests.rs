@@ -1538,8 +1538,15 @@ fn amount_doesnt_match_invreq() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
+	let first_dummy_hop_fee_msat = dummy_tlvs[0].payment_relay.fee_base_msat
+		+ (amt_msat as u32 * dummy_tlvs[0].payment_relay.fee_proportional_millionths
+			/ 1_000_000);
+	let expected_forwarded_extra_fees_msat =
+		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap() as u32
+			+ first_dummy_hop_fee_msat;
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage),
+		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage)
+			.with_expected_forwarded_extra_fees(vec![expected_forwarded_extra_fees_msat]),
 	);
 }
 
