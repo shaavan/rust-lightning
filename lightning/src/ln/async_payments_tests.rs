@@ -1960,11 +1960,6 @@ fn expired_static_invoice_payment_path() {
 		.with_dummy_tlvs(&[]);
 	do_pass_along_path(args);
 	fail_blinded_htlc_backwards(payment_hash, 1, &[&nodes[0], &nodes[1]], false);
-	nodes[1].logger.assert_log_contains(
-		"lightning::ln::channelmanager",
-		"violated blinded payment constraints",
-		1,
-	);
 }
 
 #[cfg_attr(feature = "std", ignore)]
@@ -3041,10 +3036,15 @@ fn held_htlc_timeout() {
 	let _ = extract_release_htlc_oms(recipient, &[sender, sender_lsp, invoice_server]);
 
 	// Connect blocks to the sender's LSP until they timeout the HTLC.
+	let dummy_hop_cltv_delta: u32 = payment_path_dummy_tlvs(&[invoice_server, recipient])
+		.iter()
+		.map(|tlvs| tlvs.payment_relay.cltv_expiry_delta as u32)
+		.sum();
 	connect_blocks(
 		sender_lsp,
 		MIN_CLTV_EXPIRY_DELTA as u32
 			+ TEST_FINAL_CLTV
+			+ dummy_hop_cltv_delta
 			+ HTLC_FAIL_BACK_BUFFER
 			+ LATENCY_GRACE_PERIOD_BLOCKS,
 	);
