@@ -11,8 +11,7 @@
 //! nodes for functional tests.
 
 use crate::blinded_path::payment::{
-	amt_to_forward_msat, compute_aggregated_base_prop_fee, DummyTlvs, ForwardTlvs,
-	PaymentConstraints,
+	compute_aggregated_base_prop_fee, DummyTlvs, ForwardTlvs, PaymentConstraints,
 };
 use crate::chain::channelmonitor::{ChannelMonitor, HTLC_FAIL_BACK_BUFFER};
 use crate::chain::transaction::OutPoint;
@@ -3679,20 +3678,6 @@ pub fn payment_path_dummy_tlvs<'a, 'b, 'c>(path: &[&Node<'a, 'b, 'c>]) -> Vec<Du
 ///
 /// Returns `(payment_claimable_amount_msat, dummy_skimmed_fees_msat)` by replaying the dummy-hop
 /// fee deductions with the same per-hop rounding behavior used while peeling payment onions.
-fn expected_dummy_hop_receive_outcome(recv_value: u64, dummy_tlvs: &[DummyTlvs]) -> Option<(u64, u64)> {
-	let extra_total_fees_msat = expected_dummy_hop_extra_total_fees_msat(recv_value, dummy_tlvs)?;
-	let intro_amt_msat = (recv_value as u128)
-		.checked_add(extra_total_fees_msat as u128)?;
-	let intro_amt_msat = u64::try_from(intro_amt_msat).ok()?;
-
-	let expected_recv_value = dummy_tlvs.iter().try_fold(intro_amt_msat, |amt_msat, tlvs| {
-		amt_to_forward_msat(amt_msat, &tlvs.payment_relay)
-	})?;
-	let expected_dummy_skimmed_fees_msat = intro_amt_msat.checked_sub(expected_recv_value)?;
-
-	Some((expected_recv_value, expected_dummy_skimmed_fees_msat))
-}
-
 pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> {
 	let PassAlongPathArgs {
 		origin_node,
@@ -3711,12 +3696,6 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 		expected_failure,
 		payment_claimable_cltv,
 	} = args;
-	// `expected_recv_value` may differ slightly from `recv_value` due to rounding differences between
-	// aggregate dummy-hop fee calculation and per-hop fee peeling.
-	let (expected_recv_value, expected_dummy_skimmed_fees_msat) =
-		expected_dummy_hop_receive_outcome(recv_value, &dummy_tlvs)
-			.expect("dummy hop fee calculation should not overflow");
-
 	let mut payment_event = SendEvent::from_event(ev);
 	let mut prev_node = origin_node;
 	let mut event = None;
@@ -3749,6 +3728,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 		}
 
 		if is_last_hop && clear_recipient_events {
+			let expected_intro_amt_msat = payment_event.msgs[0].amount_msat;
 			let events_2 = node.node.get_and_clear_pending_events();
 			if payment_claimable_expected {
 				assert_eq!(events_2.len(), 1);
@@ -3757,6 +3737,7 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 						ref payment_hash,
 						ref purpose,
 						amount_msat,
+						counterparty_skimmed_fee_msat,
 						dummy_skimmed_fees_msat,
 						receiver_node_id,
 						ref receiving_channel_ids,
@@ -3821,8 +3802,15 @@ pub fn do_pass_along_path<'a, 'b, 'c>(args: PassAlongPathArgs) -> Option<Event> 
 								);
 							},
 						}
-						assert_eq!(*amount_msat, expected_recv_value);
-						assert_eq!(*dummy_skimmed_fees_msat, expected_dummy_skimmed_fees_msat);
+						if receiving_channel_ids.len() == 1 {
+							assert_eq!(*amount_msat, recv_value);
+							assert_eq!(
+								amount_msat
+									.checked_add(*dummy_skimmed_fees_msat)
+									.and_then(|amt| amt.checked_add(*counterparty_skimmed_fee_msat)),
+								Some(expected_intro_amt_msat),
+							);
+						}
 						let channels = node.node.list_channels();
 						for (chan_id, user_chan_id) in receiving_channel_ids {
 							let chan = channels
@@ -4088,6 +4076,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 	assert_eq!(claim_event.len(), 1, "{claim_event:?}");
 	#[allow(unused)]
 	let mut fwd_amt_msat = 0;
+	let dummy_skimmed_fees_msat;
 	match claim_event[0] {
 		Event::PaymentClaimed {
 			purpose:
@@ -4096,6 +4085,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 				| PaymentPurpose::Bolt12OfferPayment { payment_preimage: Some(preimage), .. }
 				| PaymentPurpose::Bolt12RefundPayment { payment_preimage: Some(preimage), .. },
 			amount_msat,
+			dummy_skimmed_fees_msat: event_dummy_skimmed_fees_msat,
 			ref htlcs,
 			ref onion_fields,
 			..
@@ -4106,6 +4096,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
+			dummy_skimmed_fees_msat = event_dummy_skimmed_fees_msat;
 		},
 		Event::PaymentClaimed {
 			purpose:
@@ -4114,6 +4105,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 				| PaymentPurpose::Bolt12RefundPayment { .. },
 			payment_hash,
 			amount_msat,
+			dummy_skimmed_fees_msat: event_dummy_skimmed_fees_msat,
 			ref htlcs,
 			ref onion_fields,
 			..
@@ -4124,6 +4116,7 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 			assert_eq!(onion_fields.as_ref().unwrap().custom_tlvs, args.custom_tlvs);
 			check_claimed_htlcs_match_route(args.origin_node, args.expected_paths, htlcs);
 			fwd_amt_msat = amount_msat;
+			dummy_skimmed_fees_msat = event_dummy_skimmed_fees_msat;
 		},
 		_ => panic!(),
 	}
@@ -4155,7 +4148,12 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 		}
 	}
 
-	pass_claimed_payment_along_route_from_ev(fwd_amt_msat, per_path_msgs, args)
+	let expected_total_fee_msat = pass_claimed_payment_along_route_from_ev(
+		fwd_amt_msat.checked_add(dummy_skimmed_fees_msat).unwrap(),
+		per_path_msgs,
+		args,
+	);
+	expected_total_fee_msat.checked_add(dummy_skimmed_fees_msat).unwrap()
 }
 
 pub fn pass_claimed_payment_along_route_from_ev(

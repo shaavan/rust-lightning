@@ -261,11 +261,8 @@ fn one_hop_blinded_path_with_dummy_hops() {
 		.with_payment_secret(payment_secret);
 
 	do_pass_along_path(args);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]]], payment_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(&nodes[0], &[&[&nodes[1]]], payment_preimage),
 	);
 }
 

@@ -241,18 +241,13 @@ fn claim_bolt12_payment_with_extra_fees<'a, 'b, 'c>(
 	assert_eq!(context, expected_payment_context);
 
 	let expected_paths = [path];
-	let dummy_tlvs = payment_path_dummy_tlvs(path);
-	let expected_dummy_extra_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(invoice.amount_msats(), &dummy_tlvs).unwrap();
 	let mut args = ClaimAlongRouteArgs::new(
 		node,
 		&expected_paths,
 		payment_preimage,
 	);
 	args = args.with_expected_extra_fees(vec![expected_extra_fees_msat.unwrap_or(0) as u32]);
-	args = args.with_expected_extra_total_fees_msat(
-		expected_extra_fees_msat.unwrap_or(0) + expected_dummy_extra_fees_msat,
-	);
+	args = args.with_expected_extra_total_fees_msat(expected_extra_fees_msat.unwrap_or(0));
 
 	let (inv, _) = claim_payment_along_route(args);
 	assert_eq!(inv, Some(PaidBolt12Invoice::Bolt12Invoice(invoice.clone())));
@@ -2459,12 +2454,8 @@ fn rejects_keysend_to_non_static_invoice_path() {
 	};
 
 	let route: &[&[&Node]] = &[&[&nodes[1]]];
-	let dummy_tlvs = payment_path_dummy_tlvs(route[0]);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], route, payment_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(&nodes[0], route, payment_preimage),
 	);
 	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 

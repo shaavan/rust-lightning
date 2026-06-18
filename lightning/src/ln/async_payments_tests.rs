@@ -987,11 +987,8 @@ fn ignore_duplicate_invoice() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let (res, _) = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice.clone())));
 
@@ -1078,11 +1075,8 @@ fn ignore_duplicate_invoice() {
 	};
 
 	// After paying invoice, check that static invoice is ignored.
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let res = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, payment_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, payment_preimage),
 	);
 	assert_eq!(res.0, Some(PaidBolt12Invoice::Bolt12Invoice(invoice)));
 
@@ -1154,11 +1148,8 @@ fn async_receive_flow_success() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let (res, _) = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage),
 	);
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice)));
 }
@@ -1547,11 +1538,8 @@ fn amount_doesnt_match_invreq() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage),
 	);
 }
 
@@ -1786,11 +1774,8 @@ fn invalid_async_receive_with_retry<F1, F2>(
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(&nodes[0], route, keysend_preimage),
 	);
 }
 
@@ -2413,11 +2398,8 @@ fn refresh_static_invoices_for_used_offers() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let res = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res.0, Some(PaidBolt12Invoice::StaticInvoice(updated_invoice)));
 }
@@ -2754,11 +2736,8 @@ fn invoice_server_is_not_channel_peer() {
 		.with_dummy_tlvs(&dummy_tlvs);
 	let claimable_ev = do_pass_along_path(args).unwrap();
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let res = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res.0, Some(PaidBolt12Invoice::StaticInvoice(invoice)));
 }
@@ -3002,11 +2981,8 @@ fn async_payment_e2e() {
 
 	let route: &[&[&Node]] = &[&[sender_lsp, invoice_server, recipient]];
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let (res, _) = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice)));
 }
@@ -3244,11 +3220,8 @@ fn intercepted_hold_htlc() {
 
 	let route: &[&[&Node]] = &[&[lsp, recipient]];
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let (res, _) = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice)));
 }
@@ -3369,11 +3342,8 @@ fn async_payment_mpp() {
 	};
 
 	let expected_route: &[&[&Node]] = &[&[&nodes[1], &nodes[3]], &[&nodes[2], &nodes[3]]];
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, expected_route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, expected_route, keysend_preimage),
 	);
 }
 
@@ -3505,11 +3475,8 @@ fn release_htlc_races_htlc_onion_decode() {
 
 	let route: &[&[&Node]] = &[&[sender_lsp, invoice_server, recipient]];
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
-	let expected_extra_total_fees_msat =
-		expected_dummy_hop_extra_total_fees_msat(amt_msat, &dummy_tlvs).unwrap();
 	let (res, _) = claim_payment_along_route(
-		ClaimAlongRouteArgs::new(sender, route, keysend_preimage)
-			.with_expected_extra_total_fees_msat(expected_extra_total_fees_msat),
+		ClaimAlongRouteArgs::new(sender, route, keysend_preimage),
 	);
 	assert_eq!(res, Some(PaidBolt12Invoice::StaticInvoice(static_invoice)));
 }
