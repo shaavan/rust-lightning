@@ -183,21 +183,27 @@ where
 						.saturating_add(cltv_expiry_delta),
 					htlc_minimum_msat: details.inbound_htlc_minimum_msat.unwrap_or(0),
 				};
+				let forward_tlvs = ForwardTlvs {
+					short_channel_id,
+					payment_relay,
+					payment_constraints,
+					next_blinding_override: None,
+					features: BlindedHopFeatures::empty(),
+				};
 				Some(PaymentForwardNode {
-					tlvs: ForwardTlvs {
-						short_channel_id,
-						payment_relay,
-						payment_constraints,
-						next_blinding_override: None,
-						features: BlindedHopFeatures::empty(),
-					},
-					node_id: details.counterparty.node_id,
-					htlc_maximum_msat: details.inbound_htlc_maximum_msat.unwrap_or(u64::MAX),
-				})
+						tlvs: forward_tlvs,
+						node_id: details.counterparty.node_id,
+						htlc_maximum_msat: details.inbound_htlc_maximum_msat.unwrap_or(u64::MAX),
+					})
 			})
 			.map(|forward_node| {
+				#[cfg(any(test, feature = "_externalize_tests"))]
+				let dummy_tlvs = [DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS];
+				#[cfg(not(any(test, feature = "_externalize_tests")))]
+				let dummy_tlvs: [DummyTlvs; DEFAULT_PAYMENT_DUMMY_HOPS] =
+					core::array::from_fn(|_| DummyTlvs::random(&self.entropy_source));
 				BlindedPaymentPath::new_with_dummy_hops(
-					&[forward_node], recipient, &[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS],
+					&[forward_node], recipient, &dummy_tlvs,
 					local_node_receive_key, tlvs.clone(), u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &self.entropy_source, secp_ctx
 				)
 			})
@@ -208,8 +214,13 @@ where
 			Ok(paths) if !paths.is_empty() => Ok(paths),
 			_ => {
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
+					#[cfg(any(test, feature = "_externalize_tests"))]
+					let dummy_tlvs = [DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS];
+					#[cfg(not(any(test, feature = "_externalize_tests")))]
+					let dummy_tlvs: [DummyTlvs; DEFAULT_PAYMENT_DUMMY_HOPS] =
+						core::array::from_fn(|_| DummyTlvs::random(&self.entropy_source));
 					BlindedPaymentPath::new_with_dummy_hops(
-						&[], recipient, &[DummyTlvs::default(); DEFAULT_PAYMENT_DUMMY_HOPS],
+						&[], recipient, &dummy_tlvs,
 						local_node_receive_key, tlvs, u64::MAX, MIN_FINAL_CLTV_EXPIRY_DELTA, &self.entropy_source, secp_ctx
 					).map(|path| vec![path])
 				} else {
