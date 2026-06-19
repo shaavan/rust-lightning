@@ -4065,7 +4065,8 @@ pub fn pass_claimed_payment_along_route(args: ClaimAlongRouteArgs) -> u64 {
 		}
 	}
 
-	pass_claimed_payment_along_route_from_ev(fwd_amt_msat, per_path_msgs, args) + dummy_skimmed_fee_msat
+	pass_claimed_payment_along_route_from_ev(fwd_amt_msat, per_path_msgs, args)
+		+ dummy_skimmed_fee_msat
 }
 
 pub fn pass_claimed_payment_along_route_from_ev(
