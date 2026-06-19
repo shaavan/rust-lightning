@@ -625,7 +625,11 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	route_bolt12_payment(david, &[charlie, bob, alice], &invoice);
 	expect_recent_payment!(david, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(david, &[charlie, bob, alice], payment_context, &invoice);
+	// Fee aggregation is not reversible under integer rounding: the three dummy hops skim 20 msat
+	// less than their aggregate fee charged for this two-hop offer payment.
+	claim_bolt12_payment_with_extra_fees(
+		david, &[charlie, bob, alice], payment_context, &invoice, Some(20),
+	);
 	expect_recent_payment!(david, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -707,7 +711,11 @@ fn creates_and_pays_for_refund_using_two_hop_blinded_path() {
 	route_bolt12_payment(david, &[charlie, bob, alice], &invoice);
 	expect_recent_payment!(david, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(david, &[charlie, bob, alice], payment_context, &invoice);
+	// Fee aggregation is not reversible under integer rounding: the dummy hops skim 20 msat less
+	// than their aggregate fee charged for this two-hop refund payment.
+	claim_bolt12_payment_with_extra_fees(
+		david, &[charlie, bob, alice], payment_context, &invoice, Some(20),
+	);
 	expect_recent_payment!(david, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -775,7 +783,9 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Aggregating the three dummy-hop fee policies rounds conservatively, resulting in a 20-msat
+	// overpayment compared to applying each dummy-hop fee individually.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -844,7 +854,8 @@ fn router_modifies_payment_metadata_in_blinded_path() {
 
 	// Verifies that Alice's `Event::PaymentClaimable` carries the `payment_metadata` injected by
 	// the router (via the `expected_payment_context` equality check inside this helper).
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -927,7 +938,8 @@ fn pays_for_offer_with_payment_metadata_in_invoice_request_context() {
 
 	// `claim_bolt12_payment` asserts the surfaced `PaymentContext` matches `payment_context`
 	// above, including the embedded `payment_metadata`.
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -983,7 +995,8 @@ fn creates_and_pays_for_refund_using_one_hop_blinded_path() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -1038,7 +1051,8 @@ fn pays_for_offer_without_blinded_paths() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -1081,7 +1095,8 @@ fn pays_for_refund_without_blinded_paths() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -1320,7 +1335,8 @@ fn creates_and_pays_for_offer_with_retry() {
 	}
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -1399,7 +1415,8 @@ fn pays_bolt12_invoice_asynchronously() {
 	route_bolt12_payment(bob, &[alice], &invoice);
 	expect_recent_payment!(bob, RecentPaymentDetails::Pending, payment_id);
 
-	claim_bolt12_payment(bob, &[alice], payment_context, &invoice);
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(20));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 
 	assert_eq!(
@@ -1491,9 +1508,9 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	// With dummy hops in LDK v0.3, even a real two-node path can appear as a
 	// longer blinded route, so the overpayment shows up in tests.
 	//
-	// Until the fee-handling trade-off is revisited, we pass an expected extra
-	// fee here so tests can compensate for it.
-	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(1000));
+	// Account for the 1,000-msat introduction-node fee. Integer rounding also makes the aggregate
+	// dummy-hop fee exceed the individually skimmed fees by 20 msat.
+	claim_bolt12_payment_with_extra_fees(bob, &[alice], payment_context, &invoice, Some(1020));
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -2333,7 +2350,11 @@ fn fails_paying_invoice_more_than_once() {
 	assert!(david.node.get_and_clear_pending_msg_events().is_empty());
 
 	// Complete paying the first invoice
-	claim_bolt12_payment(david, &[charlie, bob, alice], payment_context, &invoice1);
+	// Paying only the first invoice does not change its fee accounting. Integer rounding makes the
+	// aggregate dummy-hop fee exceed the individually skimmed fees by 20 msat.
+	claim_bolt12_payment_with_extra_fees(
+		david, &[charlie, bob, alice], payment_context, &invoice1, Some(20),
+	);
 	expect_recent_payment!(david, RecentPaymentDetails::Fulfilled, payment_id);
 }
 
@@ -2479,7 +2500,10 @@ fn rejects_keysend_to_non_static_invoice_path() {
 		_ => panic!()
 	};
 
-	claim_payment(&nodes[0], &[&nodes[1]], payment_preimage);
+	let expected_route = &[&[&nodes[1]][..]];
+	claim_payment_along_route(ClaimAlongRouteArgs::new(
+		&nodes[0], expected_route, payment_preimage,
+	));
 	expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 
 	// Time out the payment from recent payments so we can attempt to pay it again via keysend.
@@ -2686,7 +2710,10 @@ fn creates_and_pays_for_phantom_offer() {
 		route_bolt12_payment(&nodes[0], &[recipient], &invoice);
 		expect_recent_payment!(&nodes[0], RecentPaymentDetails::Pending, payment_id);
 
-		claim_bolt12_payment(&nodes[0], &[recipient], payment_context, &invoice);
+		// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+		claim_bolt12_payment_with_extra_fees(
+			&nodes[0], &[recipient], payment_context, &invoice, Some(20),
+		);
 		expect_recent_payment!(&nodes[0], RecentPaymentDetails::Fulfilled, payment_id);
 
 		assert!(nodes[0].onion_messenger.next_onion_message_for_peer(node_b_id).is_none());
@@ -2766,7 +2793,11 @@ fn creates_and_verifies_payer_proof_after_offer_payment() {
 		_ => panic!("Expected Event::PaymentClaimable"),
 	};
 
-	let paid_invoice = claim_payment(bob, &[alice], payment_preimage).unwrap();
+	// Conservative dummy-hop fee aggregation adds 20 msat beyond the fees skimmed by the hops.
+	let paid_invoice = claim_payment_along_route(
+		ClaimAlongRouteArgs::new(bob, &[&[alice]], payment_preimage)
+			.with_expected_extra_total_fees_msat(20),
+	).0.unwrap();
 	expect_recent_payment!(bob, RecentPaymentDetails::Fulfilled, payment_id);
 
 	// The paid invoice is carried so the payer can re-derive their signing key (from the invoice's
