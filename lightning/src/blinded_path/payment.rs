@@ -1146,6 +1146,8 @@ pub(super) fn compute_payinfo<F: ForwardTlvsInfo>(
 		)
 		.ok_or(())?; // If underflow occurs, we cannot send to this hop without exceeding their max
 	}
+	// The payee's channel limit applies to the inbound HTLC before dummy-hop fees are removed.
+	htlc_maximum_msat = core::cmp::min(payee_htlc_maximum_msat, htlc_maximum_msat);
 	for dummy_tlvs in dummy_tlvs.iter() {
 		cltv_expiry_delta =
 			cltv_expiry_delta.checked_add(dummy_tlvs.payment_relay.cltv_expiry_delta).ok_or(())?;
@@ -1155,10 +1157,12 @@ pub(super) fn compute_payinfo<F: ForwardTlvsInfo>(
 			&dummy_tlvs.payment_relay,
 		)
 		.unwrap_or(1); // If underflow occurs, we definitely reached this node's min
+		// Remove this dummy hop's fee to get the maximum amount it can forward.
+		htlc_maximum_msat =
+			amt_to_forward_msat(htlc_maximum_msat, &dummy_tlvs.payment_relay).ok_or(())?;
 	}
 	htlc_minimum_msat =
 		core::cmp::max(payee_tlvs.payment_constraints.htlc_minimum_msat, htlc_minimum_msat);
-	htlc_maximum_msat = core::cmp::min(payee_htlc_maximum_msat, htlc_maximum_msat);
 
 	if htlc_maximum_msat < htlc_minimum_msat {
 		return Err(());
