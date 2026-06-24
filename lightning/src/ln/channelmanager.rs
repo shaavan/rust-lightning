@@ -15654,7 +15654,14 @@ macro_rules! create_offer_builder { ($self: ident, $builder: ty) => {
 	///
 	/// Errors if the parameterized [`MessageRouter`] is unable to create a blinded path for the offer.
 	///
+	/// Currency-denominated amounts set on the returned builder are not validated
+	/// when the offer is built. The caller is responsible for advertising only
+	/// currencies that this [`ChannelManager`]'s configured [`CurrencyConversion`]
+	/// can convert into a valid millisatoshi amount. Otherwise, invoice requests
+	/// for the offer cannot be fulfilled.
+	///
 	/// [`BlindedMessagePath`]: crate::blinded_path::message::BlindedMessagePath
+	/// [`CurrencyConversion`]: crate::offers::currency::CurrencyConversion
 	/// [`Offer`]: crate::offers::offer::Offer
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	pub fn create_offer_builder(&$self) -> Result<$builder, Bolt12SemanticError> {
