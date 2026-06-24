@@ -606,8 +606,15 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	///
 	/// Returns an error if the parameterized [`Router`] is unable to create a blinded path for the offer.
 	///
+	/// Currency-denominated amounts set on the returned builder are not validated
+	/// when the offer is built. The caller is responsible for advertising only
+	/// currencies that their [`CurrencyConversion`] implementation can convert into
+	/// a valid millisatoshi amount. Otherwise, invoice requests for the offer
+	/// cannot be fulfilled.
+	///
 	/// This is not exported to bindings users as builder patterns don't map outside of move semantics.
 	///
+	/// [`CurrencyConversion`]: crate::offers::currency::CurrencyConversion
 	/// [`DefaultMessageRouter`]: crate::onion_message::messenger::DefaultMessageRouter
 	pub fn create_offer_builder<ES: EntropySource>(
 		&self, entropy_source: ES, peers: Vec<MessageForwardNode>,
