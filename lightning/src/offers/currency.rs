@@ -201,6 +201,10 @@ impl ExchangeRateBound {
 		Ok(bound)
 	}
 
+	pub(crate) fn rate(self) -> ExchangeRate {
+		self.rate
+	}
+
 	/// Converts this bound into the corresponding accepted exchange-rate range.
 	pub(crate) fn to_range(self) -> ExchangeRange {
 		ExchangeRange::from_exchange_rate_bound(self)
