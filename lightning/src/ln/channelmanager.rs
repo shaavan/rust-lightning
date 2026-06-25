@@ -5905,6 +5905,17 @@ impl<
 		}
 	}
 
+	fn force_refresh_async_receive_static_invoices(&self) {
+		let peers = self.get_peers_for_blinded_path();
+		let channels = self.list_usable_channels();
+		let router = &self.router;
+
+		// Static invoices carry payment paths built from our current channels. Force-refreshing lets
+		// cached async receive offers keep their server-side invoices aligned after those channels
+		// change.
+		self.flow.force_refresh_async_receive_static_invoices(peers, channels, router);
+	}
+
 	#[cfg(test)]
 	pub(crate) fn test_check_refresh_async_receive_offers(&self) {
 		self.check_refresh_async_receive_offer_cache(false);
