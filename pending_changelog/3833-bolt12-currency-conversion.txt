@@ -1,0 +1,32 @@
+# API Updates
+
+ * BOLT 12 offers may now use ISO 4217 currency-denominated amounts. Users who
+   create or pay such offers must provide a `CurrencyConversion` implementation
+   so LDK can convert the currency amount to millisatoshis and verify returned
+   invoice amounts.
+
+ * `ChannelManager::new` and `ChannelManagerReadArgs` now take a
+   `currency_conversion` argument. Users who do not support currency conversion
+   may use `NullCurrencyConversion`.
+
+ * BOLT 12 offer and invoice builders for regular offer/invoice flows now
+   thread currency conversion through their construction paths. Unsupported
+   currencies or invalid converted amounts fail offer, invoice request, or
+   invoice construction instead of being accepted without conversion. Async
+   static-invoice offer creation continues to use `NullCurrencyConversion`.
+
+ * `InvoiceRequest::amount_msats()` now returns only the explicitly encoded
+   invoice request amount. Use `InvoiceRequest::payable_amount_msats()` to
+   obtain the payable amount, including amounts inferred from the offer and
+   quantity. `InvoiceRequest::has_amount_msats()` has been removed.
+
+ * `Bolt12PaymentError` now includes `UnverifiableAmount`,
+   `InsufficientAmount`, and `ExcessiveAmount`. `Bolt12SemanticError` now
+   includes `ExcessiveAmount`. Users matching these enums exhaustively must
+   handle the new variants.
+
+# Backwards Compatibility
+
+ * Downgrading to LDK 0.2 while a currency-denominated BOLT 12 payment is
+   pending will prevent `ChannelManager` deserialization. Ensure that no such
+   payments are pending before persisting `ChannelManager` state for downgrade.
