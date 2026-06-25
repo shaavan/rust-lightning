@@ -3006,6 +3006,8 @@ pub struct ChannelManager<
 	funding_batch_states: Mutex<BTreeMap<Txid, Vec<(ChannelId, PublicKey, bool)>>>,
 
 	background_events_processed_since_startup: AtomicBool,
+	/// Set when a channel change may have made cached async receive static invoices stale.
+	async_receive_static_invoice_refresh_pending: AtomicBool,
 
 	event_persist_notifier: Notifier,
 	needs_persist_flag: AtomicBool,
@@ -3427,7 +3429,7 @@ macro_rules! emit_channel_pending_event {
 }
 
 macro_rules! emit_initial_channel_ready_event {
-	($locked_events: expr, $channel: expr) => {
+	($self: expr, $locked_events: expr, $channel: expr) => {
 		if $channel.context.should_emit_initial_channel_ready_event() {
 			debug_assert!($channel.context.channel_pending_event_emitted());
 			$locked_events.push_back((
@@ -3444,6 +3446,7 @@ macro_rules! emit_initial_channel_ready_event {
 				None,
 			));
 			$channel.context.set_initial_channel_ready_event_emitted();
+			$self.mark_async_receive_static_invoice_refresh_pending();
 		}
 	};
 }
@@ -3766,6 +3769,7 @@ impl<
 			pending_background_events: Mutex::new(Vec::new()),
 			total_consistency_lock: RwLock::new(()),
 			background_events_processed_since_startup: AtomicBool::new(false),
+			async_receive_static_invoice_refresh_pending: AtomicBool::new(false),
 			event_persist_notifier: Notifier::new(),
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
@@ -4564,6 +4568,8 @@ impl<
 				));
 			}
 		}
+		self.mark_async_receive_static_invoice_refresh_pending();
+
 		for (err, counterparty_node_id) in shutdown_results.drain(..) {
 			let _ = self.handle_error(err, counterparty_node_id);
 		}
@@ -4693,6 +4699,7 @@ impl<
 				log_error!(logger, "Closing channel: {}", err_internal.err.err);
 
 				self.finish_close_channel(shutdown_res);
+				self.process_pending_async_receive_static_invoice_refresh();
 				if let Some((update, node_id_1, node_id_2)) = update_option {
 					let mut pending_broadcast_messages =
 						self.pending_broadcast_messages.lock().unwrap();
@@ -5914,6 +5921,19 @@ impl<
 		// cached async receive offers keep their server-side invoices aligned after those channels
 		// change.
 		self.flow.force_refresh_async_receive_static_invoices(peers, channels, router);
+	}
+
+	fn mark_async_receive_static_invoice_refresh_pending(&self) {
+		self.async_receive_static_invoice_refresh_pending.store(true, Ordering::Release);
+	}
+
+	fn process_pending_async_receive_static_invoice_refresh(&self) {
+		// Channel state transitions often happen while a peer's channel lock is held. Defer the
+		// actual refresh until after those locks are released, because rebuilding static invoices
+		// needs a fresh snapshot of usable channels.
+		if self.async_receive_static_invoice_refresh_pending.swap(false, Ordering::AcqRel) {
+			self.force_refresh_async_receive_static_invoices();
+		}
 	}
 
 	#[cfg(test)]
@@ -8914,6 +8934,7 @@ impl<
 			let mut timed_out_mpp_htlcs = Vec::new();
 			let mut pending_peers_awaiting_removal = Vec::new();
 			let mut feerate_cache = new_hash_map();
+			let mut should_refresh_static_invoices = false;
 
 			{
 				let per_peer_state = self.per_peer_state.read().unwrap();
@@ -8932,7 +8953,10 @@ impl<
 									Some(feerate)
 								}).unwrap();
 								let chan_needs_persist = self.update_channel_fee(chan_id, funded_chan, new_feerate);
-								if chan_needs_persist == NotifyOption::DoPersist { should_persist = NotifyOption::DoPersist; }
+								if chan_needs_persist == NotifyOption::DoPersist {
+									should_persist = NotifyOption::DoPersist;
+									should_refresh_static_invoices = true;
+								}
 
 								if let Err(e) = funded_chan.timer_check_closing_negotiation_progress() {
 									let (needs_close, err) = self.locked_handle_funded_force_close(&mut peer_state.closed_channel_monitor_update_ids, &mut peer_state.in_flight_monitor_updates, e, funded_chan);
@@ -9141,6 +9165,10 @@ impl<
 				.remove_stale_payments(duration_since_epoch, &self.pending_events);
 
 			self.check_refresh_async_receive_offer_cache(true);
+			if should_refresh_static_invoices {
+				self.mark_async_receive_static_invoice_refresh_pending();
+			}
+			self.process_pending_async_receive_static_invoice_refresh();
 
 			if self.check_free_holding_cells() {
 				// While we try to ensure we clear holding cells immediately, its possible we miss
@@ -11205,7 +11233,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 		{
 			let mut pending_events = self.pending_events.lock().unwrap();
 			emit_channel_pending_event!(pending_events, channel);
-			emit_initial_channel_ready_event!(pending_events, channel);
+			emit_initial_channel_ready_event!(self, pending_events, channel);
 			if let Some(splice_negotiated) = funding_tx_signed
 				.as_mut()
 				.and_then(|v| v.splice_negotiated.take())
@@ -12487,7 +12515,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 
 		{
 			let mut pending_events = self.pending_events.lock().unwrap();
-			emit_initial_channel_ready_event!(pending_events, chan);
+			emit_initial_channel_ready_event!(self, pending_events, chan);
 		}
 
 		Ok(())
@@ -13761,6 +13789,7 @@ This indicates a bug inside LDK. Please report this error at https://github.com/
 					},
 					None,
 				));
+				self.mark_async_receive_static_invoice_refresh_pending();
 				splice_promotion.discarded_funding.into_iter().for_each(|funding_info| {
 					let event = Event::DiscardFunding {
 						channel_id: chan.context.channel_id(),
@@ -16464,6 +16493,7 @@ impl<
 												funding_txo: Some(funding_txo.into_bitcoin_outpoint()),
 												channel_type: funded_channel.funding.get_channel_type().clone(),
 											}, None));
+											self.mark_async_receive_static_invoice_refresh_pending();
 											discarded_funding.into_iter().for_each(|funding_info| {
 												let event = Event::DiscardFunding {
 													channel_id: funded_channel.context.channel_id(),
@@ -16485,7 +16515,7 @@ impl<
 
 								{
 									let mut pending_events = self.pending_events.lock().unwrap();
-									emit_initial_channel_ready_event!(pending_events, funded_channel);
+									emit_initial_channel_ready_event!(self, pending_events, funded_channel);
 								}
 
 								if let Some(height) = height_opt {
@@ -16800,9 +16830,12 @@ impl<
 	}
 
 	fn handle_funding_signed(&self, counterparty_node_id: PublicKey, msg: &msgs::FundingSigned) {
-		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
-		let res = self.internal_funding_signed(&counterparty_node_id, msg);
-		let _ = self.handle_error(res, counterparty_node_id);
+		{
+			let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+			let res = self.internal_funding_signed(&counterparty_node_id, msg);
+			let _ = self.handle_error(res, counterparty_node_id);
+		}
+		self.process_pending_async_receive_static_invoice_refresh();
 	}
 
 	fn handle_peer_storage(&self, counterparty_node_id: PublicKey, msg: msgs::PeerStorage) {
@@ -16826,15 +16859,18 @@ impl<
 		// channel_ready message - while the channel's state will change, any channel_ready message
 		// will ultimately be re-sent on startup and the `ChannelMonitor` won't be updated so we
 		// will not force-close the channel on startup.
-		let _persistence_guard = PersistenceNotifierGuard::optionally_notify(self, || {
-			let res = self.internal_channel_ready(&counterparty_node_id, msg);
-			let persist = match &res {
-				Err(e) if e.closes_channel() => NotifyOption::DoPersist,
-				_ => NotifyOption::SkipPersistHandleEvents,
-			};
-			let _ = self.handle_error(res, counterparty_node_id);
-			persist
-		});
+		{
+			let _persistence_guard = PersistenceNotifierGuard::optionally_notify(self, || {
+				let res = self.internal_channel_ready(&counterparty_node_id, msg);
+				let persist = match &res {
+					Err(e) if e.closes_channel() => NotifyOption::DoPersist,
+					_ => NotifyOption::SkipPersistHandleEvents,
+				};
+				let _ = self.handle_error(res, counterparty_node_id);
+				persist
+			});
+		}
+		self.process_pending_async_receive_static_invoice_refresh();
 	}
 
 	fn handle_stfu(&self, counterparty_node_id: PublicKey, msg: &msgs::Stfu) {
@@ -16884,16 +16920,19 @@ impl<
 
 	#[rustfmt::skip]
 	fn handle_splice_locked(&self, counterparty_node_id: PublicKey, msg: &msgs::SpliceLocked) {
-		let _persistence_guard = PersistenceNotifierGuard::optionally_notify(self, || {
-			let res = self.internal_splice_locked(&counterparty_node_id, msg);
-			let persist = match &res {
-				Err(e) if e.closes_channel() => NotifyOption::DoPersist,
-				Err(_) => NotifyOption::SkipPersistHandleEvents,
-				Ok(()) => NotifyOption::DoPersist,
-			};
-			let _ = self.handle_error(res, counterparty_node_id);
-			persist
-		});
+		{
+			let _persistence_guard = PersistenceNotifierGuard::optionally_notify(self, || {
+				let res = self.internal_splice_locked(&counterparty_node_id, msg);
+				let persist = match &res {
+					Err(e) if e.closes_channel() => NotifyOption::DoPersist,
+					Err(_) => NotifyOption::SkipPersistHandleEvents,
+					Ok(()) => NotifyOption::DoPersist,
+				};
+				let _ = self.handle_error(res, counterparty_node_id);
+				persist
+			});
+		}
+		self.process_pending_async_receive_static_invoice_refresh();
 	}
 
 	fn handle_shutdown(&self, counterparty_node_id: PublicKey, msg: &msgs::Shutdown) {
@@ -20524,6 +20563,7 @@ impl<
 			pending_background_events: Mutex::new(pending_background_events),
 			total_consistency_lock: RwLock::new(()),
 			background_events_processed_since_startup: AtomicBool::new(false),
+			async_receive_static_invoice_refresh_pending: AtomicBool::new(false),
 
 			event_persist_notifier: Notifier::new(),
 			needs_persist_flag: AtomicBool::new(false),
