@@ -5884,7 +5884,9 @@ impl<
 		)
 	}
 
-	fn check_refresh_async_receive_offer_cache(&self, timer_tick_occurred: bool) {
+	fn check_refresh_async_receive_offer_cache(
+		&self, timer_tick_occurred: bool, force_static_invoice_refresh: bool,
+	) {
 		let peers = self.get_peers_for_blinded_path();
 		let channels = self.list_usable_channels();
 		let router = &self.router;
@@ -5893,6 +5895,7 @@ impl<
 			channels,
 			router,
 			timer_tick_occurred,
+			force_static_invoice_refresh,
 		);
 		match refresh_res {
 			Err(()) => {
@@ -5901,13 +5904,13 @@ impl<
 					"Failed to create blinded paths when requesting async receive offer paths"
 				);
 			},
-			Ok(()) => {},
+			Ok(_) => {},
 		}
 	}
 
 	#[cfg(test)]
 	pub(crate) fn test_check_refresh_async_receive_offers(&self) {
-		self.check_refresh_async_receive_offer_cache(false);
+		self.check_refresh_async_receive_offer_cache(false, false);
 	}
 
 	/// Should be called after handling an [`Event::PersistStaticInvoice`], where the `Responder`
@@ -9129,7 +9132,7 @@ impl<
 			self.pending_outbound_payments
 				.remove_stale_payments(duration_since_epoch, &self.pending_events);
 
-			self.check_refresh_async_receive_offer_cache(true);
+			self.check_refresh_async_receive_offer_cache(true, false);
 
 			if self.check_free_holding_cells() {
 				// While we try to ensure we clear holding cells immediately, its possible we miss
@@ -16040,7 +16043,7 @@ impl<
 		// interactively building offers as soon as we can after startup. We can't start building offers
 		// until we have some peer connection(s) to receive onion messages over, so as a minor optimization
 		// refresh the cache when a peer connects.
-		self.check_refresh_async_receive_offer_cache(false);
+		self.check_refresh_async_receive_offer_cache(false, false);
 		res
 	}
 
