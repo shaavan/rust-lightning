@@ -469,6 +469,18 @@ impl AsyncReceiveOfferCache {
 		})
 	}
 
+	/// Returns cached offers whose static invoices should be refreshed after a local channel change.
+	///
+	/// We only cache a small number of offers, and local channel changes are expected to be rare, so
+	/// refresh all cached offers. This includes `Ready` offers, ensuring they have up-to-date
+	/// server-side invoices before they are first returned to the application.
+	pub(super) fn offers_needing_forced_invoice_refresh(
+		&self,
+	) -> impl Iterator<Item = (&Offer, Nonce, &Responder)> {
+		self.offers_with_idx()
+			.map(|(_, offer)| (&offer.offer, offer.offer_nonce, &offer.update_static_invoice_path))
+	}
+
 	/// Should be called when we receive a [`StaticInvoicePersisted`] message from the static invoice
 	/// server, which indicates that a new offer was persisted by the server and they are ready to
 	/// serve the corresponding static invoice to payers on our behalf.
