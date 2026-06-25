@@ -1,0 +1,38 @@
+# API Updates
+
+ * BOLT 12 offers may now use ISO 4217 currency-denominated amounts. Offer
+   creators are responsible for only advertising currencies they can price when
+   responding to invoice requests. Payers and invoice responders need a
+   `CurrencyConversion` implementation when a currency amount must be converted
+   to millisatoshis.
+
+ * `ChannelManager::new` and `ChannelManagerReadArgs` now take a
+   `currency_conversion` argument. Users who do not support currency conversion
+   may use `NullCurrencyConversion`.
+
+ * BOLT 12 invoice request and invoice handling now use currency conversion when
+   resolving payable amounts for currency-denominated offers. Unsupported
+   currencies or invalid converted amounts fail when an invoice request or
+   invoice amount is verified.
+
+ * `InvoiceRequest::amount_msats()` now returns only the explicitly encoded
+   invoice request amount. Use `InvoiceRequest::payable_amount_msats()` to
+   obtain the payable amount, including amounts inferred from the offer and
+   quantity. `InvoiceRequest::has_amount_msats()` has been removed.
+
+ * `InvoiceRequest::respond_with`, `InvoiceRequest::respond_with_no_std`,
+   `VerifiedInvoiceRequest::respond_using_derived_keys`, and
+   `VerifiedInvoiceRequest::respond_using_derived_keys_no_std` now take an
+   `amount_msats` argument as their first parameter. Callers responding to an
+   invoice request should generally obtain it with
+   `InvoiceRequest::payable_amount_msats(&currency_conversion)`.
+
+ * `Bolt12PaymentError` now includes `UnverifiableAmount` and
+   `ExcessiveAmount`. `Bolt12SemanticError` now includes `ExcessiveAmount`.
+   Users matching these enums exhaustively must handle the new variants.
+
+# Backwards Compatibility
+
+ * Downgrading to LDK 0.2 while a currency-denominated BOLT 12 payment is
+   pending will prevent `ChannelManager` deserialization. Ensure that no such
+   payments are pending before persisting `ChannelManager` state for downgrade.
