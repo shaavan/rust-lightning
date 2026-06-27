@@ -3121,6 +3121,11 @@ pub struct ChannelManager<
 	funding_batch_states: Mutex<BTreeMap<Txid, Vec<(ChannelId, PublicKey, bool)>>>,
 
 	background_events_processed_since_startup: AtomicBool,
+	/// Set when a channel change may have made cached async receive static invoices stale.
+	///
+	/// Channel changes can arrive in bursts, so we refresh on the next timer tick instead of
+	/// rebuilding and sending a new static invoice for each change.
+	async_receive_static_invoice_refresh_pending: AtomicBool,
 
 	event_persist_notifier: Notifier,
 	needs_persist_flag: AtomicBool,
@@ -3882,6 +3887,7 @@ impl<
 			pending_background_events: Mutex::new(Vec::new()),
 			total_consistency_lock: RwLock::new(()),
 			background_events_processed_since_startup: AtomicBool::new(false),
+			async_receive_static_invoice_refresh_pending: AtomicBool::new(false),
 			event_persist_notifier: Notifier::new(),
 			needs_persist_flag: AtomicBool::new(false),
 			funding_batch_states: Mutex::new(BTreeMap::new()),
@@ -4680,6 +4686,11 @@ impl<
 				));
 			}
 		}
+
+		// Static invoices may still reference the closed channel. Defer refresh to the next timer
+		// tick so batched closures only enqueue one set of invoice updates.
+		self.refresh_async_receive_static_invoices_on_next_timer_tick();
+
 		for (err, counterparty_node_id) in shutdown_results.drain(..) {
 			let _ = self.handle_error(err, counterparty_node_id);
 		}
@@ -6117,15 +6128,23 @@ impl<
 			timer_tick_occurred,
 			force_static_invoice_refresh_on_timer_tick,
 		);
-		match refresh_res {
+		let refresh_succeeded = match refresh_res {
 			Err(()) => {
 				log_error!(
 					self.logger,
 					"Failed to create blinded paths when requesting async receive offer paths"
 				);
+				false
 			},
-			Ok(_) => {},
+			Ok(static_invoice_refresh_succeeded) => static_invoice_refresh_succeeded,
+		};
+		if force_static_invoice_refresh_on_timer_tick && !refresh_succeeded {
+			self.refresh_async_receive_static_invoices_on_next_timer_tick();
 		}
+	}
+
+	fn refresh_async_receive_static_invoices_on_next_timer_tick(&self) {
+		self.async_receive_static_invoice_refresh_pending.store(true, Ordering::Relaxed);
 	}
 
 	#[cfg(test)]
@@ -9581,7 +9600,14 @@ impl<
 			self.pending_outbound_payments
 				.remove_stale_payments(duration_since_epoch, &self.pending_events);
 
-			self.check_refresh_async_receive_offer_cache(true, false);
+			// A peer may send several forwarding updates between timer ticks. Refresh once using the
+			// latest channel state so each update does not trigger a separate invoice update.
+			let force_static_invoice_refresh_on_timer_tick =
+				self.async_receive_static_invoice_refresh_pending.swap(false, Ordering::Relaxed);
+			self.check_refresh_async_receive_offer_cache(
+				true,
+				force_static_invoice_refresh_on_timer_tick,
+			);
 
 			if self.check_free_holding_cells() {
 				// While we try to ensure we clear holding cells immediately, its possible we miss
@@ -17528,6 +17554,11 @@ impl<
 		PersistenceNotifierGuard::optionally_notify(self, || {
 			let res = self.internal_channel_update(&counterparty_node_id, msg);
 			if let Ok(persist) = self.handle_error(res, counterparty_node_id) {
+				if persist == NotifyOption::DoPersist {
+					// Static invoices include these forwarding parameters. Mark them stale now and
+					// rebuild them on the next timer tick, combining multiple updates into one refresh.
+					self.refresh_async_receive_static_invoices_on_next_timer_tick();
+				}
 				persist
 			} else {
 				NotifyOption::DoPersist
@@ -21027,6 +21058,7 @@ impl<
 			pending_background_events: Mutex::new(pending_background_events),
 			total_consistency_lock: RwLock::new(()),
 			background_events_processed_since_startup: AtomicBool::new(false),
+			async_receive_static_invoice_refresh_pending: AtomicBool::new(false),
 
 			event_persist_notifier: Notifier::new(),
 			needs_persist_flag: AtomicBool::new(false),
