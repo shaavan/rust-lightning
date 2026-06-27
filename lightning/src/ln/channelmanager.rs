@@ -5891,7 +5891,9 @@ impl<
 		)
 	}
 
-	fn check_refresh_async_receive_offer_cache(&self, timer_tick_occurred: bool) {
+	fn check_refresh_async_receive_offer_cache(
+		&self, timer_tick_occurred: bool, force_static_invoice_refresh: bool,
+	) {
 		let peers = self.get_peers_for_blinded_path();
 		let channels = self.list_usable_channels();
 		let router = &self.router;
@@ -5900,6 +5902,7 @@ impl<
 			channels,
 			router,
 			timer_tick_occurred,
+			force_static_invoice_refresh,
 		);
 		match refresh_res {
 			Err(()) => {
@@ -5938,7 +5941,7 @@ impl<
 
 	#[cfg(test)]
 	pub(crate) fn test_check_refresh_async_receive_offers(&self) {
-		self.check_refresh_async_receive_offer_cache(false);
+		self.check_refresh_async_receive_offer_cache(false, false);
 	}
 
 	/// Should be called after handling an [`Event::PersistStaticInvoice`], where the `Responder`
@@ -9164,10 +9167,10 @@ impl<
 			self.pending_outbound_payments
 				.remove_stale_payments(duration_since_epoch, &self.pending_events);
 
-			self.check_refresh_async_receive_offer_cache(true);
-			if should_refresh_static_invoices {
-				self.mark_async_receive_static_invoice_refresh_pending();
-			}
+			// A forced refresh includes the normal timer selection and all other used offers.
+			// Use it when channel fees change so one pass updates the affected invoices
+			// without duplicate timer updates.
+			self.check_refresh_async_receive_offer_cache(true, should_refresh_static_invoices);
 			self.process_pending_async_receive_static_invoice_refresh();
 
 			if self.check_free_holding_cells() {
@@ -16080,7 +16083,7 @@ impl<
 		// interactively building offers as soon as we can after startup. We can't start building offers
 		// until we have some peer connection(s) to receive onion messages over, so as a minor optimization
 		// refresh the cache when a peer connects.
-		self.check_refresh_async_receive_offer_cache(false);
+		self.check_refresh_async_receive_offer_cache(false, false);
 		res
 	}
 

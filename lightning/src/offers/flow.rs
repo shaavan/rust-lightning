@@ -1333,10 +1333,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// cache updated. When calling this method once per minute, SHOULD set `timer_tick_occurred` so
 	/// the cache can self-regulate the number of messages sent out.
 	///
+	/// Set `force_static_invoice_refresh` when channel fees changed during the timer tick, so static
+	/// invoices for all used offers are updated immediately.
+	///
 	/// Errors if we failed to create blinded reply paths when sending an [`OfferPathsRequest`] message.
 	pub fn check_refresh_async_receive_offer_cache<R: Router>(
 		&self, peers: Vec<MessageForwardNode>, usable_channels: Vec<ChannelDetails>, router: R,
-		timer_tick_occurred: bool,
+		timer_tick_occurred: bool, force_static_invoice_refresh: bool,
 	) -> Result<(), ()> {
 		// Terminate early if this node does not intend to receive async payments.
 		{
@@ -1346,13 +1349,21 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			}
 		}
 
-		self.check_refresh_async_offers(peers.clone(), timer_tick_occurred)?;
+		let offer_refresh_result =
+			self.check_refresh_async_offers(peers.clone(), timer_tick_occurred);
 
-		if timer_tick_occurred {
-			self.check_refresh_static_invoices(peers, usable_channels, router, false);
+		// A fee-triggered refresh must not depend on offer maintenance succeeding, because changed
+		// channel fees still need to be reflected in static invoices.
+		if timer_tick_occurred && (offer_refresh_result.is_ok() || force_static_invoice_refresh) {
+			self.check_refresh_static_invoices(
+				peers,
+				usable_channels,
+				router,
+				force_static_invoice_refresh,
+			);
 		}
 
-		Ok(())
+		offer_refresh_result
 	}
 
 	/// Enqueues static invoice updates for cached async receive offers after local channel changes.
