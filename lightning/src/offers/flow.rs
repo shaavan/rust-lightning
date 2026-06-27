@@ -1331,12 +1331,15 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	///
 	/// This method should be called on peer connection and once per minute or so, to keep the offers
 	/// cache updated. When calling this method once per minute, SHOULD set `timer_tick_occurred` so
-	/// the cache can self-regulate the number of messages sent out.
+	/// the cache can self-regulate the number of messages sent out. Set
+	/// `force_static_invoice_refresh` on a timer tick when a channel change may have made cached
+	/// payment paths stale. That tick refreshes every used offer instead of only those old enough
+	/// for the normal periodic refresh.
 	///
 	/// Errors if we failed to create blinded reply paths when sending an [`OfferPathsRequest`] message.
 	pub fn check_refresh_async_receive_offer_cache<R: Router>(
 		&self, peers: Vec<MessageForwardNode>, usable_channels: Vec<ChannelDetails>, router: R,
-		timer_tick_occurred: bool,
+		timer_tick_occurred: bool, force_static_invoice_refresh: bool,
 	) -> Result<(), ()> {
 		// Terminate early if this node does not intend to receive async payments.
 		{
@@ -1346,13 +1349,40 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			}
 		}
 
-		self.check_refresh_async_offers(peers.clone(), timer_tick_occurred)?;
+		let offer_refresh_result =
+			self.check_refresh_async_offers(peers.clone(), timer_tick_occurred);
 
-		if timer_tick_occurred {
-			self.check_refresh_static_invoices(peers, usable_channels, router);
+		// Updating existing static invoices does not depend on requesting paths for new offers. If
+		// that request fails, still publish invoice updates for changed payment paths.
+		if timer_tick_occurred && (offer_refresh_result.is_ok() || force_static_invoice_refresh) {
+			self.check_refresh_static_invoices(
+				peers,
+				usable_channels,
+				router,
+				force_static_invoice_refresh,
+			);
 		}
 
-		Ok(())
+		offer_refresh_result
+	}
+
+	/// Enqueues static invoice updates for cached async receive offers after local channel changes.
+	pub fn force_refresh_async_receive_static_invoices<R: Router, F>(
+		&self, get_refresh_inputs: F, router: R,
+	) where
+		F: FnOnce() -> (Vec<MessageForwardNode>, Vec<ChannelDetails>),
+	{
+		// A forced refresh is useful only for an async recipient already configured with a server.
+		let cache = self.async_receive_offer_cache.lock().unwrap();
+		if cache.paths_to_static_invoice_server().is_empty() {
+			return;
+		}
+		core::mem::drop(cache);
+
+		// Channel details may be in a short-lived transitional state when this refresh is requested.
+		// Collect them only after confirming that async receiving needs the snapshot.
+		let (peers, usable_channels) = get_refresh_inputs();
+		self.check_refresh_static_invoices(peers, usable_channels, router, true);
 	}
 
 	fn check_refresh_async_offers(
@@ -1408,41 +1438,59 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// server, based on the offers provided by the cache.
 	fn check_refresh_static_invoices<R: Router>(
 		&self, peers: Vec<MessageForwardNode>, usable_channels: Vec<ChannelDetails>, router: R,
+		force_refresh: bool,
 	) {
 		let mut serve_static_invoice_msgs = Vec::new();
 		{
 			let duration_since_epoch = self.duration_since_epoch();
 			let cache = self.async_receive_offer_cache.lock().unwrap();
-			for offer_and_metadata in cache.offers_needing_invoice_refresh(duration_since_epoch) {
-				let (offer, offer_nonce, update_static_invoice_path) = offer_and_metadata;
 
-				let (invoice, forward_invreq_path) = match self.create_static_invoice_for_server(
-					offer,
-					offer_nonce,
-					peers.clone(),
-					usable_channels.clone(),
-					&router,
-				) {
-					Ok((invoice, path)) => (invoice, path),
-					Err(()) => continue,
-				};
+			// Both timer-driven and forced refreshes build the same update message. Keep the
+			// construction in one place so the only difference is which cached offers are selected.
+			macro_rules! build_refresh_message {
+				($offer: expr, $offer_nonce: expr, $update_static_invoice_path: expr) => {{
+					let (invoice, forward_invreq_path) = match self
+						.create_static_invoice_for_server(
+							$offer,
+							$offer_nonce,
+							peers.clone(),
+							usable_channels.clone(),
+							&router,
+						) {
+						Ok((invoice, path)) => (invoice, path),
+						Err(()) => continue,
+					};
 
-				let reply_path_context = {
-					MessageContext::AsyncPayments(AsyncPaymentsContext::StaticInvoicePersisted {
-						invoice_created_at: invoice.created_at(),
-						offer_id: offer.id(),
-					})
-				};
+					let reply_path_context = MessageContext::AsyncPayments(
+						AsyncPaymentsContext::StaticInvoicePersisted {
+							invoice_created_at: invoice.created_at(),
+							offer_id: $offer.id(),
+						},
+					);
 
-				let serve_invoice_message = ServeStaticInvoice {
-					invoice,
-					forward_invoice_request_path: forward_invreq_path,
-				};
-				serve_static_invoice_msgs.push((
-					serve_invoice_message,
-					update_static_invoice_path.clone(),
-					reply_path_context,
-				));
+					let serve_invoice_message = ServeStaticInvoice {
+						invoice,
+						forward_invoice_request_path: forward_invreq_path,
+					};
+					serve_static_invoice_msgs.push((
+						serve_invoice_message,
+						$update_static_invoice_path.clone(),
+						reply_path_context,
+					));
+				}};
+			}
+
+			if force_refresh {
+				for offer_and_metadata in cache.offers_needing_forced_invoice_refresh() {
+					let (offer, offer_nonce, update_static_invoice_path) = offer_and_metadata;
+					build_refresh_message!(offer, offer_nonce, update_static_invoice_path);
+				}
+			} else {
+				for offer_and_metadata in cache.offers_needing_invoice_refresh(duration_since_epoch)
+				{
+					let (offer, offer_nonce, update_static_invoice_path) = offer_and_metadata;
+					build_refresh_message!(offer, offer_nonce, update_static_invoice_path);
+				}
 			}
 		}
 
