@@ -375,6 +375,29 @@ fn expect_offer_paths_requests(recipient: &Node, next_hop_nodes: &[&Node]) {
 	assert!(!offer_paths_reqs.is_empty());
 }
 
+fn extract_direct_serve_static_invoice_updates(
+	recipient: &Node, server: &Node,
+) -> Vec<msgs::OnionMessage> {
+	// A timer tick may do two independent async-recipient jobs: refresh static invoices and request
+	// new offer paths for the cache. This helper drains both from the recipient's outbound queue and
+	// returns only the static invoice updates we are asserting on.
+	let pending_oms = recipient.onion_messenger.release_pending_msgs();
+	let mut serve_static_invoices = Vec::new();
+	for (peer, msgs) in pending_oms {
+		assert_eq!(peer, server.node.get_our_node_id());
+		for om in msgs {
+			match server.onion_messenger.peel_onion_message(&om).unwrap() {
+				PeeledOnion::AsyncPayments(AsyncPaymentsMessage::ServeStaticInvoice(_), _, _) => {
+					serve_static_invoices.push(om);
+				},
+				PeeledOnion::AsyncPayments(AsyncPaymentsMessage::OfferPathsRequest(_), _, _) => {},
+				_ => panic!("Unexpected message"),
+			}
+		}
+	}
+	serve_static_invoices
+}
+
 fn extract_invoice_request_om<'a>(
 	payer: &'a Node, next_hop_nodes: &[&'a Node],
 ) -> (PublicKey, msgs::OnionMessage) {
@@ -2505,6 +2528,77 @@ fn refresh_static_invoices_for_used_offers() {
 	let keysend_preimage = extract_payment_preimage(&claimable_ev);
 	let res = claim_payment_along_route(ClaimAlongRouteArgs::new(sender, route, keysend_preimage));
 	assert_eq!(res.0, Some(PaidBolt12Invoice::StaticInvoice(updated_invoice)));
+}
+
+#[cfg_attr(feature = "std", ignore)]
+#[test]
+fn refresh_static_invoices_after_channel_update() {
+	// Check that channel updates force cached used-offer invoices to refresh on the next timer tick,
+	// even before the normal invoice refresh threshold has passed.
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	let chan_id =
+		create_unannounced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0).0.channel_id;
+	let server = &nodes[0];
+	let recipient = &nodes[1];
+	let server_node_id = server.node.get_our_node_id();
+	let recipient_node_id = recipient.node.get_our_node_id();
+
+	// Ignore refresh state from initial channel setup; this test covers the
+	// explicit channel config update below.
+	recipient.node.timer_tick_occurred();
+
+	let recipient_id = vec![42; 32];
+	let inv_server_paths =
+		server.node.blinded_paths_for_async_recipient(recipient_id.clone(), None).unwrap();
+	recipient.node.set_paths_to_static_invoice_server(inv_server_paths).unwrap();
+	expect_offer_paths_requests(recipient, &[server]);
+
+	let flow_res = pass_static_invoice_server_messages(server, recipient, recipient_id.clone());
+	let original_invoice = flow_res.invoice;
+	let _offer = recipient.node.get_async_receive_offer().unwrap();
+
+	server.message_router.peers_override.lock().unwrap().push(recipient_node_id);
+	recipient.message_router.peers_override.lock().unwrap().push(server_node_id);
+
+	assert!(extract_direct_serve_static_invoice_updates(recipient, server).is_empty());
+
+	let channel = server
+		.node
+		.list_channels()
+		.into_iter()
+		.find(|channel| channel.channel_id == chan_id)
+		.unwrap();
+	let mut new_config = channel.config.unwrap();
+	new_config.forwarding_fee_base_msat += 10;
+	server.node.update_channel_config(&recipient_node_id, &[chan_id], &new_config).unwrap();
+	let server_channel_update =
+		get_event_msg!(server, MessageSendEvent::SendChannelUpdate, recipient_node_id);
+	recipient.node.handle_channel_update(server_node_id, &server_channel_update);
+
+	recipient.node.timer_tick_occurred();
+	let serve_static_invoice_msgs = extract_direct_serve_static_invoice_updates(recipient, server);
+	assert_eq!(serve_static_invoice_msgs.len(), 1);
+
+	recipient.node.timer_tick_occurred();
+	assert!(extract_direct_serve_static_invoice_updates(recipient, server).is_empty());
+
+	server.onion_messenger.handle_onion_message(recipient_node_id, &serve_static_invoice_msgs[0]);
+	let mut events = server.node.get_and_clear_pending_events();
+	assert_eq!(events.len(), 1);
+	match events.pop().unwrap() {
+		Event::PersistStaticInvoice { invoice, invoice_slot, recipient_id: ev_id, .. } => {
+			assert_ne!(original_invoice, invoice);
+			assert_eq!(flow_res.invoice_slot, invoice_slot);
+			assert_eq!(recipient_id, ev_id);
+		},
+		_ => panic!(),
+	}
+
+	server.message_router.peers_override.lock().unwrap().clear();
+	recipient.message_router.peers_override.lock().unwrap().clear();
 }
 
 #[cfg_attr(feature = "std", ignore)]
