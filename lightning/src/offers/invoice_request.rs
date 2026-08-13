@@ -83,7 +83,7 @@ use crate::offers::offer::{
 };
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
-use crate::offers::signer::{Metadata, MetadataMaterial};
+use crate::offers::signer::{self, Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
@@ -1102,14 +1102,31 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 macro_rules! invoice_request_verify_method {
 	($self: ident, $self_type: ty) => {
 		/// Verifies the recurrence previous state echoed by the payer and resolves the recurrence
-		/// basetime to reuse for subsequent invoices.
-		///
-		/// Returns `Ok(None)` until state validation and basetime recovery are implemented.
+		/// basetime to reuse for subsequent invoices. This token-backed state provides stateless
+		/// continuity and basetime recovery for the automatic LDK payee flow. Remote payees may omit
+		/// next-state from an invoice, in which case no token is required by the wire format.
 		pub(crate) fn verify_recurrence_prev_state(
-			$self: &$self_type, _key: &ExpandedKey,
+			$self: &$self_type, offer_id: OfferId, key: &ExpandedKey,
 		) -> Result<Option<u64>, ()> {
-			// Previous-state validation and basetime recovery are introduced in a follow-up commit.
-			Ok(None)
+			let recurrence = match $self.contents.invoice_request_recurrence() {
+				Some(recurrence) => recurrence,
+				None => return Ok(None),
+			};
+
+			let (counter, start, prev_state, _) = recurrence.fields();
+			let counter = counter.ok_or(())?;
+			match prev_state {
+				Some(prev_state) => signer::verify_recurrence_prev_state(
+					prev_state,
+					offer_id,
+					$self.contents.payer_signing_pubkey(),
+					counter,
+					start,
+					key,
+				)
+				.map(Some),
+				None => Ok(None),
+			}
 		}
 
 /// Verifies that the request was for an offer created using the given key by checking the
@@ -1139,7 +1156,7 @@ macro_rules! invoice_request_verify_method {
 				{ $self.clone() }
 			};
 
-			let resolved_basetime = inner.verify_recurrence_prev_state(key)?;
+			let resolved_basetime = inner.verify_recurrence_prev_state(offer_id, key)?;
 
 			let verified = match keys {
 				None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
@@ -1188,7 +1205,7 @@ macro_rules! invoice_request_verify_method {
 				{ $self.clone() }
 			};
 
-			let resolved_basetime = inner.verify_recurrence_prev_state(key)?;
+			let resolved_basetime = inner.verify_recurrence_prev_state(offer_id, key)?;
 
 			let verified = match keys {
 				None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
