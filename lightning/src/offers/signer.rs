@@ -550,3 +550,127 @@ fn hmac_for_message<'a>(
 
 	Ok(hmac)
 }
+
+#[cfg(test)]
+mod tests {
+	use super::{
+		create_recurrence_next_state, verify_recurrence_prev_state, ExpandedKey, Nonce, OfferId,
+	};
+	use crate::offers::test_utils::{payer_pubkey, recipient_pubkey};
+
+	#[test]
+	fn verifies_recurrence_state_token() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let offer_id = OfferId([1; 32]);
+		let payer_signing_pubkey = payer_pubkey();
+		let basetime = 123_456;
+		let current_counter = 3;
+		let next_counter = 4;
+		let start = Some(2);
+		let nonce = Nonce([3; Nonce::LENGTH]);
+
+		let token = create_recurrence_next_state(
+			offer_id,
+			payer_signing_pubkey,
+			basetime,
+			current_counter,
+			start,
+			nonce,
+			&expanded_key,
+		)
+		.unwrap();
+
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token,
+				offer_id,
+				payer_signing_pubkey,
+				next_counter,
+				start,
+				&expanded_key
+			),
+			Ok(basetime)
+		);
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token,
+				OfferId([2; 32]),
+				payer_signing_pubkey,
+				next_counter,
+				start,
+				&expanded_key
+			),
+			Err(())
+		);
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token,
+				offer_id,
+				recipient_pubkey(),
+				next_counter,
+				start,
+				&expanded_key
+			),
+			Err(())
+		);
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token,
+				offer_id,
+				payer_signing_pubkey,
+				current_counter,
+				start,
+				&expanded_key
+			),
+			Err(())
+		);
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token,
+				offer_id,
+				payer_signing_pubkey,
+				next_counter,
+				None,
+				&expanded_key
+			),
+			Err(())
+		);
+
+		let mut tampered_token = token.clone();
+		tampered_token[0] ^= 1;
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&tampered_token,
+				offer_id,
+				payer_signing_pubkey,
+				next_counter,
+				start,
+				&expanded_key
+			),
+			Err(())
+		);
+		assert_eq!(
+			verify_recurrence_prev_state(
+				&token[..token.len() - 1],
+				offer_id,
+				payer_signing_pubkey,
+				next_counter,
+				start,
+				&expanded_key
+			),
+			Err(())
+		);
+		assert_eq!(
+			create_recurrence_next_state(
+				offer_id,
+				payer_signing_pubkey,
+				basetime,
+				u32::MAX,
+				start,
+				nonce,
+				&expanded_key
+			),
+			Err(())
+		);
+	}
+}
