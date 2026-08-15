@@ -506,6 +506,12 @@ macro_rules! offer_builder_test_methods { (
 	}
 
 	#[cfg_attr(c_bindings, allow(dead_code))]
+	pub(crate) fn recurrence($($self_mut)* $self: $self_type, recurrence: Recurrence) -> $return_type {
+		$self.offer.offer_recurrence = Some(recurrence);
+		$return_value
+	}
+
+	#[cfg_attr(c_bindings, allow(dead_code))]
 	pub(super) fn experimental_foo($($self_mut)* $self: $self_type, experimental_foo: u64) -> $return_type {
 		$self.offer.experimental_foo = Some(experimental_foo);
 		$return_value
