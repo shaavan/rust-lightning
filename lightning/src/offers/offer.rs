@@ -657,7 +657,7 @@ pub enum RecurrencePeriod {
 impl RecurrencePeriod {
 	const SECONDS_PER_DAY: u64 = 86_400;
 
-	fn start_time(self, basetime: u64, period_count: u32) -> Result<u64, ()> {
+	pub(crate) fn start_time(self, basetime: u64, period_count: u32) -> Result<u64, ()> {
 		match self {
 			RecurrencePeriod::Seconds(seconds) => {
 				let offset = u64::from(seconds).checked_mul(period_count.into()).ok_or(())?;

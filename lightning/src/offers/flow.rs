@@ -44,7 +44,7 @@ use crate::offers::invoice_request::{
 	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer, VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
+use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder, RecurrenceType};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
 use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
@@ -481,7 +481,83 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
 
+		self.verify_recurrent_invoice_request(&invoice_request)?;
+
 		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+	}
+
+	fn verify_recurrent_invoice_request(
+		&self, invoice_request: &InvoiceRequestVerifiedFromOffer,
+	) -> Result<(), ()> {
+		let recurrence = match invoice_request.invoice_request_recurrence() {
+			Some(recurrence) => recurrence,
+			None => return Ok(()),
+		};
+
+		let (counter, _start, prev_state, cancel) = recurrence.fields();
+		let counter = counter.ok_or(())?;
+		// Follow-up invoice requests must prove continuity before we issue another invoice.
+		if counter > 0 && prev_state.is_none() {
+			debug_assert!(
+				false,
+				"`recurrence_prev_state` must have been verified before `InvoiceRequestVerifiedFromOffer` was created."
+			);
+			return Err(());
+		}
+		// Requests outside their paywindow should not receive payable invoices.
+		if !self.is_invoice_request_within_recurrence_paywindow(invoice_request)? {
+			return Err(());
+		}
+		// TODO: Cancellation handling is deferred until we have a clear recipient API for it.
+		if cancel.is_some() {
+			return Err(());
+		}
+
+		Ok(())
+	}
+
+	fn is_invoice_request_within_recurrence_paywindow(
+		&self, invoice_request: &InvoiceRequestVerifiedFromOffer,
+	) -> Result<bool, ()> {
+		let recurrence = invoice_request.invoice_request_recurrence().as_ref().ok_or(())?;
+		let offer_recurrence = invoice_request.offer_recurrence().ok_or(())?;
+
+		let period_index = recurrence.period_index()?;
+		let counter = recurrence.fields().0.ok_or(())?;
+		let now = self.duration_since_epoch().as_secs();
+		let basetime = match offer_recurrence.recurrence_type {
+			RecurrenceType::Compulsory(Some(base)) => base.basetime,
+			RecurrenceType::Optional | RecurrenceType::Compulsory(None) if counter == 0 => now,
+			RecurrenceType::Optional | RecurrenceType::Compulsory(None) => match invoice_request {
+				InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
+					request.resolved_basetime.ok_or(())?
+				},
+				InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => {
+					request.resolved_basetime.ok_or(())?
+				},
+			},
+		};
+
+		let period_start = offer_recurrence.recurrence_period.start_time(basetime, period_index)?;
+		match offer_recurrence.recurrence_paywindow {
+			Some(paywindow) => {
+				let start = period_start.saturating_sub(paywindow.seconds_before.into());
+				let end = period_start.checked_add(paywindow.seconds_after.into()).ok_or(())?;
+				Ok(now >= start && now <= end)
+			},
+			None => {
+				let start = match period_index {
+					0 => period_start,
+					index => offer_recurrence
+						.recurrence_period
+						.start_time(basetime, index.checked_sub(1).ok_or(())?)?,
+				};
+				let end = offer_recurrence
+					.recurrence_period
+					.start_time(basetime, period_index.checked_add(1).ok_or(())?)?;
+				Ok(now >= start && now < end)
+			},
+		}
 	}
 
 	/// Verifies a [`Bolt12Invoice`] using the invoice's payer metadata, returning the
