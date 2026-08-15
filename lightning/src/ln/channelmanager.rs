@@ -17870,6 +17870,7 @@ impl<
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
+							&self.entropy_source,
 						);
 
 						match result {
@@ -17895,6 +17896,7 @@ impl<
 							self.list_usable_channels(),
 							get_payment_info,
 							payment_metadata,
+							&self.entropy_source,
 						);
 
 						match result {
