@@ -428,6 +428,21 @@ macro_rules! invoice_builder_methods {
 			Ok(Some(InvoiceRecurrence::new(recurrence_basetime, None)))
 		}
 
+		pub(crate) fn set_recurrence_next_state(
+			$($self_mut)* $self: $self_type, recurrence_next_state: Vec<u8>,
+		) -> Result<$return_type, Bolt12SemanticError> {
+			// The builder only has recurrence fields when it was created from a recurring
+			// invoice request. Rejecting here catches callers that try to attach state to
+			// a regular invoice.
+			match $self.invoice.fields_mut().invoice_recurrence.as_mut() {
+				Some(invoice_recurrence) => {
+					invoice_recurrence.recurrence_next_state = Some(recurrence_next_state);
+					Ok($return_value)
+				},
+				None => Err(Bolt12SemanticError::UnexpectedRecurrence),
+			}
+		}
+
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		fn fields(
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,

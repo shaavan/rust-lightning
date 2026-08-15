@@ -693,6 +693,44 @@ impl InvoiceRequestVerifiedFromOffer {
 	}
 }
 
+impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Creates the next-state token for an invoice produced by the automatic LDK payee flow.
+	///
+	/// This flow always emits a token, so a subsequent request handled by the same flow must echo
+	/// it in `prev_state`; missing state is a mismatch. This requirement is separate from payer
+	/// interoperability with remote payees, which may omit next-state from their invoices.
+	pub(crate) fn create_recurrence_next_state(
+		&self, created_at: core::time::Duration, nonce: Nonce, key: &ExpandedKey,
+	) -> Result<Vec<u8>, Bolt12SemanticError> {
+		let recurrence = match self.inner.invoice_request_recurrence() {
+			Some(recurrence) => recurrence,
+			None => return Err(Bolt12SemanticError::UnexpectedRecurrence),
+		};
+
+		let (counter, start, prev_state, _) = recurrence.fields();
+		let counter = counter.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		if counter > 0 && prev_state.is_none() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+
+		let recurrence_basetime = self
+			.inner
+			.recurrence_basetime(created_at, self.resolved_basetime)?
+			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+
+		signer::create_recurrence_next_state(
+			self.offer_id,
+			self.inner.payer_signing_pubkey(),
+			recurrence_basetime,
+			counter,
+			start,
+			nonce,
+			key,
+		)
+		.map_err(|_| Bolt12SemanticError::InvalidRecurrence)
+	}
+}
+
 /// The contents of an [`InvoiceRequest`], which may be shared with an [`Bolt12Invoice`].
 ///
 /// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice

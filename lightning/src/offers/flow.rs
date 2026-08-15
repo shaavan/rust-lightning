@@ -971,10 +971,15 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, R: Router, F>(
+	pub fn create_invoice_builder_from_invoice_request_with_keys<
+		'a,
+		R: Router,
+		F,
+		ES: EntropySource,
+	>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
-		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
+		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>, entropy_source: &ES,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
@@ -1003,15 +1008,27 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_using_derived_keys_no_std(
+		let created_at = self.duration_since_epoch();
+
+		let mut builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
 			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+			created_at,
+		)?;
+
+		// Keep the common invoice path unchanged. The automatic LDK payee flow always emits a fresh
+		// token for recurring invoice requests, which must be echoed by its next request.
+		if invoice_request.invoice_request_recurrence().is_some() {
+			let nonce = Nonce::from_entropy_source(entropy_source);
+			let recurrence_next_state = invoice_request.create_recurrence_next_state(
+				created_at,
+				nonce,
+				&self.inbound_payment_key,
+			)?;
+			builder = builder.set_recurrence_next_state(recurrence_next_state)?;
+		}
+
+		let builder = InvoiceBuilder::from(builder).allow_mpp();
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
@@ -1032,10 +1049,15 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, R: Router, F>(
+	pub fn create_invoice_builder_from_invoice_request_without_keys<
+		'a,
+		R: Router,
+		F,
+		ES: EntropySource,
+	>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
-		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
+		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>, entropy_source: &ES,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
@@ -1064,16 +1086,24 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_with_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
+		let created_at = self.duration_since_epoch();
 
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		let mut builder =
+			invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at)?;
+
+		// Keep the common invoice path unchanged. The automatic LDK payee flow always emits a fresh
+		// token for recurring invoice requests, which must be echoed by its next request.
+		if invoice_request.invoice_request_recurrence().is_some() {
+			let nonce = Nonce::from_entropy_source(entropy_source);
+			let recurrence_next_state = invoice_request.create_recurrence_next_state(
+				created_at,
+				nonce,
+				&self.inbound_payment_key,
+			)?;
+			builder = builder.set_recurrence_next_state(recurrence_next_state)?;
+		}
+
+		let builder = InvoiceBuilder::from(builder).allow_mpp();
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
