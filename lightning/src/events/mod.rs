@@ -32,6 +32,7 @@ use crate::ln::outbound_payment::RecipientOnionFields;
 use crate::ln::types::ChannelId;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::offer::OfferId;
 pub use crate::offers::payer_proof::PaidBolt12Invoice;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::messenger::Responder;
@@ -1984,6 +1985,24 @@ pub enum Event {
 		/// [`ChannelManager::respond_to_static_invoice_request`]: crate::ln::channelmanager::ChannelManager::respond_to_static_invoice_request
 		invoice_request: InvoiceRequest,
 	},
+	/// Indicates that a payer cancelled a recurring payment for one of our offers.
+	///
+	/// The cancellation request has already been verified against the offer, the payer's signing
+	/// pubkey, the recurrence state from the previous invoice, and the recurrence pay window. No
+	/// invoice will be sent in response.
+	///
+	/// Use `offer_id` and `payer_signing_pubkey` to find and remove the recurrence state tracked by
+	/// the recipient.
+	///
+	/// # Failure Behavior and Persistence
+	/// This event will eventually be replayed after failures-to-handle (i.e., the event handler
+	/// returning `Err(ReplayEvent ())`) and will be persisted across restarts.
+	RecurringOfferCancelled {
+		/// The offer whose recurrence was cancelled.
+		offer_id: OfferId,
+		/// The payer signing pubkey used for this recurrence.
+		payer_signing_pubkey: PublicKey,
+	},
 	/// Indicates that a channel funding transaction constructed interactively is ready to be
 	/// signed. This event will only be triggered if a contribution was made to the transaction.
 	///
@@ -2550,6 +2569,13 @@ impl Writeable for Event {
 					(7, counterparty_node_id, required),
 					(11, reason, required),
 					(13, contribution, option),
+				});
+			},
+			&Event::RecurringOfferCancelled { ref offer_id, ref payer_signing_pubkey } => {
+				54u8.write(writer)?;
+				write_tlv_fields!(writer, {
+					(0, offer_id, required),
+					(2, payer_signing_pubkey, required),
 				});
 			},
 			// Note that, going forward, all new events must only write data inside of
@@ -3212,6 +3238,19 @@ impl MaybeReadable for Event {
 						counterparty_node_id: counterparty_node_id.0.unwrap(),
 						reason: reason.unwrap_or(NegotiationFailureReason::Unknown),
 						contribution,
+					}))
+				};
+				f()
+			},
+			54u8 => {
+				let mut f = || {
+					_init_and_read_len_prefixed_tlv_fields!(reader, {
+						(0, offer_id, required),
+						(2, payer_signing_pubkey, required),
+					});
+					Ok(Some(Event::RecurringOfferCancelled {
+						offer_id: offer_id.0.unwrap(),
+						payer_signing_pubkey: payer_signing_pubkey.0.unwrap(),
 					}))
 				};
 				f()

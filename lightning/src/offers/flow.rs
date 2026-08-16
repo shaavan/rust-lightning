@@ -395,6 +395,8 @@ pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
 	SendInvoice(InvoiceRequestVerifiedFromOffer),
+	/// We are the recipient of this payment, and the payer cancelled a verified recurring offer.
+	CancelRecurringOffer(InvoiceRequestVerifiedFromOffer),
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_slot` and calling
 	/// [`OffersMessageFlow::enqueue_static_invoice`].
@@ -483,7 +485,21 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 		self.verify_recurrent_invoice_request(&invoice_request)?;
 
-		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+		if self.is_recurrence_cancellation(&invoice_request) {
+			Ok(InvreqResponseInstructions::CancelRecurringOffer(invoice_request))
+		} else {
+			Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
+		}
+	}
+
+	fn is_recurrence_cancellation(
+		&self, invoice_request: &InvoiceRequestVerifiedFromOffer,
+	) -> bool {
+		invoice_request
+			.invoice_request_recurrence()
+			.as_ref()
+			.map(|recurrence| recurrence.fields().3.is_some())
+			.unwrap_or(false)
 	}
 
 	fn verify_recurrent_invoice_request(
@@ -494,7 +510,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => return Ok(()),
 		};
 
-		let (counter, _start, prev_state, cancel) = recurrence.fields();
+		let (counter, _start, prev_state, _cancel) = recurrence.fields();
 		let counter = counter.ok_or(())?;
 		// Follow-up invoice requests must prove continuity before we issue another invoice.
 		if counter > 0 && prev_state.is_none() {
@@ -508,11 +524,6 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		if !self.is_invoice_request_within_recurrence_paywindow(invoice_request)? {
 			return Err(());
 		}
-		// TODO: Cancellation handling is deferred until we have a clear recipient API for it.
-		if cancel.is_some() {
-			return Err(());
-		}
-
 		Ok(())
 	}
 
