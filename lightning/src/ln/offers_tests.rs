@@ -3140,15 +3140,19 @@ fn send_recurring_invoice_request<'a, 'b, 'c>(
 		include_prev_state,
 	);
 	let payer_signing_pubkey = invoice_request.payer_signing_pubkey();
+	let instructions = if recurrence_cancel {
+		MessageSendInstructions::WithoutReplyPath {
+			destination: Destination::BlindedPath(offer.paths()[0].clone()),
+		}
+	} else {
+		MessageSendInstructions::WithSpecifiedReplyPath {
+			destination: Destination::BlindedPath(offer.paths()[0].clone()),
+			reply_path,
+		}
+	};
 	payer
 		.onion_messenger
-		.send_onion_message(
-			OffersMessage::InvoiceRequest(invoice_request),
-			MessageSendInstructions::WithSpecifiedReplyPath {
-				destination: Destination::BlindedPath(offer.paths()[0].clone()),
-				reply_path,
-			},
-		)
+		.send_onion_message(OffersMessage::InvoiceRequest(invoice_request), instructions)
 		.unwrap();
 
 	let invoice_request_onion = payer.onion_messenger.next_onion_message_for_peer(payee_id).unwrap();
@@ -3293,6 +3297,61 @@ fn enforces_recurring_invoice_request_payment_window_boundaries() {
 	check_request(explicit_recurrence(now - 60, None), 1, Some(0), Some(now - 60), true);
 	check_request(explicit_recurrence(now - 120, None), 1, Some(0), Some(now - 120), false);
 
+}
+
+#[test]
+fn emits_event_for_recurring_invoice_request_cancellation() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let bob_id = bob.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+
+	// Cancellation requests must bypass paywindow validation. Place this first follow-up 600
+	// seconds after its resolved anchor, well outside the default two-period window for the
+	// 60-second recurrence, so the test catches accidental invoice-style paywindow gating.
+	let recurrence_basetime = alice.node.duration_since_epoch().as_secs() - 600;
+
+	let payer_signing_pubkey = send_recurring_invoice_request(
+		alice,
+		bob,
+		&offer,
+		PaymentId([4; 32]),
+		1,
+		None,
+		Some(recurrence_basetime),
+		true,
+		true
+	);
+
+	assert!(alice.onion_messenger.next_onion_message_for_peer(bob_id).is_none());
+	let events = alice.node.get_and_clear_pending_events();
+	assert_eq!(events.len(), 1);
+	let event = events[0].clone();
+	match &event {
+		Event::RecurringOfferCancelled { offer_id, payer_signing_pubkey: event_pubkey } => {
+			assert_eq!(*offer_id, offer.id());
+			assert_eq!(*event_pubkey, payer_signing_pubkey);
+		},
+		_ => panic!("Unexpected event"),
+	}
+
+	let encoded = event.encode();
+	// Persist the event before handling it, then deserialize it as a restarted node would.
+	let mut persisted_event = Some(encoded);
+	let decoded = Event::read(&mut &persisted_event.as_ref().unwrap()[..]).unwrap().unwrap();
+	assert_eq!(decoded, event);
+	assert!(persisted_event.is_some());
+
+	// The persisted event is removed only after the recipient successfully handles it.
+	persisted_event = None;
+	assert!(persisted_event.is_none());
 }
 
 /// Checks that a BOLT 12 invoice can be paid via [`ChannelManager::pay_for_bolt12_invoice`]
