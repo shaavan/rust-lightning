@@ -1903,3 +1903,205 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		self.async_receive_offer_cache.encode()
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+
+	use bitcoin::secp256k1::SecretKey;
+
+	use crate::ln::inbound_payment::ExpandedKey;
+	use crate::offers::invoice_request::invoice_request_with_recurrence_for_test;
+	use crate::offers::offer::{Recurrence, RecurrenceBase, RecurrencePeriod};
+	use crate::onion_message::messenger::OnionMessagePath;
+	use crate::util::test_utils::TestLogger;
+
+	struct TestMessageRouter;
+
+	impl MessageRouter for TestMessageRouter {
+		fn find_path(
+			&self, _sender: PublicKey, _peers: Vec<PublicKey>, _destination: Destination,
+		) -> Result<OnionMessagePath, ()> {
+			unimplemented!()
+		}
+
+		fn create_blinded_paths<T: secp256k1::Signing + secp256k1::Verification>(
+			&self, _recipient: PublicKey, _local_node_receive_key: ReceiveAuthKey,
+			_context: MessageContext, _peers: Vec<MessageForwardNode>, _secp_ctx: &Secp256k1<T>,
+		) -> Result<Vec<BlindedMessagePath>, ()> {
+			unimplemented!()
+		}
+	}
+
+	type TestOffersMessageFlow = OffersMessageFlow<TestMessageRouter, TestLogger>;
+
+	fn pubkey(byte: u8) -> PublicKey {
+		let secp_ctx = Secp256k1::new();
+		let secret_key = SecretKey::from_slice(&[byte; 32]).unwrap();
+		PublicKey::from_secret_key(&secp_ctx, &secret_key)
+	}
+
+	fn payment_id(byte: u8) -> PaymentId {
+		PaymentId([byte; 32])
+	}
+
+	#[test]
+	fn expects_no_invoice_recurrence_for_non_recurring_request() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(pubkey(2)).amount_msats(1000).build().unwrap();
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id(3))
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(&invoice_request, None),
+			Ok(ExpectedInvoiceRecurrenceBasetime::None)
+		);
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(
+				&invoice_request,
+				Some(123_456)
+			),
+			Err(Bolt12SemanticError::InvalidRecurrence)
+		);
+	}
+
+	#[test]
+	fn expects_offer_basetime_for_recurrence_with_explicit_base() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let recurrence_base = RecurrenceBase { proportional: false, basetime: 123_456 };
+		let offer = OfferBuilder::new(pubkey(2))
+			.amount_msats(1000)
+			.recurrence(Recurrence {
+				recurrence_type: RecurrenceType::Compulsory(Some(recurrence_base)),
+				recurrence_period: RecurrencePeriod::Months(1),
+				recurrence_paywindow: None,
+				recurrence_limit: None,
+			})
+			.build()
+			.unwrap();
+		let invoice_request = invoice_request_with_recurrence_for_test(
+			&offer,
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+			payment_id(3),
+			offer.chains()[0],
+			0,
+			Some(2),
+			None,
+			false,
+			true,
+		);
+
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(&invoice_request, None),
+			Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(recurrence_base.basetime))
+		);
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(
+				&invoice_request,
+				Some(recurrence_base.basetime)
+			),
+			Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(recurrence_base.basetime))
+		);
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(
+				&invoice_request,
+				Some(recurrence_base.basetime + 1)
+			),
+			Err(Bolt12SemanticError::InvalidRecurrence)
+		);
+	}
+
+	#[test]
+	fn expects_created_at_for_first_recurrence_without_explicit_base() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(pubkey(2))
+			.amount_msats(1000)
+			.recurrence(Recurrence {
+				recurrence_type: RecurrenceType::Optional,
+				recurrence_period: RecurrencePeriod::Days(7),
+				recurrence_paywindow: None,
+				recurrence_limit: None,
+			})
+			.build()
+			.unwrap();
+		let invoice_request = invoice_request_with_recurrence_for_test(
+			&offer,
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+			payment_id(3),
+			offer.chains()[0],
+			0,
+			None,
+			None,
+			false,
+			true,
+		);
+
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(&invoice_request, None),
+			Ok(ExpectedInvoiceRecurrenceBasetime::CreatedAt)
+		);
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(
+				&invoice_request,
+				Some(123_456)
+			),
+			Err(Bolt12SemanticError::InvalidRecurrence)
+		);
+	}
+
+	#[test]
+	fn expects_established_basetime_for_follow_up_recurrence_without_explicit_base() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let expected_basetime = 123_456;
+		let offer = OfferBuilder::new(pubkey(2))
+			.amount_msats(1000)
+			.recurrence(Recurrence {
+				recurrence_type: RecurrenceType::Optional,
+				recurrence_period: RecurrencePeriod::Days(7),
+				recurrence_paywindow: None,
+				recurrence_limit: None,
+			})
+			.build()
+			.unwrap();
+		let invoice_request = invoice_request_with_recurrence_for_test(
+			&offer,
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+			payment_id(3),
+			offer.chains()[0],
+			1,
+			None,
+			Some(expected_basetime),
+			false,
+			true,
+		);
+
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(&invoice_request, None),
+			Err(Bolt12SemanticError::InvalidRecurrence)
+		);
+		assert_eq!(
+			TestOffersMessageFlow::expected_invoice_recurrence_basetime(
+				&invoice_request,
+				Some(expected_basetime)
+			),
+			Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(expected_basetime))
+		);
+	}
+}

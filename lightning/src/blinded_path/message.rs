@@ -880,14 +880,19 @@ mod tests {
 	use bitcoin::network::Network;
 	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 
-	use crate::blinded_path::message::{BlindedMessagePath, MessageContext, MessageForwardNode};
+	use crate::blinded_path::message::{
+		BlindedMessagePath, ExpectedInvoiceRecurrenceBasetime, MessageContext, MessageForwardNode,
+		OffersContext,
+	};
 	use crate::blinded_path::IntroductionNode;
+	use crate::ln::channelmanager::PaymentId;
 	use crate::ln::msgs::{UnsignedChannelUpdate, MAX_VALUE_MSAT};
 	use crate::routing::gossip::{NetworkGraph, P2PGossipSync};
 	use crate::routing::test_utils::{add_channel, update_channel};
 	use crate::sign::ReceiveAuthKey;
 	use crate::sync::Arc;
 	use crate::types::features::ChannelFeatures;
+	use crate::util::ser::{BigSize, FixedLengthReader, Readable, Writeable};
 	use crate::util::test_utils::{TestKeysInterface, TestLogger};
 
 	fn channel_update(
@@ -923,6 +928,47 @@ mod tests {
 			entropy,
 			secp_ctx,
 		)
+	}
+
+	#[test]
+	fn outbound_offer_context_recurrence_basetime_is_backward_compatible() {
+		for expected in [
+			ExpectedInvoiceRecurrenceBasetime::None,
+			ExpectedInvoiceRecurrenceBasetime::Basetime(123_456),
+		] {
+			let context = OffersContext::OutboundPaymentForOffer {
+				payment_id: PaymentId([42; 32]),
+				expected_invoice_recurrence_basetime: expected.clone(),
+			};
+			let mut encoded = Vec::new();
+			context.write(&mut encoded).unwrap();
+			assert_eq!(encoded[0], 4);
+
+			let decoded = OffersContext::read(&mut encoded.as_slice()).unwrap();
+			assert_eq!(decoded, context);
+
+			let mut reader = &encoded[1..];
+			let stream_length = BigSize::read(&mut reader).unwrap();
+			let mut reader = FixedLengthReader::new(&mut reader, stream_length.0);
+			let mut types = Vec::new();
+			while reader.bytes_remain() {
+				let typ = BigSize::read(&mut reader).unwrap().0;
+				let value_length = BigSize::read(&mut reader).unwrap().0;
+				let mut value = FixedLengthReader::new(&mut reader, value_length);
+				match typ {
+					0 => {
+						let _: PaymentId = Readable::read(&mut value).unwrap();
+					},
+					typ if typ % 2 == 1 => {
+						// Legacy readers skip unknown odd context fields.
+					},
+					_ => panic!("legacy reader encountered unknown required field {}", typ),
+				}
+				value.eat_remaining().unwrap();
+				types.push(typ);
+			}
+			assert_eq!(types, vec![0, 1]);
+		}
 	}
 
 	#[test]
