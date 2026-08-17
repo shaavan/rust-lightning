@@ -1946,11 +1946,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 mod tests {
 	use super::*;
 
-	use bitcoin::secp256k1::SecretKey;
+	use bitcoin::hash_types::BlockHash;
+	use bitcoin::hashes::Hash;
+	use bitcoin::network::Network;
+	use bitcoin::secp256k1::{Keypair, SecretKey};
 
 	use crate::ln::inbound_payment::ExpandedKey;
+	use crate::offers::invoice::UnsignedBolt12Invoice;
 	use crate::offers::invoice_request::invoice_request_with_recurrence_for_test;
 	use crate::offers::offer::{Recurrence, RecurrenceBase, RecurrencePeriod};
+	use crate::offers::test_utils::{payment_hash, payment_paths};
 	use crate::onion_message::messenger::OnionMessagePath;
 	use crate::util::test_utils::TestLogger;
 
@@ -1981,6 +1986,86 @@ mod tests {
 
 	fn payment_id(byte: u8) -> PaymentId {
 		PaymentId([byte; 32])
+	}
+
+	fn test_flow() -> TestOffersMessageFlow {
+		TestOffersMessageFlow::new(
+			ChainHash::using_genesis_block(Network::Bitcoin),
+			BlockLocator::new(BlockHash::all_zeros(), 0),
+			pubkey(2),
+			0,
+			ExpandedKey::new([42; 32]),
+			ReceiveAuthKey([43; 32]),
+			Secp256k1::new(),
+			TestMessageRouter,
+			TestLogger::new(),
+		)
+	}
+
+	fn sign_invoice(message: &UnsignedBolt12Invoice) -> Result<secp256k1::schnorr::Signature, ()> {
+		let secp_ctx = Secp256k1::new();
+		let keypair =
+			Keypair::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[2; 32]).unwrap());
+		Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &keypair))
+	}
+
+	fn signed_invoice(
+		invoice_request: InvoiceRequest, offer_id: crate::offers::offer::OfferId,
+		resolved_basetime: Option<u64>, created_at: Duration,
+	) -> Bolt12Invoice {
+		VerifiedInvoiceRequest {
+			offer_id,
+			inner: invoice_request,
+			resolved_basetime,
+			keys: ExplicitSigningPubkey {},
+		}
+		.respond_with_no_std(payment_paths(), payment_hash(), created_at)
+		.unwrap()
+		.build()
+		.unwrap()
+		.sign(sign_invoice)
+		.unwrap()
+	}
+
+	fn outbound_offer_context(
+		expected_invoice_recurrence_basetime: ExpectedInvoiceRecurrenceBasetime,
+	) -> OffersContext {
+		OffersContext::OutboundPaymentForOffer {
+			payment_id: payment_id(3),
+			expected_invoice_recurrence_basetime,
+		}
+	}
+
+	fn recurring_invoice(
+		recurrence_counter: u32, recurrence_basetime: Option<u64>, created_at: Duration,
+	) -> Bolt12Invoice {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(pubkey(2))
+			.amount_msats(1000)
+			.recurrence(Recurrence {
+				recurrence_type: RecurrenceType::Optional,
+				recurrence_period: RecurrencePeriod::Days(7),
+				recurrence_paywindow: None,
+				recurrence_limit: None,
+			})
+			.build()
+			.unwrap();
+		let invoice_request = invoice_request_with_recurrence_for_test(
+			&offer,
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+			payment_id(3),
+			offer.chains()[0],
+			recurrence_counter,
+			None,
+			recurrence_basetime,
+			false,
+			true,
+		);
+		signed_invoice(invoice_request, offer.id(), recurrence_basetime, created_at)
 	}
 
 	#[test]
@@ -2140,6 +2225,88 @@ mod tests {
 				Some(expected_basetime)
 			),
 			Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(expected_basetime))
+		);
+	}
+
+	#[test]
+	fn verifies_invoice_without_unexpected_recurrence() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce([1; Nonce::LENGTH]);
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(pubkey(2)).amount_msats(1000).build().unwrap();
+		let invoice_request = offer
+			.request_invoice(&expanded_key, nonce, &secp_ctx, payment_id(3))
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let invoice =
+			signed_invoice(invoice_request, offer.id(), None, Duration::from_secs(123_456));
+		let context = outbound_offer_context(ExpectedInvoiceRecurrenceBasetime::None);
+
+		assert_eq!(test_flow().verify_bolt12_invoice(&invoice, Some(&context)), Ok(payment_id(3)));
+	}
+
+	#[test]
+	fn rejects_unexpected_invoice_recurrence() {
+		let created_at = Duration::from_secs(123_456);
+		let invoice = recurring_invoice(0, None, created_at);
+
+		assert_eq!(
+			TestOffersMessageFlow::verify_invoice_recurrence(
+				&invoice,
+				&ExpectedInvoiceRecurrenceBasetime::None
+			),
+			Err(())
+		);
+	}
+
+	#[test]
+	fn verifies_invoice_recurrence_created_at() {
+		let created_at = Duration::from_secs(123_456);
+		let invoice = recurring_invoice(0, None, created_at);
+		assert_eq!(
+			invoice.invoice_recurrence().unwrap().recurrence_basetime(),
+			invoice.created_at().as_secs()
+		);
+		assert_eq!(
+			TestOffersMessageFlow::verify_invoice_recurrence(
+				&invoice,
+				&ExpectedInvoiceRecurrenceBasetime::CreatedAt
+			),
+			Ok(())
+		);
+	}
+
+	#[test]
+	fn verifies_invoice_recurrence_basetime() {
+		let created_at = Duration::from_secs(123_456);
+		let recurrence_basetime = 111_111;
+		let invoice = recurring_invoice(1, Some(recurrence_basetime), created_at);
+		assert_eq!(
+			invoice.invoice_recurrence().unwrap().recurrence_basetime(),
+			recurrence_basetime
+		);
+		assert_eq!(
+			TestOffersMessageFlow::verify_invoice_recurrence(
+				&invoice,
+				&ExpectedInvoiceRecurrenceBasetime::Basetime(recurrence_basetime)
+			),
+			Ok(())
+		);
+	}
+
+	#[test]
+	fn rejects_invoice_recurrence_basetime_mismatch() {
+		let created_at = Duration::from_secs(123_456);
+		let recurrence_basetime = 111_111;
+		let invoice = recurring_invoice(1, Some(recurrence_basetime), created_at);
+
+		assert_eq!(
+			TestOffersMessageFlow::verify_invoice_recurrence(
+				&invoice,
+				&ExpectedInvoiceRecurrenceBasetime::Basetime(recurrence_basetime + 1)
+			),
+			Err(())
 		);
 	}
 }
