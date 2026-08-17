@@ -513,6 +513,16 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 		/// [`Bolt12Invoice::verify_using_metadata`]: crate::offers::invoice::Bolt12Invoice::verify_using_metadata
 		payment_id: PaymentId,
+
+		/// The recurrence basetime expected in the [`Bolt12Invoice`] received over this reply
+		/// path.
+		///
+		/// Non-recurring invoice requests use [`ExpectedInvoiceRecurrenceBasetime::None`].
+		/// Recurring invoice requests use this to remember whether the returned invoice should
+		/// establish or preserve the recurrence basetime.
+		///
+		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+		expected_invoice_recurrence_basetime: ExpectedInvoiceRecurrenceBasetime,
 	},
 	/// Context used by a [`BlindedMessagePath`] as a reply path for a [`Bolt12Invoice`].
 	///
@@ -526,6 +536,22 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice::payment_hash`]: crate::offers::invoice::Bolt12Invoice::payment_hash
 		payment_hash: PaymentHash,
 	},
+}
+
+/// The recurrence basetime expected in an invoice received through an invoice request's reply path.
+///
+/// This is stored in [`OffersContext::OutboundPaymentForOffer`] so the returned invoice can be
+/// validated against the recurrence state known when the invoice request was sent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExpectedInvoiceRecurrenceBasetime {
+	/// The invoice request was not recurring, so no recurrence basetime is expected.
+	None,
+	/// The invoice is expected to establish the recurrence basetime using its own
+	/// `invoice_created_at`.
+	CreatedAt,
+	/// The invoice is expected to use this `invoice_recurrence_basetime`, in seconds since the
+	/// Unix epoch.
+	Basetime(u64),
 }
 
 /// Contains data specific to an [`AsyncPaymentsMessage`].
@@ -706,7 +732,15 @@ impl_ser_tlv_based_enum!(OffersContext,
 	},
 	(4, OutboundPaymentForOffer) => {
 		(0, payment_id, required),
+		(2, expected_invoice_recurrence_basetime,
+			(default_value, ExpectedInvoiceRecurrenceBasetime::None)),
 	},
+);
+
+impl_ser_tlv_based_enum!(ExpectedInvoiceRecurrenceBasetime,
+	(0, None) => {},
+	(2, CreatedAt) => {},
+	{4, Basetime} => (),
 );
 
 impl_ser_tlv_based_enum!(AsyncPaymentsContext,
