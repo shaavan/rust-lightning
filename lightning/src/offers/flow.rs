@@ -20,7 +20,8 @@ use bitcoin::constants::ChainHash;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
 
 use crate::blinded_path::message::{
-	AsyncPaymentsContext, BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext,
+	AsyncPaymentsContext, BlindedMessagePath, ExpectedInvoiceRecurrenceBasetime, MessageContext,
+	MessageForwardNode, OffersContext,
 };
 use crate::blinded_path::payment::{
 	AsyncBolt12OfferContext, BlindedPaymentPath, Bolt12OfferContext, Bolt12RefundContext,
@@ -580,7 +581,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None if invoice.is_for_refund_without_paths() => {
 				invoice.verify_using_metadata(expanded_key, secp_ctx)
 			},
-			Some(&OffersContext::OutboundPaymentForOffer { payment_id }) => {
+			Some(&OffersContext::OutboundPaymentForOffer { payment_id, .. }) => {
 				if invoice.is_for_offer() {
 					invoice.verify_using_metadata(expanded_key, secp_ctx).and_then(|extracted| {
 						(extracted == payment_id).then(|| payment_id).ok_or(())
@@ -1210,7 +1211,12 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId,
 		peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
-		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer { payment_id });
+		let expected_invoice_recurrence_basetime =
+			Self::expected_invoice_recurrence_basetime(&invoice_request, None)?;
+		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			expected_invoice_recurrence_basetime,
+		});
 		let reply_paths = self
 			.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
@@ -1239,6 +1245,46 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		}
 
 		Ok(())
+	}
+
+	fn expected_invoice_recurrence_basetime(
+		invoice_request: &InvoiceRequest, expected_basetime: Option<u64>,
+	) -> Result<ExpectedInvoiceRecurrenceBasetime, Bolt12SemanticError> {
+		let Some(recurrence) = invoice_request.invoice_request_recurrence() else {
+			// A non-recurring request must receive a non-recurring invoice. Supplying a
+			// basetime would attempt to validate recurrence state for a request that did
+			// not request recurrence.
+			return match expected_basetime {
+				None => Ok(ExpectedInvoiceRecurrenceBasetime::None),
+				Some(_) => Err(Bolt12SemanticError::InvalidRecurrence),
+			};
+		};
+
+		let counter = recurrence.fields().0.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		let offer_recurrence =
+			invoice_request.offer_recurrence().ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+
+		// An explicit offer recurrence base determines the invoice basetime. A
+		// caller-provided basetime may confirm that value, but cannot replace it.
+		if let RecurrenceType::Compulsory(Some(base)) = offer_recurrence.recurrence_type {
+			return match expected_basetime {
+				Some(expected_basetime) if expected_basetime != base.basetime => {
+					Err(Bolt12SemanticError::InvalidRecurrence)
+				},
+				_ => Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(base.basetime)),
+			};
+		}
+
+		// Without an explicit offer recurrence base, the first invoice establishes the
+		// basetime from its creation time. Follow-up invoices must reuse that basetime,
+		// supplied as external recurrence state by the caller.
+		match (counter, expected_basetime) {
+			(0, None) => Ok(ExpectedInvoiceRecurrenceBasetime::CreatedAt),
+			(0, Some(_)) | (_, None) => Err(Bolt12SemanticError::InvalidRecurrence),
+			(_, Some(expected_basetime)) => {
+				Ok(ExpectedInvoiceRecurrenceBasetime::Basetime(expected_basetime))
+			},
+		}
 	}
 
 	/// Enqueues the created [`Bolt12Invoice`] corresponding to a [`Refund`] to be sent
