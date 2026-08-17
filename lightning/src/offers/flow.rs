@@ -568,6 +568,12 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - If an [`OffersContext::OutboundPaymentForOffer`] or
 	///   [`OffersContext::OutboundPaymentForRefund`] is provided, the extracted [`PaymentId`] must
 	///   also match the context's `payment_id`.
+	/// - If an [`OffersContext::OutboundPaymentForOffer`] is provided, the invoice's recurrence
+	///   fields must match the recurrence basetime expectation in the context.
+	///   The first invoice without an explicit offer basetime establishes that basetime from its
+	///   creation time; subsequent invoices must preserve the established value. An explicit offer
+	///   basetime must be preserved for both first and subsequent invoices.
+	/// - Basetime validation is independent of whether the invoice includes optional next-state.
 	/// - If no context is provided, the invoice must correspond to a [`Refund`] without blinded
 	///   paths.
 	/// - If neither condition is met, verification fails.
@@ -581,11 +587,23 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None if invoice.is_for_refund_without_paths() => {
 				invoice.verify_using_metadata(expanded_key, secp_ctx)
 			},
-			Some(&OffersContext::OutboundPaymentForOffer { payment_id, .. }) => {
+			Some(&OffersContext::OutboundPaymentForOffer {
+				payment_id,
+				ref expected_invoice_recurrence_basetime,
+			}) => {
 				if invoice.is_for_offer() {
-					invoice.verify_using_metadata(expanded_key, secp_ctx).and_then(|extracted| {
-						(extracted == payment_id).then(|| payment_id).ok_or(())
-					})
+					invoice
+						.verify_using_metadata(expanded_key, secp_ctx)
+						.and_then(|extracted| {
+							(extracted == payment_id).then(|| payment_id).ok_or(())
+						})
+						.and_then(|payment_id| {
+							Self::verify_invoice_recurrence(
+								invoice,
+								expected_invoice_recurrence_basetime,
+							)
+							.map(|_| payment_id)
+						})
 				} else {
 					Err(())
 				}
@@ -598,6 +616,26 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				} else {
 					Err(())
 				}
+			},
+			_ => Err(()),
+		}
+	}
+
+	fn verify_invoice_recurrence(
+		invoice: &Bolt12Invoice, expected: &ExpectedInvoiceRecurrenceBasetime,
+	) -> Result<(), ()> {
+		// Payer-side validation checks the basetime expectation separately from optional next-state;
+		// remote payees may omit next-state while still returning a valid recurring invoice.
+		let recurrence = invoice.invoice_recurrence();
+		match (expected, recurrence) {
+			(ExpectedInvoiceRecurrenceBasetime::None, None) => Ok(()),
+			(ExpectedInvoiceRecurrenceBasetime::CreatedAt, Some(recurrence)) => {
+				(recurrence.recurrence_basetime() == invoice.created_at().as_secs())
+					.then(|| ())
+					.ok_or(())
+			},
+			(ExpectedInvoiceRecurrenceBasetime::Basetime(basetime), Some(recurrence)) => {
+				(recurrence.recurrence_basetime() == *basetime).then(|| ()).ok_or(())
 			},
 			_ => Err(()),
 		}
