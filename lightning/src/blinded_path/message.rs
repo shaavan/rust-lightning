@@ -513,6 +513,22 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 		/// [`Bolt12Invoice::verify_using_metadata`]: crate::offers::invoice::Bolt12Invoice::verify_using_metadata
 		payment_id: PaymentId,
+
+		/// The recurrence basetime expected in the [`Bolt12Invoice`] received over this reply
+		/// path.
+		///
+		/// Non-recurring invoice requests use [`ExpectedInvoiceRecurrenceBasetime::None`].
+		/// An initial recurring request without an offer basetime uses
+		/// [`ExpectedInvoiceRecurrenceBasetime::CreatedAt`], while subsequent requests use
+		/// [`ExpectedInvoiceRecurrenceBasetime::Basetime`] to preserve the previously resolved
+		/// value. An offer with an explicit basetime uses `Basetime` for both initial and subsequent
+		/// requests.
+		///
+		/// This expectation is serialized with the reply-path context, so it survives a restart and
+		/// applies the same recurrence-basetime validation when the invoice is received later.
+		///
+		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+		expected_invoice_recurrence_basetime: ExpectedInvoiceRecurrenceBasetime,
 	},
 	/// Context used by a [`BlindedMessagePath`] as a reply path for a [`Bolt12Invoice`].
 	///
@@ -526,6 +542,23 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice::payment_hash`]: crate::offers::invoice::Bolt12Invoice::payment_hash
 		payment_hash: PaymentHash,
 	},
+}
+
+/// The recurrence basetime expected in an invoice received through an invoice request's reply path.
+///
+/// This is stored in [`OffersContext::OutboundPaymentForOffer`] so the returned invoice can be
+/// validated against the recurrence state known when the invoice request was sent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ExpectedInvoiceRecurrenceBasetime {
+	/// The invoice request was not recurring, so no recurrence basetime is expected.
+	None,
+	/// The initial invoice is expected to establish the recurrence basetime using its own
+	/// `invoice_created_at`. This is used only when the offer has no explicit basetime.
+	CreatedAt,
+	/// The invoice is expected to use this `invoice_recurrence_basetime`, in seconds since the
+	/// Unix epoch. This is used for subsequent requests without an explicit offer basetime and
+	/// for all requests when the offer has an explicit basetime.
+	Basetime(u64),
 }
 
 /// Contains data specific to an [`AsyncPaymentsMessage`].
@@ -706,7 +739,16 @@ impl_ser_tlv_based_enum!(OffersContext,
 	},
 	(4, OutboundPaymentForOffer) => {
 		(0, payment_id, required),
+		// This record is intentionally odd so older LDK versions can skip it when decoding reply-path contexts.
+		(1, expected_invoice_recurrence_basetime,
+			(default_value, ExpectedInvoiceRecurrenceBasetime::None)),
 	},
+);
+
+impl_ser_tlv_based_enum!(ExpectedInvoiceRecurrenceBasetime,
+	(0, None) => {},
+	(2, CreatedAt) => {},
+	{4, Basetime} => (),
 );
 
 impl_ser_tlv_based_enum!(AsyncPaymentsContext,
