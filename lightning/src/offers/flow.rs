@@ -956,6 +956,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	pub(crate) fn create_recurring_invoice_request_builder<'a>(
 		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
 		recurrence_id: RecurrenceId, counter: u32, start: Option<u32>, prev_state: Option<Vec<u8>>,
+		cancel: bool,
 	) -> Result<(InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Keypair), Bolt12SemanticError> {
 		if offer.offer_recurrence().is_none() {
 			return Err(Bolt12SemanticError::InvalidRecurrence);
@@ -980,7 +981,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.into();
 		let builder = builder.chain_hash(self.chain_hash)?;
-		let builder = builder.recurrence(counter, start, prev_state, false)?;
+		let builder = builder.recurrence(counter, start, prev_state, cancel)?;
 
 		Ok((builder, payer_keys))
 	}
@@ -1350,6 +1351,37 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
 				pending_offers_messages.push((message, instructions));
 			}
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
+		}
+
+		Ok(())
+	}
+
+	/// Enqueues a recurrence cancellation [`InvoiceRequest`] without a reply path.
+	///
+	/// Cancellation requests notify the offer issuer that the payer is ending a recurrence. They
+	/// are not payment attempts, do not create pending outbound payment state, and do not expect an
+	/// invoice or invoice error in response.
+	pub(crate) fn enqueue_cancellation_invoice_request(
+		&self, invoice_request: InvoiceRequest,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		if !invoice_request.paths().is_empty() {
+			for path in invoice_request.paths().iter().take(OFFERS_MESSAGE_REQUEST_LIMIT) {
+				let instructions = MessageSendInstructions::WithoutReplyPath {
+					destination: Destination::BlindedPath(path.clone()),
+				};
+				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+				pending_offers_messages.push((message, instructions));
+			}
+		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
+			let instructions = MessageSendInstructions::WithoutReplyPath {
+				destination: Destination::Node(node_id),
+			};
+			let message = OffersMessage::InvoiceRequest(invoice_request);
+			pending_offers_messages.push((message, instructions));
 		} else {
 			debug_assert!(false);
 			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
