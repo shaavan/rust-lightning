@@ -57,6 +57,10 @@ const WITH_ENCRYPTED_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[4; 16];
 const RECURRENCE_STATE_LEN: usize = 8 + Nonce::LENGTH + Sha256::LEN;
 const RECURRENCE_STATE_HMAC_INPUT: &[u8; 16] = &[9; 16];
 
+// Separates recurrence payer signing key derivation from both metadata-derived payer keys and
+// recurrence state tokens. This value must remain unique across offer-flow HMAC domains.
+const RECURRENCE_PAYER_KEYS_HMAC_INPUT: &[u8; 16] = &[10; 16];
+
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
 /// verified.
 #[derive(Clone)]
@@ -296,6 +300,24 @@ pub(super) fn derive_keys(nonce: Nonce, expanded_key: &ExpandedKey) -> Keypair {
 	let secp_ctx = Secp256k1::new();
 	let privkey = SecretKey::from_slice(Hmac::from_engine(hmac).as_byte_array()).unwrap();
 	Keypair::from_secret_key(&secp_ctx, &privkey)
+}
+
+/// Derives the payer signing keys for a recurring payment relationship.
+///
+/// The recurrence id is supplied by the payer's persistence layer and kept stable across all
+/// invoice requests belonging to the same recurrence. Binding the derivation to the offer id keeps
+/// accidental recurrence-id reuse across unrelated offers from producing the same payer pubkey.
+pub(super) fn derive_recurrence_payer_keys<T: secp256k1::Signing>(
+	recurrence_id: &[u8; 32], offer_id: OfferId, expanded_key: &ExpandedKey,
+	secp_ctx: &Secp256k1<T>,
+) -> Keypair {
+	let mut hmac = expanded_key.hmac_for_offer();
+	hmac.input(RECURRENCE_PAYER_KEYS_HMAC_INPUT);
+	hmac.input(&offer_id.0);
+	hmac.input(recurrence_id);
+
+	let privkey = SecretKey::from_slice(Hmac::from_engine(hmac).as_byte_array()).unwrap();
+	Keypair::from_secret_key(secp_ctx, &privkey)
 }
 
 /// Re-derives the payer signing keypair from the on-wire payer `metadata`.
