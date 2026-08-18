@@ -52,7 +52,7 @@ use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, DummyTlvs, PaymentContext};
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::events::{ClosureReason, Event, EventsProvider, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
-use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, self};
+use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, RecurrencePaymentParams, self};
 use crate::ln::outbound_payment::{Bolt12PaymentError, RecipientOnionFields, Retry};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
@@ -62,10 +62,12 @@ use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{
 	invoice_request_with_recurrence_for_test, InvoiceRequest, InvoiceRequestFields,
-	InvoiceRequestVerifiedFromOffer,
+	InvoiceRequestVerifiedFromOffer, RecurrenceId,
 };
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::{OfferBuilder, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrencePeriod, RecurrenceType};
+use crate::offers::offer::{
+	OfferBuilder, Quantity, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrencePeriod, RecurrenceType,
+};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::payer_proof::PayerProof;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, DUMMY_HOPS_PATH_LENGTH, QR_CODED_DUMMY_HOPS_PATH_LENGTH};
@@ -3158,6 +3160,157 @@ fn send_recurring_invoice_request<'a, 'b, 'c>(
 	let invoice_request_onion = payer.onion_messenger.next_onion_message_for_peer(payee_id).unwrap();
 	payee.onion_messenger.handle_onion_message(payer_id, &invoice_request_onion);
 	payer_signing_pubkey
+}
+
+#[test]
+fn pays_for_recurrence_with_stable_payer_id() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let alice_id = alice.node.get_our_node_id();
+	let offer = alice
+		.node
+		.create_offer_builder()
+		.unwrap()
+		.amount_msats(10_000_000)
+		.supported_quantity(Quantity::Unbounded)
+		.recurrence(Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Seconds(60),
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		})
+		.build()
+		.unwrap();
+	let recurrence_id = RecurrenceId([42; 32]);
+	assert_eq!(
+		bob.node.pay_for_recurrence(
+			&offer,
+			None,
+			PaymentId([4; 32]),
+			recurrence_id,
+			RecurrencePaymentParams {
+				counter: 0,
+				start: None,
+				prev_state: None,
+				quantity: Some(0),
+				expected_invoice_recurrence_basetime: None,
+			},
+			Default::default(),
+		),
+		Err(Bolt12SemanticError::InvalidQuantity)
+	);
+
+	bob.node
+		.pay_for_recurrence(
+			&offer,
+			None,
+			PaymentId([2; 32]),
+			recurrence_id,
+			RecurrencePaymentParams {
+				counter: 0,
+				start: None,
+				prev_state: None,
+				quantity: Some(2),
+				expected_invoice_recurrence_basetime: None,
+			},
+			Default::default(),
+		)
+		.unwrap();
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
+		let first_payer_id = invoice_request.payer_signing_pubkey();
+		assert_eq!(invoice_request.quantity(), Some(2));
+	match invoice_request.invoice_request_recurrence().as_ref().unwrap() {
+		crate::offers::invoice_request::InvoiceRequestRecurrence::WithoutOfferBasetime(
+			recurrence,
+		) => {
+			assert_eq!(recurrence.counter(), 0);
+			assert_eq!(recurrence.prev_state(), None);
+			assert!(!recurrence.cancel());
+		},
+		_ => panic!("Unexpected recurrence form"),
+	}
+
+	bob.node
+		.pay_for_recurrence(
+			&offer,
+			None,
+			PaymentId([3; 32]),
+			recurrence_id,
+			RecurrencePaymentParams {
+				counter: 0,
+				start: None,
+				prev_state: None,
+				quantity: Some(2),
+				expected_invoice_recurrence_basetime: None,
+			},
+			Default::default(),
+		)
+		.unwrap();
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
+	assert_eq!(invoice_request.payer_signing_pubkey(), first_payer_id);
+	assert_eq!(invoice_request.quantity(), Some(2));
+}
+
+#[test]
+fn validates_pay_for_recurrence_basetime_expectations() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+	let recurrence_id = RecurrenceId([43; 32]);
+
+	match bob.node.pay_for_recurrence(
+		&offer,
+		None,
+		PaymentId([2; 32]),
+		recurrence_id,
+		RecurrencePaymentParams {
+			counter: 0,
+			start: None,
+			prev_state: None,
+			quantity: None,
+			expected_invoice_recurrence_basetime: Some(123_456),
+		},
+		Default::default(),
+	) {
+		Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidRecurrence),
+		Ok(()) => panic!("Expected error"),
+	}
+
+	match bob.node.pay_for_recurrence(
+		&offer,
+		None,
+		PaymentId([3; 32]),
+		recurrence_id,
+		RecurrencePaymentParams {
+			counter: 1,
+			start: None,
+			prev_state: Some(vec![1; 56]),
+			quantity: None,
+			expected_invoice_recurrence_basetime: None,
+		},
+		Default::default(),
+	) {
+		Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidRecurrence),
+		Ok(()) => panic!("Expected error"),
+	}
 }
 
 #[test]
