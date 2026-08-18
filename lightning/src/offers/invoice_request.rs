@@ -85,6 +85,7 @@ use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage}
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::signer::{self, Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
+use crate::sign::EntropySource;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
 use crate::types::string::{PrintableString, UntrustedString};
@@ -114,6 +115,26 @@ use crate::prelude::*;
 pub const SIGNATURE_TAG: &'static str = concat!("lightning", "invoice_request", "signature");
 
 pub(super) const IV_BYTES: &[u8; IV_LEN] = b"LDK Invreq ~~~~~";
+
+/// Stable payer-side identifier for a recurring payment relationship.
+///
+/// The payer should create one [`RecurrenceId`] when starting a recurrence and persist it for the
+/// lifetime of that relationship, reusing it for all later payments and cancellation requests.
+/// Individual payments still use unique [`PaymentId`] values; the stable recurrence id only keeps
+/// the payer signing key stable across those payments. LDK combines it with the offer id and
+/// [`ExpandedKey`] to derive the recurrence-specific payer signing key without exposing that key
+/// outside LDK.
+///
+/// [`ExpandedKey`]: crate::ln::inbound_payment::ExpandedKey
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct RecurrenceId(pub [u8; 32]);
+
+impl RecurrenceId {
+	/// Creates a new [`RecurrenceId`] using bytes from the given entropy source.
+	pub fn from_entropy_source<ES: EntropySource>(entropy_source: &ES) -> Self {
+		Self(entropy_source.get_secure_random_bytes())
+	}
+}
 
 /// Builds an [`InvoiceRequest`] from an [`Offer`] for the "offer to be paid" flow.
 ///
@@ -162,6 +183,35 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 			}
 		}
 
+		#[allow(dead_code)]
+		#[cfg_attr(c_bindings, allow(dead_code))]
+		pub(crate) fn deriving_metadata_with_payer_signing_pubkey(
+			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce, payment_id: PaymentId,
+			payer_signing_pubkey: PublicKey,
+		) -> Self {
+			let payment_id = Some(payment_id);
+			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
+			let metadata = Metadata::Derived(derivation_material);
+			Self {
+				offer,
+				invoice_request: Self::create_contents(offer, metadata),
+				payer_signing_pubkey: Some(payer_signing_pubkey),
+				secp_ctx: None,
+			}
+		}
+
+		#[allow(dead_code)]
+		#[cfg_attr(c_bindings, allow(dead_code))]
+		pub(crate) fn build(
+			$self: $self_type,
+		) -> Result<UnsignedInvoiceRequest, Bolt12SemanticError> {
+			let (unsigned_invoice_request, keys, secp_ctx) = $self.build_with_checks()?;
+			debug_assert!(keys.is_none());
+			debug_assert!(secp_ctx.is_none());
+
+			Ok(unsigned_invoice_request)
+		}
+
 		/// Builds a signed [`InvoiceRequest`] after checking for valid semantics.
 		pub fn build_and_sign($self: $self_type) -> Result<InvoiceRequest, Bolt12SemanticError> {
 			let (unsigned_invoice_request, keys, secp_ctx) = $self.build_with_checks()?;
@@ -174,6 +224,22 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 			let invoice_request = unsigned_invoice_request
 				.sign(|message: &UnsignedInvoiceRequest| {
 					Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &keys))
+				})
+				.unwrap();
+			Ok(invoice_request)
+		}
+
+		pub(crate) fn build_and_sign_with_keys(
+			$self: $self_type, keys: &Keypair, secp_ctx: &Secp256k1<$secp_context>,
+		) -> Result<InvoiceRequest, Bolt12SemanticError> {
+			let (unsigned_invoice_request, derived_keys, _) = $self.build_with_checks()?;
+			#[cfg(c_bindings)]
+			let mut unsigned_invoice_request = unsigned_invoice_request;
+			debug_assert!(derived_keys.is_none());
+
+			let invoice_request = unsigned_invoice_request
+				.sign(|message: &UnsignedInvoiceRequest| {
+					Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), keys))
 				})
 				.unwrap();
 			Ok(invoice_request)
