@@ -2091,10 +2091,11 @@ impl Readable for InvoiceRequestFields {
 #[cfg(test)]
 mod tests {
 	use super::{
-		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestFields,
-		InvoiceRequestRecurrence, InvoiceRequestTlvStreamRef, PartialInvoiceRequestTlvStreamRef,
-		UnsignedInvoiceRequest, VerifiedInvoiceRequest, EXPERIMENTAL_INVOICE_REQUEST_TYPES,
-		INVOICE_REQUEST_TYPES, PAYER_NOTE_LIMIT, SIGNATURE_TAG,
+		ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestBuilder,
+		InvoiceRequestFields, InvoiceRequestRecurrence, InvoiceRequestTlvStreamRef,
+		PartialInvoiceRequestTlvStreamRef, RecurrenceId, UnsignedInvoiceRequest,
+		VerifiedInvoiceRequest, EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_TYPES,
+		PAYER_NOTE_LIMIT, SIGNATURE_TAG,
 	};
 
 	use crate::ln::channelmanager::PaymentId;
@@ -2390,6 +2391,58 @@ mod tests {
 
 		let invoice = Bolt12Invoice::try_from(encoded_invoice).unwrap();
 		assert!(invoice.verify_using_metadata(&expanded_key, &secp_ctx).is_err());
+	}
+
+	#[test]
+	fn builds_invoice_request_with_recurrence_payer_signing_pubkey() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let entropy = FixedEntropy {};
+		let nonce = Nonce::from_entropy_source(&entropy);
+		let secp_ctx = Secp256k1::new();
+		let payment_id = PaymentId([1; 32]);
+		let recurrence_id = RecurrenceId([2; 32]);
+
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.experimental_foo(42)
+			.build()
+			.unwrap();
+		let payer_keys = signer::derive_recurrence_payer_keys(
+			&recurrence_id.0,
+			offer.id(),
+			&expanded_key,
+			&secp_ctx,
+		);
+		let invoice_request =
+			InvoiceRequestBuilder::<secp256k1::All>::deriving_metadata_with_payer_signing_pubkey(
+				&offer,
+				&expanded_key,
+				nonce,
+				payment_id,
+				payer_keys.public_key(),
+			)
+			.experimental_bar(42)
+			.build()
+			.unwrap()
+			.sign(|message: &UnsignedInvoiceRequest| {
+				Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_keys))
+			})
+			.unwrap();
+
+		assert_eq!(invoice_request.payer_signing_pubkey(), payer_keys.public_key());
+
+		let invoice = invoice_request
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.experimental_baz(42)
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+		match invoice.verify_using_metadata(&expanded_key, &secp_ctx) {
+			Ok(payment_id) => assert_eq!(payment_id, PaymentId([1; 32])),
+			Err(()) => panic!("verification failed"),
+		}
 	}
 
 	#[test]

@@ -576,9 +576,44 @@ fn hmac_for_message<'a>(
 #[cfg(test)]
 mod tests {
 	use super::{
-		create_recurrence_next_state, verify_recurrence_prev_state, ExpandedKey, Nonce, OfferId,
+		create_recurrence_next_state, derive_recurrence_payer_keys, verify_recurrence_prev_state,
+		ExpandedKey, Nonce, OfferId,
 	};
 	use crate::offers::test_utils::{payer_pubkey, recipient_pubkey};
+	use bitcoin::secp256k1::Secp256k1;
+
+	#[test]
+	fn derives_recurrence_payer_keys() {
+		let secp_ctx = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let other_expanded_key = ExpandedKey::new([43; 32]);
+		let recurrence_id = [1; 32];
+		let other_recurrence_id = [2; 32];
+		let offer_id = OfferId([3; 32]);
+		let other_offer_id = OfferId([4; 32]);
+
+		let keys = derive_recurrence_payer_keys(&recurrence_id, offer_id, &expanded_key, &secp_ctx);
+		assert_eq!(
+			keys.public_key(),
+			derive_recurrence_payer_keys(&recurrence_id, offer_id, &expanded_key, &secp_ctx)
+				.public_key()
+		);
+		assert_ne!(
+			keys.public_key(),
+			derive_recurrence_payer_keys(&other_recurrence_id, offer_id, &expanded_key, &secp_ctx)
+				.public_key()
+		);
+		assert_ne!(
+			keys.public_key(),
+			derive_recurrence_payer_keys(&recurrence_id, other_offer_id, &expanded_key, &secp_ctx)
+				.public_key()
+		);
+		assert_ne!(
+			keys.public_key(),
+			derive_recurrence_payer_keys(&recurrence_id, offer_id, &other_expanded_key, &secp_ctx)
+				.public_key()
+		);
+	}
 
 	#[test]
 	fn verifies_recurrence_state_token() {
