@@ -42,12 +42,14 @@ use crate::offers::invoice::{
 	DEFAULT_RELATIVE_EXPIRY,
 };
 use crate::offers::invoice_request::{
-	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer, VerifiedInvoiceRequest,
+	InvoiceRequest, InvoiceRequestBuilder, InvoiceRequestVerifiedFromOffer, RecurrenceId,
+	VerifiedInvoiceRequest,
 };
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder, RecurrenceType};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::refund::{Refund, RefundBuilder};
+use crate::offers::signer;
 use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
 use crate::onion_message::async_payments::{
 	AsyncPaymentsMessage, HeldHtlcAvailable, OfferPaths, OfferPathsRequest, ServeStaticInvoice,
@@ -64,6 +66,7 @@ use crate::sync::{Mutex, RwLock};
 use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::util::logger::Logger;
 use crate::util::ser::Writeable;
+use bitcoin::secp256k1::Keypair;
 
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
@@ -944,6 +947,44 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		Ok(builder)
 	}
 
+	/// Creates an [`InvoiceRequestBuilder`] for a recurring offer request.
+	///
+	/// Recurring payments use a payer signing key derived from a stable [`RecurrenceId`] so every
+	/// request in the same recurrence relationship uses the same payer signing pubkey. The
+	/// per-request [`PaymentId`] remains encrypted into payer metadata for invoice/payment
+	/// tracking.
+	pub(crate) fn create_recurring_invoice_request_builder<'a>(
+		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
+		recurrence_id: RecurrenceId, counter: u32, start: Option<u32>, prev_state: Option<Vec<u8>>,
+	) -> Result<(InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Keypair), Bolt12SemanticError> {
+		if offer.offer_recurrence().is_none() {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
+		let expanded_key = &self.inbound_payment_key;
+		let secp_ctx = &self.secp_ctx;
+		let payer_keys = signer::derive_recurrence_payer_keys(
+			&recurrence_id.0,
+			offer.id(),
+			expanded_key,
+			secp_ctx,
+		);
+
+		let builder: InvoiceRequestBuilder<secp256k1::All> =
+			InvoiceRequestBuilder::deriving_metadata_with_payer_signing_pubkey(
+				offer,
+				expanded_key,
+				nonce,
+				payment_id,
+				payer_keys.public_key(),
+			)
+			.into();
+		let builder = builder.chain_hash(self.chain_hash)?;
+		let builder = builder.recurrence(counter, start, prev_state, false)?;
+
+		Ok((builder, payer_keys))
+	}
+
 	/// Creates a [`StaticInvoiceBuilder`] from the corresponding [`Offer`] and [`Nonce`] that were
 	/// created via [`Self::create_async_receive_offer_builder`].
 	///
@@ -1249,8 +1290,20 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId,
 		peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
+		self.enqueue_invoice_request_with_expected_basetime(
+			invoice_request,
+			payment_id,
+			peers,
+			None,
+		)
+	}
+
+	pub(crate) fn enqueue_invoice_request_with_expected_basetime(
+		&self, invoice_request: InvoiceRequest, payment_id: PaymentId,
+		peers: Vec<MessageForwardNode>, expected_basetime: Option<u64>,
+	) -> Result<(), Bolt12SemanticError> {
 		let expected_invoice_recurrence_basetime =
-			Self::expected_invoice_recurrence_basetime(&invoice_request, None)?;
+			Self::expected_invoice_recurrence_basetime(&invoice_request, expected_basetime)?;
 		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer {
 			payment_id,
 			expected_invoice_recurrence_basetime,

@@ -199,6 +199,9 @@ pub(crate) struct RetryableInvoiceRequest {
 	// creating an invoice request and otherwise retains the value read from disk, which may have
 	// been written by such a version.
 	pub(crate) nonce: Option<Nonce>,
+	// The recurrence basetime expected in an invoice returned for this invoice request. This is
+	// persisted so retries keep the same invoice verification context as the original request.
+	pub(crate) expected_invoice_recurrence_basetime: Option<u64>,
 	pub(super) needs_retry: bool,
 }
 
@@ -206,6 +209,7 @@ impl_ser_tlv_based!(RetryableInvoiceRequest, {
 	(0, invoice_request, required),
 	(1, needs_retry, (default_value, true)),
 	(2, nonce, option),
+	(3, expected_invoice_recurrence_basetime, option),
 });
 
 impl PendingOutboundPayment {
