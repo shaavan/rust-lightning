@@ -890,6 +890,19 @@ pub struct RecurrencePaymentParams {
 	pub expected_invoice_recurrence_basetime: Option<u64>,
 }
 
+/// Recurrence-specific parameters for [`ChannelManager::cancel_recurrence`].
+pub struct RecurrenceCancellationParams {
+	/// The payer's recurring request number.
+	pub counter: u32,
+	/// The offer schedule period where recurring payments begin.
+	///
+	/// This must be set when the offer includes an explicit recurrence basetime and absent when the
+	/// recurrence is anchored by the first accepted invoice.
+	pub start: Option<u32>,
+	/// Opaque recurrence state from the previous invoice.
+	pub prev_state: Vec<u8>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Uniquely describes an HTLC by its source. Just the guaranteed-unique subset of [`HTLCSource`].
 pub(crate) enum SentHTLCId {
@@ -15608,6 +15621,7 @@ impl<
 			counter,
 			start,
 			prev_state,
+			false,
 		)?;
 
 		let builder = if offer.expects_quantity() { builder.quantity(1)? } else { builder };
@@ -15638,6 +15652,40 @@ impl<
 		};
 
 		create_pending_payment_fn(retryable_invoice_request)
+	}
+
+	/// Cancels a recurring [`Offer`] by sending a recurrence cancellation invoice request.
+	///
+	/// Cancellation requests are not payments, so no pending outbound payment is created and no
+	/// invoice is expected in response. The provided `recurrence_id` must match the one used for
+	/// previous requests in the recurrence so the cancellation uses the same payer signing pubkey.
+	pub fn cancel_recurrence(
+		&self, offer: &Offer, recurrence_id: RecurrenceId,
+		recurrence_params: RecurrenceCancellationParams,
+	) -> Result<(), Bolt12SemanticError> {
+		let RecurrenceCancellationParams { counter, start, prev_state } = recurrence_params;
+		if counter == 0 {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
+		let entropy = &self.entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+		let payment_id = PaymentId(entropy.get_secure_random_bytes());
+		let (builder, payer_keys) = self.flow.create_recurring_invoice_request_builder(
+			offer,
+			nonce,
+			payment_id,
+			recurrence_id,
+			counter,
+			start,
+			Some(prev_state),
+			true,
+		)?;
+
+		let invoice_request = builder.build_and_sign_with_keys(&payer_keys, &self.secp_ctx)?;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		self.flow.enqueue_cancellation_invoice_request(invoice_request)
 	}
 
 	#[rustfmt::skip]
