@@ -52,7 +52,9 @@ use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, DummyTlvs, PaymentContext};
 use crate::blinded_path::message::{MessageContext, OffersContext};
 use crate::events::{ClosureReason, Event, EventsProvider, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
-use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, RecurrencePaymentParams, self};
+use crate::ln::channelmanager::{
+	PaymentId, RecentPaymentDetails, RecurrenceCancellationParams, RecurrencePaymentParams, self,
+};
 use crate::ln::outbound_payment::{Bolt12PaymentError, RecipientOnionFields, Retry};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
@@ -64,6 +66,7 @@ use crate::offers::invoice_request::{
 	invoice_request_with_recurrence_for_test, InvoiceRequest, InvoiceRequestFields,
 	InvoiceRequestVerifiedFromOffer, RecurrenceId,
 };
+use crate::offers::flow::TEST_OFFERS_MESSAGE_REQUEST_LIMIT;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{
 	OfferBuilder, Quantity, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrencePeriod, RecurrenceType,
@@ -259,9 +262,16 @@ fn extract_payer_context<'a, 'b, 'c>(node: &Node<'a, 'b, 'c>, message: &OnionMes
 pub(super) fn extract_invoice_request<'a, 'b, 'c>(
 	node: &Node<'a, 'b, 'c>, message: &OnionMessage
 ) -> (InvoiceRequest, BlindedMessagePath) {
+	let (invoice_request, reply_path) = extract_invoice_request_with_reply_path(node, message);
+	(invoice_request, reply_path.unwrap())
+}
+
+fn extract_invoice_request_with_reply_path<'a, 'b, 'c>(
+	node: &Node<'a, 'b, 'c>, message: &OnionMessage
+) -> (InvoiceRequest, Option<BlindedMessagePath>) {
 	match node.onion_messenger.peel_onion_message(message) {
 		Ok(PeeledOnion::Offers(message, _, reply_path)) => match message {
-			OffersMessage::InvoiceRequest(invoice_request) => (invoice_request, reply_path.unwrap()),
+			OffersMessage::InvoiceRequest(invoice_request) => (invoice_request, reply_path),
 			OffersMessage::Invoice(invoice) => panic!("Unexpected invoice: {:?}", invoice),
 			OffersMessage::StaticInvoice(invoice) => panic!("Unexpected static invoice: {:?}", invoice),
 			OffersMessage::InvoiceError(error) => panic!("Unexpected invoice_error: {:?}", error),
@@ -3311,6 +3321,170 @@ fn validates_pay_for_recurrence_basetime_expectations() {
 		Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidRecurrence),
 		Ok(()) => panic!("Expected error"),
 	}
+}
+
+#[test]
+fn cancels_recurrence_without_reply_path_or_pending_payment() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let alice_id = alice.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+	let recurrence_id = RecurrenceId([44; 32]);
+	let payment_id = PaymentId([5; 32]);
+
+	bob.node
+		.pay_for_recurrence(
+			&offer,
+			None,
+			payment_id,
+			recurrence_id,
+			RecurrencePaymentParams {
+				counter: 0,
+				start: None,
+				prev_state: None,
+				quantity: None,
+				expected_invoice_recurrence_basetime: None,
+			},
+			Default::default(),
+		)
+		.unwrap();
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
+	let payer_signing_pubkey = invoice_request.payer_signing_pubkey();
+	let recent_payments_before_cancel = bob.node.list_recent_payments().len();
+	let prev_state = vec![1; 56];
+
+	bob.node
+		.cancel_recurrence(
+			&offer,
+			recurrence_id,
+			RecurrenceCancellationParams {
+				counter: 1,
+				start: None,
+				prev_state: Some(prev_state.clone()),
+			},
+		)
+		.unwrap();
+
+	assert_eq!(bob.node.list_recent_payments().len(), recent_payments_before_cancel);
+
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	let (invoice_request, reply_path) = extract_invoice_request_with_reply_path(alice, &onion_message);
+	assert!(reply_path.is_none());
+	assert_eq!(invoice_request.payer_signing_pubkey(), payer_signing_pubkey);
+	match invoice_request.invoice_request_recurrence().as_ref().unwrap() {
+		crate::offers::invoice_request::InvoiceRequestRecurrence::WithoutOfferBasetime(
+			recurrence,
+		) => {
+			assert_eq!(recurrence.counter(), 1);
+			assert_eq!(recurrence.prev_state(), Some(&prev_state[..]));
+			assert!(recurrence.cancel());
+		},
+		_ => panic!("Unexpected recurrence form"),
+	}
+
+	// A remote invoice may omit next-state, so a later cancellation may omit the previous state.
+	let no_state_recurrence_id = RecurrenceId([46; 32]);
+	bob.node
+		.cancel_recurrence(
+			&offer,
+			no_state_recurrence_id,
+			RecurrenceCancellationParams { counter: 1, start: None, prev_state: None },
+		)
+		.unwrap();
+	let onion_message = bob.onion_messenger.next_onion_message_for_peer(alice_id).unwrap();
+	let (invoice_request, reply_path) = extract_invoice_request_with_reply_path(alice, &onion_message);
+	assert!(reply_path.is_none());
+	match invoice_request.invoice_request_recurrence().as_ref().unwrap() {
+		crate::offers::invoice_request::InvoiceRequestRecurrence::WithoutOfferBasetime(
+			recurrence,
+		) => assert_eq!(recurrence.prev_state(), None),
+		_ => panic!("Unexpected recurrence form"),
+	}
+}
+
+#[test]
+fn limits_recurring_cancellation_fanout() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let seed_offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+	let mut offer_builder = alice
+		.node
+		.create_offer_builder()
+		.unwrap()
+		.amount_msats(10_000_000)
+		.recurrence(Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Seconds(60),
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		});
+	for _ in 0..=TEST_OFFERS_MESSAGE_REQUEST_LIMIT {
+		offer_builder = offer_builder.path(seed_offer.paths()[0].clone());
+	}
+	let offer = offer_builder.build().unwrap();
+	let recent_payments_before_cancel = bob.node.list_recent_payments().len();
+
+	bob.node
+		.cancel_recurrence(
+			&offer,
+			RecurrenceId([47; 32]),
+			RecurrenceCancellationParams {
+				counter: 1,
+				start: None,
+				prev_state: Some(vec![1; 56]),
+			},
+		)
+		.unwrap();
+
+	let messages = bob.node.flow.release_pending_offers_messages();
+	assert_eq!(messages.len(), TEST_OFFERS_MESSAGE_REQUEST_LIMIT);
+	for (message, instructions) in messages {
+		assert!(matches!(message, OffersMessage::InvoiceRequest(_)));
+		assert!(matches!(instructions, MessageSendInstructions::WithoutReplyPath { .. }));
+	}
+	assert_eq!(bob.node.list_recent_payments().len(), recent_payments_before_cancel);
+}
+
+#[test]
+fn rejects_initial_recurrence_cancellation() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let alice_id = alice.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+
+	match bob.node.cancel_recurrence(
+		&offer,
+		RecurrenceId([45; 32]),
+		RecurrenceCancellationParams { counter: 0, start: None, prev_state: Some(vec![1; 56]) },
+	) {
+		Err(e) => assert_eq!(e, Bolt12SemanticError::InvalidRecurrence),
+		Ok(()) => panic!("Expected error"),
+	}
+
+	assert!(bob.onion_messenger.next_onion_message_for_peer(alice_id).is_none());
 }
 
 #[test]
