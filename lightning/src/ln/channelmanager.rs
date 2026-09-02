@@ -17827,11 +17827,6 @@ impl<
 
 		match message {
 			OffersMessage::InvoiceRequest(invoice_request) => {
-				let responder = match responder {
-					Some(responder) => responder,
-					None => return None,
-				};
-
 				let payment_metadata =
 					if let Some(OffersContext::InvoiceRequest { payment_metadata, .. }) = &context {
 						payment_metadata.clone()
@@ -17839,9 +17834,29 @@ impl<
 						None
 					};
 
-				let invoice_request = match self.flow.verify_invoice_request(invoice_request, context) {
-					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => invoice_request,
+				let (invoice_request, responder) = match self.flow.verify_invoice_request(invoice_request, context) {
+					Ok(InvreqResponseInstructions::SendInvoice(invoice_request)) => {
+						let responder = match responder {
+							Some(responder) => responder,
+							None => return None,
+						};
+						(invoice_request, responder)
+					},
+					Ok(InvreqResponseInstructions::CancelRecurringOffer(invoice_request)) => {
+						// Cancellation requests do not expect an invoice response, so they may omit
+						// the reply path needed by normal invoice requests.
+						self.pending_events.lock().unwrap().push_back((Event::RecurringOfferCancelled {
+							offer_id: invoice_request.offer_id(),
+							payer_signing_pubkey: invoice_request.inner().payer_signing_pubkey(),
+						}, None));
+
+						return None
+					},
 					Ok(InvreqResponseInstructions::SendStaticInvoice { recipient_id, invoice_slot, invoice_request }) => {
+						let responder = match responder {
+							Some(responder) => responder,
+							None => return None,
+						};
 						self.pending_events.lock().unwrap().push_back((Event::StaticInvoiceRequested {
 							recipient_id, invoice_slot, reply_path: responder, invoice_request,
 						}, None));
