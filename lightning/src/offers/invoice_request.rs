@@ -933,6 +933,57 @@ impl InvoiceRequestRecurrence {
 	}
 }
 
+#[cfg(test)]
+pub(crate) fn invoice_request_with_recurrence_for_test<T: secp256k1::Signing>(
+	offer: &Offer, key: &ExpandedKey, nonce: Nonce, secp_ctx: &Secp256k1<T>, payment_id: PaymentId,
+	chain: ChainHash, recurrence_counter: u32, recurrence_start: Option<u32>,
+	recurrence_basetime: Option<u64>, recurrence_cancel: bool, include_prev_state: bool,
+) -> InvoiceRequest {
+	let (mut unsigned_invoice_request, payer_keys, _) = offer
+		.request_invoice(key, nonce, secp_ctx, payment_id)
+		.unwrap()
+		.chain_hash(chain)
+		.unwrap()
+		.build_without_checks();
+	let recurrence_prev_state = if recurrence_counter == 0 || !include_prev_state {
+		None
+	} else {
+		Some(
+			signer::create_recurrence_next_state(
+				offer.id(),
+				unsigned_invoice_request.contents.payer_signing_pubkey(),
+				recurrence_basetime.unwrap(),
+				recurrence_counter - 1,
+				recurrence_start,
+				Nonce([3; Nonce::LENGTH]),
+				key,
+			)
+			.unwrap(),
+		)
+	};
+
+	let mut tlv_stream = unsigned_invoice_request.contents.as_tlv_stream();
+	tlv_stream.2.recurrence_counter = Some(recurrence_counter);
+	tlv_stream.2.recurrence_start = recurrence_start;
+	tlv_stream.2.recurrence_cancel = recurrence_cancel.then_some(&());
+	tlv_stream.2.recurrence_prev_state = recurrence_prev_state.as_ref();
+	let mut bytes = Vec::new();
+	tlv_stream.write(&mut bytes).unwrap();
+	unsigned_invoice_request.bytes = bytes;
+	unsigned_invoice_request.tagged_hash =
+		TaggedHash::from_valid_tlv_stream_bytes(SIGNATURE_TAG, &unsigned_invoice_request.bytes);
+
+	let payer_keys = payer_keys.unwrap();
+	let invoice_request = unsigned_invoice_request
+		.sign(|message: &UnsignedInvoiceRequest| {
+			Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), &payer_keys))
+		})
+		.unwrap();
+	let mut bytes = Vec::new();
+	invoice_request.write(&mut bytes).unwrap();
+	InvoiceRequest::try_from(bytes).unwrap()
+}
+
 #[derive(Clone, Debug)]
 #[cfg_attr(test, derive(PartialEq))]
 pub(super) struct InvoiceRequestContentsWithoutPayerSigningPubkey {

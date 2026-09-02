@@ -60,7 +60,10 @@ use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, OnionMess
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
 use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
-use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
+use crate::offers::invoice_request::{
+	invoice_request_with_recurrence_for_test, InvoiceRequest, InvoiceRequestFields,
+	InvoiceRequestVerifiedFromOffer,
+};
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{OfferBuilder, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrencePeriod, RecurrenceType};
 use crate::offers::parse::Bolt12SemanticError;
@@ -3055,6 +3058,241 @@ fn get_invoice_via_offer_flow<'a, 'b, 'c>(
 	get_event!(payer, Event::PaymentFailed);
 
 	(invoice, payment_context, invoice_request_onion_message)
+}
+
+fn recurring_offer<'a, 'b, 'c>(
+	node: &Node<'a, 'b, 'c>, amount_msats: u64, period: RecurrencePeriod,
+) -> crate::offers::offer::Offer {
+	recurring_offer_with_recurrence(
+		node,
+		amount_msats,
+		Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: period,
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		},
+	)
+}
+
+fn recurring_offer_with_recurrence<'a, 'b, 'c>(
+	node: &Node<'a, 'b, 'c>, amount_msats: u64, recurrence: Recurrence,
+) -> crate::offers::offer::Offer {
+	node.node
+		.create_offer_builder()
+		.unwrap()
+		.amount_msats(amount_msats)
+		.recurrence(recurrence)
+		.build()
+		.unwrap()
+}
+
+fn send_recurring_invoice_request<'a, 'b, 'c>(
+	payee: &Node<'a, 'b, 'c>, payer: &Node<'a, 'b, 'c>,
+	offer: &crate::offers::offer::Offer, payment_id: PaymentId, recurrence_counter: u32,
+	recurrence_start: Option<u32>, recurrence_basetime: Option<u64>, recurrence_cancel: bool,
+	include_prev_state: bool,
+) -> PublicKey {
+	let payee_id = payee.node.get_our_node_id();
+	let payer_id = payer.node.get_our_node_id();
+
+	let nonce = Nonce::from_entropy_source(payer.keys_manager);
+	let initial_start = match offer.offer_recurrence().unwrap().recurrence_type {
+		RecurrenceType::Compulsory(Some(_)) => Some(0),
+		RecurrenceType::Compulsory(None) | RecurrenceType::Optional => None,
+	};
+	let invoice_request = invoice_request_with_recurrence_for_test(
+		offer,
+		&payee.keys_manager.get_expanded_key(),
+		nonce,
+		&Secp256k1::new(),
+		payment_id,
+		offer.chains()[0],
+		0,
+		initial_start,
+		None,
+		false,
+		true,
+	);
+	payer
+		.node
+		.flow
+		.enqueue_invoice_request(invoice_request, payment_id, payer.node.test_get_peers_for_blinded_path())
+		.unwrap();
+	let original_invoice_request_onion =
+		payer.onion_messenger.next_onion_message_for_peer(payee_id).unwrap();
+	let nonce = extract_offer_nonce(payee, &original_invoice_request_onion);
+	let (_, reply_path) = extract_invoice_request(payee, &original_invoice_request_onion);
+
+	let expanded_key = payee.keys_manager.get_expanded_key();
+	let secp_ctx = Secp256k1::new();
+	let invoice_request = invoice_request_with_recurrence_for_test(
+		offer,
+		&expanded_key,
+		nonce,
+		&secp_ctx,
+		payment_id,
+		offer.chains()[0],
+		recurrence_counter,
+		recurrence_start,
+		recurrence_basetime,
+		recurrence_cancel,
+		include_prev_state,
+	);
+	let payer_signing_pubkey = invoice_request.payer_signing_pubkey();
+	payer
+		.onion_messenger
+		.send_onion_message(
+			OffersMessage::InvoiceRequest(invoice_request),
+			MessageSendInstructions::WithSpecifiedReplyPath {
+				destination: Destination::BlindedPath(offer.paths()[0].clone()),
+				reply_path,
+			},
+		)
+		.unwrap();
+
+	let invoice_request_onion = payer.onion_messenger.next_onion_message_for_peer(payee_id).unwrap();
+	payee.onion_messenger.handle_onion_message(payer_id, &invoice_request_onion);
+	payer_signing_pubkey
+}
+
+#[test]
+fn handles_recurring_invoice_request_with_next_state() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let bob_id = bob.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+	let payment_id = PaymentId([2; 32]);
+
+	send_recurring_invoice_request(alice, bob, &offer, payment_id, 0, None, None, false, true);
+
+	let invoice_onion = alice.onion_messenger.next_onion_message_for_peer(bob_id).unwrap();
+	let (invoice, _) = extract_invoice(bob, &invoice_onion);
+	let invoice_recurrence = invoice.invoice_recurrence().unwrap();
+	assert_eq!(invoice_recurrence.recurrence_basetime(), invoice.created_at().as_secs());
+	assert!(invoice_recurrence.recurrence_next_state().is_some());
+}
+
+#[test]
+fn ignores_recurring_invoice_request_without_previous_state() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let bob_id = bob.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+
+	send_recurring_invoice_request(alice, bob, &offer, PaymentId([4; 32]), 1, None, None, false, false);
+
+	assert!(alice.onion_messenger.next_onion_message_for_peer(bob_id).is_none());
+	assert!(alice.node.get_and_clear_pending_events().is_empty());
+}
+
+#[test]
+fn ignores_recurring_invoice_request_outside_paywindow() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let bob_id = bob.node.get_our_node_id();
+	let offer = recurring_offer(alice, 10_000_000, RecurrencePeriod::Seconds(60));
+	let recurrence_basetime = alice.node.duration_since_epoch().as_secs() - 600;
+
+	send_recurring_invoice_request(
+		alice,
+		bob,
+		&offer,
+		PaymentId([3; 32]),
+		1,
+		None,
+		Some(recurrence_basetime),
+		false,
+		true,
+	);
+
+	assert!(alice.onion_messenger.next_onion_message_for_peer(bob_id).is_none());
+	assert!(alice.node.get_and_clear_pending_events().is_empty());
+}
+
+#[test]
+fn enforces_recurring_invoice_request_payment_window_boundaries() {
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+
+	let alice = &nodes[0];
+	let bob = &nodes[1];
+	let now = alice.node.duration_since_epoch().as_secs();
+	let explicit_recurrence = |basetime, paywindow| Recurrence {
+		recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+			proportional: false,
+			basetime,
+		})),
+		recurrence_period: RecurrencePeriod::Seconds(60),
+		recurrence_paywindow: paywindow,
+		recurrence_limit: None,
+	};
+	let explicit_window = || {
+		Some(RecurrencePaywindow { seconds_before: 10, seconds_after: 10 })
+	};
+	let mut payment_id = 10u8;
+	let mut check_request = |recurrence, counter, start, basetime, expected_invoice| {
+		let offer = recurring_offer_with_recurrence(alice, 10_000_000, recurrence);
+		send_recurring_invoice_request(
+			alice,
+			bob,
+			&offer,
+			PaymentId([payment_id; 32]),
+			counter,
+			start,
+			basetime,
+			false,
+			true,
+		);
+		payment_id += 1;
+		let response = alice.onion_messenger.next_onion_message_for_peer(bob.node.get_our_node_id());
+		assert_eq!(response.is_some(), expected_invoice);
+		if let Some(response) = response {
+			let (invoice, _) = extract_invoice(bob, &response);
+			assert!(invoice.invoice_recurrence().unwrap().recurrence_next_state().is_some());
+		}
+	};
+
+	// Explicit paywindows include their opening and exclude their closing boundary.
+	check_request(explicit_recurrence(now + 10, explicit_window()), 0, Some(0), None, true);
+	check_request(explicit_recurrence(now - 9, explicit_window()), 0, Some(0), None, true);
+	check_request(explicit_recurrence(now - 10, explicit_window()), 0, Some(0), None, false);
+	check_request(explicit_recurrence(now - 11, explicit_window()), 0, Some(0), None, false);
+	check_request(explicit_recurrence(now - 50, explicit_window()), 1, Some(0), Some(now - 50), true);
+	check_request(explicit_recurrence(now - 70, explicit_window()), 1, Some(0), Some(now - 70), false);
+
+	// The default window includes period zero from its start and subsequent periods from the
+	// preceding period start, while always excluding the paid-for period's closing boundary.
+	check_request(explicit_recurrence(now, None), 0, Some(0), None, true);
+	check_request(explicit_recurrence(now - 60, None), 0, Some(0), None, false);
+	check_request(explicit_recurrence(now - 60, None), 1, Some(0), Some(now - 60), true);
+	check_request(explicit_recurrence(now - 120, None), 1, Some(0), Some(now - 120), false);
+
 }
 
 /// Checks that a BOLT 12 invoice can be paid via [`ChannelManager::pay_for_bolt12_invoice`]
