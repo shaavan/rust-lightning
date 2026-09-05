@@ -375,6 +375,45 @@ fn expect_offer_paths_requests(recipient: &Node, next_hop_nodes: &[&Node]) {
 	assert!(!offer_paths_reqs.is_empty());
 }
 
+/// Checks whether the payment recipient sent an updated invoice to the server that stores it.
+/// Expects exactly one updated invoice if `expect_refresh` is true, or none if it is false.
+///
+/// Sends any updated invoice to the server and checks that the server asks to save it in
+/// `expected_invoice_slot`. This slot identifies where the original invoice is stored, so the
+/// updated invoice should replace it there rather than use a new slot.
+///
+/// Removes all queued messages from the recipient and all queued events from the server.
+/// Messages unrelated to invoice updates are discarded. Any server event other than the
+/// expected request to save the updated invoice causes the check to fail.
+fn check_invoice_refresh(
+	server: &Node, recipient: &Node, expected_invoice_slot: u16, expect_refresh: bool,
+) {
+	let pending_oms = recipient.onion_messenger.release_pending_msgs();
+	let serve_static_invoice_oms: Vec<_> = pending_oms
+		.values()
+		.flatten()
+		.filter(|msg| {
+			matches!(
+				server.onion_messenger.peel_onion_message(msg).unwrap(),
+				PeeledOnion::AsyncPayments(AsyncPaymentsMessage::ServeStaticInvoice(_), _, _)
+			)
+		})
+		.collect();
+	assert_eq!(serve_static_invoice_oms.len(), if expect_refresh { 1 } else { 0 });
+	for msg in serve_static_invoice_oms {
+		server.onion_messenger.handle_onion_message(recipient.node.get_our_node_id(), msg);
+	}
+	let events = server.node.get_and_clear_pending_events();
+	if expect_refresh {
+		assert!(matches!(events.as_slice(), [Event::PersistStaticInvoice {
+			invoice_slot,
+			..
+		}] if *invoice_slot == expected_invoice_slot));
+	} else {
+		assert!(events.is_empty());
+	}
+}
+
 fn extract_invoice_request_om<'a>(
 	payer: &'a Node, next_hop_nodes: &[&'a Node],
 ) -> (PublicKey, msgs::OnionMessage) {
@@ -2360,6 +2399,148 @@ fn refresh_static_invoices_for_pending_offers() {
 			})
 			.unwrap();
 	}
+}
+
+#[test]
+fn refresh_static_invoices_on_channel_update() {
+	// The first changed update refreshes immediately. Further changes to the same channel must
+	// coalesce until the timer tick, which also restores the immediate refresh allowance.
+	let chanmon_cfgs = create_chanmon_cfgs(2);
+	let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+	let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+	create_unannounced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0);
+	let server = &nodes[0];
+	let recipient = &nodes[1];
+
+	let recipient_id = vec![42; 32];
+	let inv_server_paths =
+		server.node.blinded_paths_for_async_recipient(recipient_id.clone(), None).unwrap();
+	recipient.node.set_paths_to_static_invoice_server(inv_server_paths).unwrap();
+	expect_offer_paths_requests(&nodes[1], &[&nodes[0]]);
+
+	// Build and persist a ready offer. Ready offers are skipped by timer-based invoice refreshes.
+	let flow_res = pass_static_invoice_server_messages(server, recipient, recipient_id);
+	let channel = server.node.list_channels().remove(0);
+	let mut channel_config = channel.config.unwrap();
+
+	// Change the forwarding fee and deliver the resulting update to the recipient. Return the
+	// message so the test can also replay it without changing any forwarding parameters.
+	let mut send_changed_update = || {
+		channel_config.forwarding_fee_base_msat += 1;
+		server
+			.node
+			.update_channel_config(
+				&recipient.node.get_our_node_id(),
+				&[channel.channel_id],
+				&channel_config,
+			)
+			.unwrap();
+		let channel_update = get_event_msg!(
+			server,
+			MessageSendEvent::SendChannelUpdate,
+			recipient.node.get_our_node_id()
+		);
+		recipient.node.handle_channel_update(server.node.get_our_node_id(), &channel_update);
+		channel_update
+	};
+
+	// The first changed update must refresh the invoice immediately.
+	let channel_update = send_changed_update();
+	check_invoice_refresh(server, recipient, flow_res.invoice_slot, true);
+
+	// Replaying the same update must not send another invoice.
+	recipient.node.handle_channel_update(server.node.get_our_node_id(), &channel_update);
+	check_invoice_refresh(server, recipient, flow_res.invoice_slot, false);
+
+	// Further fee changes on this channel must wait for the timer tick.
+	for _ in 0..3 {
+		send_changed_update();
+		check_invoice_refresh(server, recipient, flow_res.invoice_slot, false);
+	}
+
+	// The timer must send one updated invoice for all the changes that were waiting.
+	recipient.node.timer_tick_occurred();
+	check_invoice_refresh(server, recipient, flow_res.invoice_slot, true);
+
+	// The timer also resets the allowance: the next change must refresh immediately.
+	send_changed_update();
+	check_invoice_refresh(server, recipient, flow_res.invoice_slot, true);
+
+	// All changes have been handled, so the next tick must not send another invoice.
+	recipient.node.timer_tick_occurred();
+	check_invoice_refresh(server, recipient, flow_res.invoice_slot, false);
+}
+
+#[test]
+fn refresh_static_invoices_on_channel_close() {
+	// Closing one channel must refresh invoices using the remaining usable channel immediately.
+	let chanmon_cfgs = create_chanmon_cfgs(4);
+	let node_cfgs = create_node_cfgs(4, &chanmon_cfgs);
+	let node_chanmgrs = create_node_chanmgrs(4, &node_cfgs, &[None, None, None, None]);
+	let nodes = create_network(4, &node_cfgs, &node_chanmgrs);
+	create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 1_000_000, 0);
+	create_unannounced_chan_between_nodes_with_value(&nodes, 1, 2, 1_000_000, 0);
+	create_unannounced_chan_between_nodes_with_value(&nodes, 2, 3, 1_000_000, 0);
+	let server = &nodes[1];
+	let recipient = &nodes[2];
+	let surviving_peer = &nodes[3];
+
+	let recipient_id = vec![42; 32];
+	let inv_server_paths =
+		server.node.blinded_paths_for_async_recipient(recipient_id.clone(), None).unwrap();
+	recipient.node.set_paths_to_static_invoice_server(inv_server_paths).unwrap();
+	expect_offer_paths_requests(recipient, &[server, surviving_peer]);
+	let flow_res = pass_static_invoice_server_messages(server, recipient, recipient_id);
+
+	let channel_id = recipient
+		.node
+		.list_channels()
+		.into_iter()
+		.find(|channel| channel.counterparty.node_id == server.node.get_our_node_id())
+		.unwrap()
+		.channel_id;
+	recipient
+		.node
+		.force_close_broadcasting_latest_txn(
+			&channel_id,
+			&server.node.get_our_node_id(),
+			"test".to_owned(),
+		)
+		.unwrap();
+	check_added_monitors(recipient, 1);
+	// Force-closing also sends the usual channel error to the peer.
+	assert!(recipient
+		.node
+		.get_and_clear_pending_msg_events()
+		.into_iter()
+		.any(|event| matches!(event, MessageSendEvent::HandleError { .. })));
+	assert!(recipient
+		.node
+		.get_and_clear_pending_events()
+		.into_iter()
+		.any(|event| matches!(event, Event::ChannelClosed { channel_id: closed_id, .. } if closed_id == channel_id)));
+
+	let pending_oms = recipient.onion_messenger.release_pending_msgs();
+	let serve_static_invoice_om = pending_oms
+		.get(&server.node.get_our_node_id())
+		.unwrap()
+		.iter()
+		.find(|msg| {
+			matches!(
+				server.onion_messenger.peel_onion_message(msg).unwrap(),
+				PeeledOnion::AsyncPayments(AsyncPaymentsMessage::ServeStaticInvoice(_), _, _)
+			)
+		})
+		.unwrap();
+	server
+		.onion_messenger
+		.handle_onion_message(recipient.node.get_our_node_id(), serve_static_invoice_om);
+	let events = server.node.get_and_clear_pending_events();
+	assert!(matches!(events.as_slice(), [Event::PersistStaticInvoice {
+		invoice_slot,
+		..
+	}] if *invoice_slot == flow_res.invoice_slot));
 }
 
 #[cfg_attr(feature = "std", ignore)]
