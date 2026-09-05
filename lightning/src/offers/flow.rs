@@ -1403,6 +1403,14 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		}
 	}
 
+	/// Reports whether any channel refresh requests are recorded, including requests already
+	/// handled immediately. Tests check this to ensure nodes without an invoice server keep none.
+	#[cfg(test)]
+	pub(crate) fn test_has_static_invoice_refresh_requests(&self) -> bool {
+		let state = self.static_invoice_refresh_state.lock().unwrap();
+		!state.refreshed_channels.is_empty() || state.force_refresh
+	}
+
 	fn take_pending_static_invoice_refresh(&self) -> bool {
 		core::mem::take(&mut *self.static_invoice_refresh_state.lock().unwrap()).force_refresh
 	}
