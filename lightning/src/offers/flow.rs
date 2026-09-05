@@ -1346,13 +1346,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			}
 		}
 
-		self.check_refresh_async_offers(peers.clone(), timer_tick_occurred)?;
+		let offer_refresh_res = self.check_refresh_async_offers(peers.clone(), timer_tick_occurred);
 
 		if timer_tick_occurred {
-			self.check_refresh_static_invoices(peers, usable_channels, router);
+			self.check_refresh_static_invoices(peers, usable_channels, router, false);
 		}
 
-		Ok(())
+		offer_refresh_res
 	}
 
 	fn check_refresh_async_offers(
@@ -1404,16 +1404,19 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		Ok(())
 	}
 
-	/// Enqueue onion messages that will used to request invoice refresh from the static invoice
+	/// Enqueues onion messages that will be used to request invoice refresh from the static invoice
 	/// server, based on the offers provided by the cache.
-	fn check_refresh_static_invoices<R: Router>(
+	pub(crate) fn check_refresh_static_invoices<R: Router>(
 		&self, peers: Vec<MessageForwardNode>, usable_channels: Vec<ChannelDetails>, router: R,
+		force_refresh: bool,
 	) {
 		let mut serve_static_invoice_msgs = Vec::new();
 		{
 			let duration_since_epoch = self.duration_since_epoch();
 			let cache = self.async_receive_offer_cache.lock().unwrap();
-			for offer_and_metadata in cache.offers_needing_invoice_refresh(duration_since_epoch) {
+			for offer_and_metadata in
+				cache.offers_needing_invoice_refresh(duration_since_epoch, force_refresh)
+			{
 				let (offer, offer_nonce, update_static_invoice_path) = offer_and_metadata;
 
 				let (invoice, forward_invreq_path) = match self.create_static_invoice_for_server(
