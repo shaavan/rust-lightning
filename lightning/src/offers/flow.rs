@@ -10,7 +10,7 @@
 //! Provides data structures and functions for creating and managing Offers messages,
 //! facilitating communication, and handling BOLT12 messages and payments.
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, BTreeSet};
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
@@ -35,6 +35,7 @@ use crate::chain::BlockLocator;
 use crate::ln::channel_state::ChannelDetails;
 use crate::ln::channelmanager::{InterceptId, PaymentId, CLTV_FAR_FAR_AWAY};
 use crate::ln::inbound_payment;
+use crate::ln::types::ChannelId;
 use crate::offers::async_receive_offer_cache::AsyncReceiveOfferCache;
 use crate::offers::invoice::{
 	Bolt12Invoice, DerivedSigningPubkey, ExplicitSigningPubkey, InvoiceBuilder,
@@ -64,6 +65,15 @@ use crate::types::payment::{PaymentHash, PaymentSecret};
 use crate::util::logger::Logger;
 use crate::util::ser::Writeable;
 
+/// Tracks channel updates which have triggered static invoice refreshes between timer ticks.
+#[derive(Default)]
+struct StaticInvoiceRefreshState {
+	/// Channels which have already triggered an immediate refresh during the current timer interval.
+	refreshed_channels: BTreeSet<ChannelId>,
+	/// Whether a repeated update requires a forced refresh on the next timer tick.
+	force_refresh: bool,
+}
+
 /// A BOLT12 offers code and flow utility provider, which facilitates
 /// BOLT12 builder generation and onion message handling.
 ///
@@ -89,6 +99,7 @@ pub struct OffersMessageFlow<MR: MessageRouter, L: Logger> {
 
 	pending_async_payments_messages: Mutex<Vec<(AsyncPaymentsMessage, MessageSendInstructions)>>,
 	async_receive_offer_cache: Mutex<AsyncReceiveOfferCache>,
+	static_invoice_refresh_state: Mutex<StaticInvoiceRefreshState>,
 
 	logger: L,
 }
@@ -118,6 +129,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			pending_async_payments_messages: Mutex::new(Vec::new()),
 
 			async_receive_offer_cache: Mutex::new(AsyncReceiveOfferCache::new()),
+			static_invoice_refresh_state: Mutex::new(StaticInvoiceRefreshState {
+				refreshed_channels: BTreeSet::new(),
+				force_refresh: false,
+			}),
 
 			logger,
 		}
@@ -1346,13 +1361,50 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			}
 		}
 
-		self.check_refresh_async_offers(peers.clone(), timer_tick_occurred)?;
+		let offer_refresh_res = self.check_refresh_async_offers(peers.clone(), timer_tick_occurred);
 
 		if timer_tick_occurred {
-			self.check_refresh_static_invoices(peers, usable_channels, router);
+			let force_refresh = self.take_pending_static_invoice_refresh();
+			self.check_refresh_static_invoices(peers, usable_channels, router, force_refresh);
 		}
 
-		Ok(())
+		offer_refresh_res
+	}
+
+	/// Decides when to refresh static invoices after a channel changes.
+	///
+	/// Returns `true` for the first request for this channel since the last timer tick. The caller
+	/// should then collect the peers and channels needed to refresh invoices and perform the refresh.
+	/// Further requests for the same channel return `false` and schedule one refresh on the next
+	/// timer tick, so repeated changes do not rebuild invoices each time.
+	///
+	/// If no static invoice server is configured, returns `false` without recording the request:
+	/// there are no invoices to refresh. The caller can skip collecting peers and channels whenever
+	/// this method returns `false`.
+	pub(crate) fn request_static_invoice_refresh(&self, channel_id: ChannelId) -> bool {
+		// Without a static invoice server, there are no invoices to refresh. Do not record these
+		// requests: the timer skips invoice refreshes for these nodes, so it would never clear them.
+		if self
+			.async_receive_offer_cache
+			.lock()
+			.unwrap()
+			.paths_to_static_invoice_server()
+			.is_empty()
+		{
+			return false;
+		}
+
+		let mut state = self.static_invoice_refresh_state.lock().unwrap();
+		if state.refreshed_channels.insert(channel_id) {
+			true
+		} else {
+			state.force_refresh = true;
+			false
+		}
+	}
+
+	fn take_pending_static_invoice_refresh(&self) -> bool {
+		core::mem::take(&mut *self.static_invoice_refresh_state.lock().unwrap()).force_refresh
 	}
 
 	fn check_refresh_async_offers(
@@ -1404,16 +1456,19 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		Ok(())
 	}
 
-	/// Enqueue onion messages that will used to request invoice refresh from the static invoice
+	/// Enqueues onion messages that will be used to request invoice refresh from the static invoice
 	/// server, based on the offers provided by the cache.
-	fn check_refresh_static_invoices<R: Router>(
+	pub(crate) fn check_refresh_static_invoices<R: Router>(
 		&self, peers: Vec<MessageForwardNode>, usable_channels: Vec<ChannelDetails>, router: R,
+		force_refresh: bool,
 	) {
 		let mut serve_static_invoice_msgs = Vec::new();
 		{
 			let duration_since_epoch = self.duration_since_epoch();
 			let cache = self.async_receive_offer_cache.lock().unwrap();
-			for offer_and_metadata in cache.offers_needing_invoice_refresh(duration_since_epoch) {
+			for offer_and_metadata in
+				cache.offers_needing_invoice_refresh(duration_since_epoch, force_refresh)
+			{
 				let (offer, offer_nonce, update_static_invoice_path) = offer_and_metadata;
 
 				let (invoice, forward_invreq_path) = match self.create_static_invoice_for_server(

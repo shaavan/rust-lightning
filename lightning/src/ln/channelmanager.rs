@@ -4680,6 +4680,11 @@ impl<
 				));
 			}
 		}
+
+		// Static invoices may still reference the closed channel. Refresh them immediately after
+		// removing the channel so subsequent payments use current blinded payment paths.
+		self.force_refresh_static_invoices();
+
 		for (err, counterparty_node_id) in shutdown_results.drain(..) {
 			let _ = self.handle_error(err, counterparty_node_id);
 		}
@@ -6102,6 +6107,20 @@ impl<
 			|args| self.send_payment_along_path(args),
 			&WithContext::for_payment(&self.logger, None, None, None, payment_id),
 		)
+	}
+
+	fn force_refresh_static_invoices(&self) {
+		let peers = self.get_peers_for_blinded_path();
+		let channels = self.list_usable_channels();
+		let router = &self.router;
+
+		self.flow.check_refresh_static_invoices(peers, channels, router, true)
+	}
+
+	fn request_static_invoice_refresh(&self, channel_id: ChannelId) {
+		if self.flow.request_static_invoice_refresh(channel_id) {
+			self.force_refresh_static_invoices();
+		}
 	}
 
 	fn check_refresh_async_receive_offer_cache(&self, timer_tick_occurred: bool) {
@@ -17523,8 +17542,21 @@ impl<
 
 	fn handle_channel_update(&self, counterparty_node_id: PublicKey, msg: &msgs::ChannelUpdate) {
 		PersistenceNotifierGuard::optionally_notify(self, || {
+			let channel_id = self
+				.short_to_chan_info
+				.read()
+				.unwrap()
+				.get(&msg.contents.short_channel_id)
+				.map(|(_, channel_id)| *channel_id);
 			let res = self.internal_channel_update(&counterparty_node_id, msg);
 			if let Ok(persist) = self.handle_error(res, counterparty_node_id) {
+				if persist == NotifyOption::DoPersist {
+					// Static invoices include forwarding parameters. Refresh immediately after an accepted,
+					// changed update so payments do not use stale blinded paths.
+					if let Some(channel_id) = channel_id {
+						self.request_static_invoice_refresh(channel_id);
+					}
+				}
 				persist
 			} else {
 				NotifyOption::DoPersist

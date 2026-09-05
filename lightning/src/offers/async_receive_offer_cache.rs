@@ -443,29 +443,34 @@ impl AsyncReceiveOfferCache {
 		self.offer_paths_request_attempts = 0;
 	}
 
-	/// Returns an iterator over the list of cached offers where we need to send an updated invoice to
-	/// the static invoice server.
+	/// Returns cached offers whose static invoices need updating.
+	///
+	/// When `force_refresh` is `false`, pending invoices are retried on each timer tick and used
+	/// invoices are refreshed after [`INVOICE_REFRESH_THRESHOLD`]. Ready offers are skipped because
+	/// they are periodically replaced with fresh offers.
+	///
+	/// When `force_refresh` is `true`, invoices for all cached offers are returned regardless of their
+	/// age or status. This ensures that invoices whose payment paths may have become stale are updated
+	/// immediately.
 	pub(super) fn offers_needing_invoice_refresh(
-		&self, duration_since_epoch: Duration,
+		&self, duration_since_epoch: Duration, force_refresh: bool,
 	) -> impl Iterator<Item = (&Offer, Nonce, &Responder)> {
-		// For any offers which are either in use or pending confirmation by the server, we should send
-		// them a fresh invoice on each timer tick.
 		self.offers_with_idx().filter_map(move |(_, offer)| {
-			let needs_invoice_update = match offer.status {
-				OfferStatus::Used { invoice_created_at } => {
-					invoice_created_at.saturating_add(INVOICE_REFRESH_THRESHOLD)
-						< duration_since_epoch
-				},
-				OfferStatus::Pending => true,
-				// Don't bother updating `Ready` offers' invoices on a timer because the offers themselves
-				// are regularly rotated anyway.
-				OfferStatus::Ready { .. } => false,
-			};
-			if needs_invoice_update {
-				Some((&offer.offer, offer.offer_nonce, &offer.update_static_invoice_path))
-			} else {
-				None
-			}
+			let needs_invoice_update = force_refresh
+				|| match offer.status {
+					OfferStatus::Used { invoice_created_at } => {
+						invoice_created_at.saturating_add(INVOICE_REFRESH_THRESHOLD)
+							< duration_since_epoch
+					},
+					OfferStatus::Pending => true,
+					OfferStatus::Ready { .. } => false,
+				};
+
+			needs_invoice_update.then_some((
+				&offer.offer,
+				offer.offer_nonce,
+				&offer.update_static_invoice_path,
+			))
 		})
 	}
 
