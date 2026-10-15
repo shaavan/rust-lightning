@@ -1060,15 +1060,29 @@ pub(super) fn blinded_hops<F: ForwardTlvsInfo, T: secp256k1::Signing + secp256k1
 		.map(|node| (node.node_id, None))
 		.chain(dummy_tlvs.iter().map(|_| (payee_node_id, Some(local_node_receive_key))))
 		.chain(core::iter::once((payee_node_id, Some(local_node_receive_key))));
-	let tlvs = intermediate_nodes
+	let intermediate_tlvs = intermediate_nodes
 		.iter()
 		.map(|node| BlindedPaymentTlvsRef::Forward(&node.tlvs))
-		.chain(dummy_tlvs.iter().map(|tlvs| BlindedPaymentTlvsRef::Dummy(tlvs)))
-		.chain(core::iter::once(BlindedPaymentTlvsRef::Receive(&payee_tlvs)));
+		.chain(dummy_tlvs.iter().map(|tlvs| BlindedPaymentTlvsRef::Dummy(tlvs)));
 
-	let path = pks.zip(
-		tlvs.map(|tlv| BlindedPathWithPadding { tlvs: tlv, round_off: PAYMENT_PADDING_ROUND_OFF }),
-	);
+	// Use a shared size for real and dummy forwarding hops so their lengths do not distinguish them.
+	let intermediate_target_len = intermediate_tlvs
+		.clone()
+		.map(|tlv| {
+			BlindedPathWithPadding { tlvs: tlv, round_off: PAYMENT_PADDING_ROUND_OFF }
+				.serialized_length()
+		})
+		.max()
+		.unwrap_or(PAYMENT_PADDING_ROUND_OFF);
+
+	let tlvs = intermediate_tlvs
+		.map(|tlv| BlindedPathWithPadding { tlvs: tlv, round_off: intermediate_target_len })
+		.chain(core::iter::once(BlindedPathWithPadding {
+			tlvs: BlindedPaymentTlvsRef::Receive(&payee_tlvs),
+			round_off: PAYMENT_PADDING_ROUND_OFF,
+		}));
+
+	let path = pks.zip(tlvs);
 
 	// Debug invariant: all non-final hops must have identical serialized size.
 	#[cfg(debug_assertions)]
@@ -1320,11 +1334,75 @@ mod tests {
 		PaymentForwardNode, PaymentRelay, ReceiveTlvs,
 	};
 	use crate::ln::functional_test_utils::TEST_FINAL_CLTV;
+	use crate::sign::ReceiveAuthKey;
 	use crate::types::features::BlindedHopFeatures;
 	use crate::types::payment::PaymentSecret;
-	use bitcoin::secp256k1::PublicKey;
+	use crate::util::ser::Writeable;
+	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 
 	use super::{bucket_fee_base_msat, bucket_fee_proportional_millionths};
+
+	/// Forwarding policies that cross padding buckets must not expose different hop lengths.
+	#[test]
+	fn blinded_hops_share_padding_across_buckets() {
+		let secp_ctx = Secp256k1::new();
+		let session_priv = SecretKey::from_slice(&[1; 32]).unwrap();
+		let node_id = PublicKey::from_secret_key(&secp_ctx, &session_priv);
+		let small_tlvs = ForwardTlvs {
+			short_channel_id: 42,
+			payment_relay: PaymentRelay {
+				cltv_expiry_delta: 40,
+				fee_proportional_millionths: 0,
+				fee_base_msat: 0,
+			},
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1_000,
+				htlc_minimum_msat: 0,
+			},
+			next_blinding_override: None,
+			features: BlindedHopFeatures::empty(),
+		};
+		let mut large_tlvs = small_tlvs.clone();
+		large_tlvs.payment_relay.fee_base_msat = 65_536;
+		large_tlvs.payment_constraints.htlc_minimum_msat = 16_777_216;
+		// These lengths cross buckets independently of the padding helper's 28/29-byte boundary.
+		assert_eq!(small_tlvs.serialized_length(), 24);
+		assert_eq!(large_tlvs.serialized_length(), 31);
+		let dummy_tlvs = DummyTlvs {
+			payment_relay: small_tlvs.payment_relay.clone(),
+			payment_constraints: small_tlvs.payment_constraints.clone(),
+		};
+		let intermediate_nodes = [small_tlvs, large_tlvs].map(|tlvs| PaymentForwardNode {
+			node_id,
+			tlvs,
+			htlc_maximum_msat: 100_000_000,
+		});
+		let receive_tlvs = ReceiveTlvs {
+			payment_secret: PaymentSecret([0; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1_000,
+				htlc_minimum_msat: 1,
+			},
+			payment_context: PaymentContext::Bolt12Refund(Bolt12RefundContext {
+				payment_metadata: None,
+				invoice_request: None,
+			}),
+		};
+		let hops = super::blinded_hops(
+			&secp_ctx,
+			&intermediate_nodes,
+			node_id,
+			&[dummy_tlvs],
+			receive_tlvs,
+			&session_priv,
+			ReceiveAuthKey([2; 32]),
+		);
+		assert_eq!(hops.len(), 4);
+		// Both real hops and the dummy hop use 60 bytes of plaintext plus a 16-byte tag.
+		for hop in &hops[..3] {
+			assert_eq!(hop.encrypted_payload.len(), 76);
+		}
+	}
 
 	#[test]
 	fn buckets_forwarding_fees() {

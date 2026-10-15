@@ -246,6 +246,7 @@ impl Writeable for BlindedPathPadding {
 const TLV_OVERHEAD: usize = 2;
 
 /// A generic struct that applies padding to blinded path TLVs, rounding their size off to `round_off`
+#[derive(Clone)]
 pub(crate) struct BlindedPathWithPadding<T: Writeable> {
 	pub(crate) tlvs: T,
 	pub(crate) round_off: usize,
