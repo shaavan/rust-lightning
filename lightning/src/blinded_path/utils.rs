@@ -22,7 +22,7 @@ use crate::io;
 use crate::ln::onion_utils;
 use crate::onion_message::messenger::Destination;
 use crate::sign::ReceiveAuthKey;
-use crate::util::ser::{Writeable, Writer};
+use crate::util::ser::{BigSize, Writeable, Writer};
 
 use core::borrow::Borrow;
 
@@ -239,13 +239,12 @@ impl Writeable for BlindedPathPadding {
 	}
 }
 
-/// Padding storage requires two extra bytes:
-/// - One byte for the type.
-/// - One byte for the padding length.
-/// This constant accounts for that overhead.
+/// Minimum padding overhead: one byte for the type and one for the BigSize length.
+/// Padding lengths of 253 bytes or more require a larger length prefix.
 const TLV_OVERHEAD: usize = 2;
 
 /// A generic struct that applies padding to blinded path TLVs, rounding their size off to `round_off`
+#[derive(Clone)]
 pub(crate) struct BlindedPathWithPadding<T: Writeable> {
 	pub(crate) tlvs: T,
 	pub(crate) round_off: usize,
@@ -259,8 +258,24 @@ impl<T: Writeable> Writeable for BlindedPathWithPadding<T> {
 		let padding = if self.round_off == 0 || tlv_length % self.round_off == 0 {
 			None
 		} else {
-			let length = total_length.div_ceil(self.round_off) * self.round_off - total_length;
-			Some(BlindedPathPadding::new(length))
+			let mut target_length = total_length.div_ceil(self.round_off) * self.round_off;
+			loop {
+				// BigSize prefixes occupy 1, 3, 5, or 9 bytes. Some total padding sizes
+				// cannot be represented when the prefix grows, so try the next padding
+				// multiple.
+				let padding = [1, 3, 5, 9].iter().find_map(|&prefix_length| {
+					let length = target_length.checked_sub(tlv_length + 1 + prefix_length)?;
+					if BigSize(length as u64).serialized_length() == prefix_length {
+						Some(BlindedPathPadding::new(length))
+					} else {
+						None
+					}
+				});
+				if padding.is_some() {
+					break padding;
+				}
+				target_length += self.round_off;
+			}
 		};
 
 		encode_tlv_stream!(writer, {
