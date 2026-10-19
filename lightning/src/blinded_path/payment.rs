@@ -1145,13 +1145,166 @@ impl_ser_tlv_based!(Bolt12RefundContext, {
 #[cfg(test)]
 mod tests {
 	use crate::blinded_path::payment::{
-		Bolt12RefundContext, ForwardTlvs, PaymentConstraints, PaymentContext, PaymentForwardNode,
-		PaymentRelay, ReceiveTlvs,
+		BlindedPaymentPath, BlindedPaymentTlvs, Bolt12OfferContext, Bolt12RefundContext,
+		ForwardTlvs, PaymentConstraints, PaymentContext, PaymentForwardNode, PaymentRelay,
+		ReceiveTlvs,
 	};
 	use crate::ln::functional_test_utils::TEST_FINAL_CLTV;
+	use crate::offers::invoice_request::{InvoiceRequestFields, InvoiceRequestRecurrence};
+	use crate::offers::offer::{
+		OfferId, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow,
+		RecurrencePeriod, RecurrenceType,
+	};
+	use crate::offers::test_utils::payer_pubkey;
+	use crate::sign::{KeysManager, NodeSigner, Recipient};
 	use crate::types::features::BlindedHopFeatures;
 	use crate::types::payment::PaymentSecret;
-	use bitcoin::secp256k1::PublicKey;
+	use crate::util::ser::{BigSizeKeyedMap, Readable, Writeable};
+	use alloc::collections::BTreeMap;
+	use bitcoin::secp256k1::{PublicKey, Secp256k1};
+
+	/// Constructs a context containing every recurrence timing field and unrelated metadata.
+	fn recurring_offer_context() -> Bolt12OfferContext {
+		let mut payment_metadata = BTreeMap::new();
+		payment_metadata.insert(7, vec![1, 2, 3]);
+		Bolt12OfferContext {
+			offer_id: OfferId([42; 32]),
+			offer_recurrence: Some(Recurrence {
+				recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+					proportional: true,
+					basetime: 123_456,
+				})),
+				recurrence_period: RecurrencePeriod::Months(1),
+				recurrence_paywindow: Some(RecurrencePaywindow {
+					seconds_before: 60,
+					seconds_after: 120,
+				}),
+				recurrence_limit: Some(RecurrenceLimit(12)),
+			}),
+			invoice_request: InvoiceRequestFields {
+				payer_signing_pubkey: payer_pubkey(),
+				quantity: Some(2),
+				payer_note_truncated: None,
+				human_readable_name: None,
+				invoice_request_recurrence: InvoiceRequestRecurrence::new(
+					Some(1),
+					Some(2),
+					Some(vec![4, 5, 6]),
+					None,
+				)
+				.unwrap(),
+			},
+			invoice_recurrence_basetime: Some(123_456),
+			payment_metadata: Some(payment_metadata),
+		}
+	}
+
+	#[test]
+	fn offer_recurrence_context_serialization_compatibility() {
+		// Model the pre-timing layout using the actual legacy field encodings, so new odd TLVs
+		// must be skipped by the old reader rather than merely accepted by the current reader.
+		#[derive(Debug, PartialEq)]
+		struct LegacyOfferContext {
+			offer_id: OfferId,
+			invoice_request: InvoiceRequestFields,
+			payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
+		}
+		impl_ser_tlv_based!(LegacyOfferContext, {
+			(0, offer_id, required),
+			(1, payment_metadata, (option, encoding: (BTreeMap<u64, Vec<u8>>, BigSizeKeyedMap))),
+			(2, invoice_request, required),
+		});
+
+		let mut context = recurring_offer_context();
+		let mut legacy = LegacyOfferContext {
+			offer_id: context.offer_id,
+			invoice_request: context.invoice_request.clone(),
+			payment_metadata: context.payment_metadata.clone(),
+		};
+		let legacy_bytes = legacy.encode();
+		let decoded = Bolt12OfferContext::read(&mut legacy_bytes.as_slice()).unwrap();
+		assert_eq!(decoded.offer_recurrence, None);
+		assert_eq!(decoded.invoice_recurrence_basetime, None);
+		assert_eq!(decoded.encode(), legacy_bytes);
+
+		for recurrence_type in [
+			RecurrenceType::Optional,
+			RecurrenceType::Compulsory(None),
+			context.offer_recurrence.unwrap().recurrence_type,
+		] {
+			let start = match recurrence_type {
+				RecurrenceType::Compulsory(Some(_)) => Some(2),
+				_ => None,
+			};
+			context.invoice_request.invoice_request_recurrence =
+				InvoiceRequestRecurrence::new(Some(1), start, Some(vec![4, 5, 6]), None).unwrap();
+			legacy.invoice_request = context.invoice_request.clone();
+			for recurrence_period in [
+				RecurrencePeriod::Seconds(60),
+				RecurrencePeriod::Days(7),
+				RecurrencePeriod::Months(1),
+			] {
+				for include_optional_terms in [false, true] {
+					let mut recurrence = context.offer_recurrence.unwrap();
+					recurrence.recurrence_type = recurrence_type;
+					recurrence.recurrence_period = recurrence_period;
+					recurrence.recurrence_paywindow = include_optional_terms
+						.then_some(RecurrencePaywindow { seconds_before: 60, seconds_after: 120 });
+					recurrence.recurrence_limit =
+						include_optional_terms.then_some(RecurrenceLimit(12));
+					context.offer_recurrence = Some(recurrence);
+					let bytes = context.encode();
+					assert_eq!(Bolt12OfferContext::read(&mut bytes.as_slice()).unwrap(), context);
+					assert_eq!(LegacyOfferContext::read(&mut bytes.as_slice()).unwrap(), legacy);
+				}
+			}
+		}
+	}
+
+	#[test]
+	fn authenticates_recurring_offer_payment_context() {
+		let keys = KeysManager::new(&[42; 32], 0, 0, false);
+		let secp_ctx = Secp256k1::new();
+		let context = PaymentContext::Bolt12Offer(recurring_offer_context());
+		let tlvs = ReceiveTlvs {
+			payment_secret: PaymentSecret([1; 32]),
+			payment_constraints: PaymentConstraints {
+				max_cltv_expiry: 1_000_000,
+				htlc_minimum_msat: 1,
+			},
+			payment_context: context.clone(),
+		};
+		let mut path = BlindedPaymentPath::one_hop(
+			keys.get_node_id(Recipient::Node).unwrap(),
+			keys.get_receive_auth_key(),
+			tlvs.clone(),
+			TEST_FINAL_CLTV as u16,
+			&keys,
+			&secp_ctx,
+		)
+		.unwrap();
+		match path.decrypt_intro_payload(&keys).unwrap().0 {
+			BlindedPaymentTlvs::Receive(tlvs) => assert_eq!(tlvs.payment_context, context),
+			_ => panic!("expected recipient payload"),
+		}
+
+		let other_keys = KeysManager::new(&[43; 32], 0, 0, false);
+		assert!(path.decrypt_intro_payload(&other_keys).is_err());
+		// Encryption to the correct node is insufficient without its receive authentication key.
+		let wrong_auth_path = BlindedPaymentPath::one_hop(
+			keys.get_node_id(Recipient::Node).unwrap(),
+			other_keys.get_receive_auth_key(),
+			tlvs,
+			TEST_FINAL_CLTV as u16,
+			&keys,
+			&secp_ctx,
+		)
+		.unwrap();
+		assert!(wrong_auth_path.decrypt_intro_payload(&keys).is_err());
+		// Corruption of the encrypted recipient data must fail authentication before it can be used.
+		path.inner_path.blinded_hops[0].encrypted_payload[0] ^= 1;
+		assert!(path.decrypt_intro_payload(&keys).is_err());
+	}
 
 	#[test]
 	fn compute_payinfo() {

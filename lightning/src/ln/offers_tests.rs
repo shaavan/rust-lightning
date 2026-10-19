@@ -51,18 +51,18 @@ use crate::blinded_path::IntroductionNode;
 use crate::blinded_path::message::BlindedMessagePath;
 use crate::blinded_path::payment::{Bolt12OfferContext, Bolt12RefundContext, DummyTlvs, PaymentContext};
 use crate::blinded_path::message::{MessageContext, OffersContext};
-use crate::events::{ClosureReason, Event, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
+use crate::events::{ClosureReason, Event, EventsProvider, HTLCHandlingFailureType, PaidBolt12Invoice, PaymentFailureReason, PaymentPurpose};
 use crate::ln::channelmanager::{PaymentId, RecentPaymentDetails, self};
 use crate::ln::outbound_payment::{Bolt12PaymentError, RecipientOnionFields, Retry};
 use crate::types::features::Bolt12InvoiceFeatures;
 use crate::ln::functional_test_utils::*;
 use crate::ln::msgs::{BaseMessageHandler, ChannelMessageHandler, Init, OnionMessage, OnionMessageHandler};
 use crate::ln::outbound_payment::IDEMPOTENCY_TIMEOUT_TICKS;
-use crate::offers::invoice::Bolt12Invoice;
+use crate::offers::invoice::{Bolt12Invoice, UnsignedBolt12Invoice};
 use crate::offers::invoice_error::InvoiceError;
 use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestFields, InvoiceRequestVerifiedFromOffer};
 use crate::offers::nonce::Nonce;
-use crate::offers::offer::OfferBuilder;
+use crate::offers::offer::{OfferBuilder, Recurrence, RecurrenceBase, RecurrenceLimit, RecurrencePaywindow, RecurrencePeriod, RecurrenceType};
 use crate::offers::parse::Bolt12SemanticError;
 use crate::offers::payer_proof::PayerProof;
 use crate::onion_message::messenger::{DefaultMessageRouter, Destination, MessageRouter, MessageSendInstructions, NodeIdMessageRouter, NullMessageRouter, PeeledOnion, DUMMY_HOPS_PATH_LENGTH, QR_CODED_DUMMY_HOPS_PATH_LENGTH};
@@ -2858,6 +2858,158 @@ fn creates_and_verifies_payer_proof_after_offer_payment() {
 		verified.offer_description().map(|desc| desc.to_string()),
 		offer.description().map(|desc| desc.to_string()),
 	);
+}
+
+/// Checks that a received or claimed payment preserves its timing context when persisted for replay.
+fn check_recurrence_payment_event(event: &Event, expected_context: &Bolt12OfferContext) {
+	let purpose = match event {
+		Event::PaymentClaimable { purpose, .. } | Event::PaymentClaimed { purpose, .. } => purpose,
+		_ => panic!("expected a claim event"),
+	};
+	match purpose {
+		PaymentPurpose::Bolt12OfferPayment { payment_context, .. } => {
+			assert_eq!(payment_context, expected_context);
+		},
+		_ => panic!("expected an offer payment"),
+	}
+	assert_eq!(Event::read(&mut event.encode().as_slice()).unwrap().as_ref(), Some(event));
+}
+
+/// Exercises both invoice signing paths and the authenticated payment path through both claim events.
+#[test]
+fn receives_offer_recurrence_timing_context() {
+	let schedule = Recurrence {
+		recurrence_type: RecurrenceType::Optional,
+		recurrence_period: RecurrencePeriod::Seconds(3600),
+		recurrence_paywindow: Some(RecurrencePaywindow { seconds_before: 60, seconds_after: 120 }),
+		recurrence_limit: Some(RecurrenceLimit(12)),
+	};
+	let cases = [
+		(None, false),
+		(Some(schedule), false),
+		(Some(schedule), true),
+		(Some(Recurrence { recurrence_type: RecurrenceType::Compulsory(None), ..schedule }), true),
+		(Some(Recurrence {
+			recurrence_type: RecurrenceType::Compulsory(Some(RecurrenceBase {
+				proportional: false, basetime: 123_456,
+			})),
+			..schedule
+		}), true),
+	];
+
+	for derived_keys in [false, true] {
+		let chanmon_cfgs = create_chanmon_cfgs(2);
+		let node_cfgs = create_node_cfgs(2, &chanmon_cfgs);
+		let node_chanmgrs = create_node_chanmgrs(2, &node_cfgs, &[None, None]);
+		let nodes = create_network(2, &node_cfgs, &node_chanmgrs);
+		create_announced_chan_between_nodes_with_value(&nodes, 0, 1, 10_000_000, 1_000_000_000);
+		let alice = &nodes[0];
+		let bob = &nodes[1];
+		let expanded_key = alice.keys_manager.get_expanded_key();
+		let secp_ctx = Secp256k1::new();
+		let nonce = Nonce([42; Nonce::LENGTH]);
+
+		for (case_index, (offer_recurrence, recurring)) in cases.iter().copied().enumerate() {
+			let mut builder = OfferBuilder::deriving_signing_pubkey(
+				alice.node.get_our_node_id(), &expanded_key, nonce, &secp_ctx,
+			).chain(Network::Testnet).amount_msats(10_000_000);
+			if derived_keys {
+				// An offer path selects derived signing keys; without paths, metadata authenticates
+				// the offer while invoices use the recipient's explicit node signing key.
+				builder = builder.path(crate::offers::test_utils::blinded_path());
+			}
+			if let Some(recurrence) = offer_recurrence {
+				builder = builder.recurrence(recurrence);
+			}
+			let offer = builder.build().unwrap();
+			let start = match offer_recurrence.map(|recurrence| recurrence.recurrence_type) {
+				Some(RecurrenceType::Compulsory(Some(_))) => Some(2),
+				_ => None,
+			};
+			let mut established_basetime = None;
+			let mut prev_state = None;
+			for counter in 0..if recurring { 2 } else { 1 } {
+				let recurrence = if recurring { Some((counter, start, prev_state.take())) } else { None };
+				let request = crate::offers::test_utils::invoice_request_with_recurrence(&offer, recurrence);
+				let verified = if derived_keys {
+					request.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx).unwrap()
+				} else {
+					request.verify_using_metadata(&expanded_key, &secp_ctx).unwrap()
+				};
+				let get_payment_info = |amount, expiry| {
+					alice.node.create_inbound_payment(Some(amount), expiry, None, None)
+						.map(|(hash, secret, _)| (hash, secret))
+						.map_err(|_| Bolt12SemanticError::InvalidAmount)
+				};
+				let (invoice, request_fields) = match verified {
+					InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => {
+						assert!(derived_keys);
+						let fields = request.fields();
+						let (builder, _) = alice.node.flow.create_invoice_builder_from_invoice_request_with_keys(
+							alice.router, &request, alice.node.list_usable_channels(), get_payment_info,
+							None, alice.keys_manager,
+						).unwrap();
+						(builder.build_and_sign(&secp_ctx).unwrap(), fields)
+					},
+					InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => {
+						assert!(!derived_keys);
+						let fields = request.fields();
+						let (builder, _) = alice.node.flow.create_invoice_builder_from_invoice_request_without_keys(
+							alice.router, &request, alice.node.list_usable_channels(), get_payment_info,
+							None, alice.keys_manager,
+						).unwrap();
+						let invoice = builder.build().unwrap().sign(|invoice: &UnsignedBolt12Invoice| {
+							alice.keys_manager.sign_bolt12_invoice(invoice)
+						}).unwrap();
+						(invoice, fields)
+					},
+				};
+				if recurring {
+					let recurrence = invoice.invoice_recurrence().unwrap();
+					let expected_base = match (offer_recurrence.unwrap().recurrence_type, established_basetime) {
+						(RecurrenceType::Compulsory(Some(base)), _) => base.basetime,
+						(_, Some(base)) => base,
+						_ => invoice.created_at().as_secs(),
+					};
+					assert_eq!(recurrence.recurrence_basetime(), expected_base);
+					established_basetime = Some(expected_base);
+					prev_state = Some(recurrence.recurrence_next_state().unwrap().to_vec());
+				} else {
+					assert!(invoice.invoice_recurrence().is_none());
+				}
+				let expected_context = Bolt12OfferContext {
+					offer_id: offer.id(),
+					offer_recurrence: if recurring { offer_recurrence } else { None },
+					invoice_request: request_fields,
+					invoice_recurrence_basetime: established_basetime,
+					payment_metadata: None,
+				};
+				let payment_id = PaymentId([(case_index * 2 + counter as usize) as u8; 32]);
+				bob.node.pay_for_bolt12_invoice(&invoice, payment_id, Default::default()).unwrap();
+				route_bolt12_payment(bob, &[alice], &invoice);
+				let claimable = get_event!(alice, Event::PaymentClaimable);
+				check_recurrence_payment_event(&claimable, &expected_context);
+				let preimage = match claimable {
+					Event::PaymentClaimable { purpose, .. } => purpose.preimage().unwrap(),
+					_ => unreachable!(),
+				};
+				alice.node.claim_funds(preimage);
+				let seen_claimed = core::cell::Cell::new(false);
+				alice.node.process_pending_events(&|event: Event| {
+					assert!(matches!(event, Event::PaymentClaimed { .. }));
+					check_recurrence_payment_event(&event, &expected_context);
+					seen_claimed.set(true);
+					// Keep the event pending so the route helper can process the claim normally.
+					Err(crate::events::ReplayEvent())
+				});
+				assert!(seen_claimed.get());
+				let paths: &[&[&Node]] = &[&[alice]];
+				let fees = pass_claimed_payment_along_route(ClaimAlongRouteArgs::new(bob, paths, preimage));
+				let (paid_invoice, _) = expect_payment_sent!(bob, preimage, Some(fees));
+				assert_eq!(paid_invoice, Some(PaidBolt12Invoice::Bolt12Invoice(invoice)));
+			}
+		}
+	}
 }
 
 /// Runs the standard offer flow (invoice request → invoice) with `manually_handle_bolt12_invoices`

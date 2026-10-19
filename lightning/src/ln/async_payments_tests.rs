@@ -1232,6 +1232,8 @@ fn async_payment_delivers_payment_metadata() {
 			..
 		} => {
 			assert_eq!(payment_context.payment_metadata.as_ref(), Some(&expected_metadata));
+			assert_eq!(payment_context.offer_recurrence, None);
+			assert_eq!(payment_context.invoice_recurrence_basetime, None);
 		},
 		_ => panic!("Unexpected event: {:?}", claimable_ev),
 	}

@@ -3588,6 +3588,55 @@ mod tests {
 		);
 	}
 
+	/// Uses distinct invoice creation times to ensure follow-up context keeps the verified anchor.
+	#[test]
+	fn recurrence_payment_context_preserves_established_basetime() {
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let secp_ctx = Secp256k1::new();
+		let nonce = Nonce([3; Nonce::LENGTH]);
+		let recurrence = Recurrence {
+			recurrence_type: RecurrenceType::Optional,
+			recurrence_period: RecurrencePeriod::Days(7),
+			recurrence_paywindow: None,
+			recurrence_limit: None,
+		};
+		let offer = OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+		)
+		.amount_msats(1000)
+		.recurrence(recurrence)
+		.build()
+		.unwrap();
+		let verify = |request: InvoiceRequest| match request
+			.verify_using_metadata(&expanded_key, &secp_ctx)
+			.unwrap()
+		{
+			super::InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => request,
+			_ => panic!("expected explicit signing keys"),
+		};
+		let first = verify(invoice_request_with_recurrence(&offer, Some((0, None, None))));
+		let created_at = Duration::from_secs(123_456);
+		let expected_context = (Some(recurrence), Some(created_at.as_secs()));
+		assert_eq!(first.recurrence_payment_context(created_at), Ok(expected_context));
+
+		let state = first.create_recurrence_next_state(created_at, nonce, &expanded_key).unwrap();
+		let followup =
+			verify(invoice_request_with_recurrence(&offer, Some((1, None, Some(state)))));
+		assert_eq!(
+			followup.recurrence_payment_context(Duration::from_secs(654_321)),
+			Ok(expected_context)
+		);
+
+		let missing_state = verify(invoice_request_with_recurrence(&offer, Some((1, None, None))));
+		assert_eq!(
+			missing_state.recurrence_payment_context(created_at),
+			Err(Bolt12SemanticError::InvalidMetadata)
+		);
+	}
+
 	#[test]
 	fn creates_invoice_recurrence_next_state() {
 		let expanded_key = ExpandedKey::new([42; 32]);

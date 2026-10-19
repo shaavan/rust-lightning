@@ -25,9 +25,37 @@ use core::time::Duration;
 #[allow(unused_imports)]
 use crate::prelude::*;
 
+use super::invoice_request::InvoiceRequest;
 use super::nonce::Nonce;
-use super::offer::OfferBuilder;
+use super::offer::{Offer, OfferBuilder};
+use super::signer::Metadata;
 use super::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
+use crate::ln::channelmanager::PaymentId;
+use crate::util::ser::Writeable;
+
+/// Builds a request with a fixed payer signing key so recurrence continuity tests keep the same
+/// payer identity across counters independently of payer key derivation.
+///
+/// Parse the signed request to enforce offer and recurrence semantics even though the test builder
+/// bypasses the automatic per-request payer key derivation.
+pub(crate) fn invoice_request_with_recurrence(
+	offer: &Offer, recurrence: Option<(u32, Option<u32>, Option<Vec<u8>>)>,
+) -> InvoiceRequest {
+	let secp_ctx = Secp256k1::new();
+	let expanded_key = ExpandedKey::new([42; 32]);
+	let mut builder = offer
+		.request_invoice(&expanded_key, Nonce([42; Nonce::LENGTH]), &secp_ctx, PaymentId([42; 32]))
+		.unwrap()
+		.chain_hash(offer.chains()[0])
+		.unwrap()
+		.payer_metadata(Metadata::Bytes(vec![42; 32]))
+		.payer_signing_pubkey(payer_pubkey());
+	if let Some((counter, start, prev_state)) = recurrence {
+		builder = builder.recurrence(counter, start, prev_state, false).unwrap();
+	}
+	let request = builder.build_unchecked().sign(payer_sign).unwrap();
+	InvoiceRequest::try_from(request.encode()).unwrap()
+}
 
 pub(crate) fn fail_sign<T: AsRef<TaggedHash>>(_message: &T) -> Result<Signature, ()> {
 	Err(())
