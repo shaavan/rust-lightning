@@ -694,6 +694,22 @@ impl InvoiceRequestVerifiedFromOffer {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Resolves the offer terms and basetime to include in an inbound payment context.
+	///
+	/// Use the invoice's creation time so its basetime matches the context when the first invoice
+	/// establishes period zero. Subsequent invoices reuse the basetime recovered during verification.
+	pub(crate) fn recurrence_payment_context(
+		&self, created_at: Duration,
+	) -> Result<(Option<Recurrence>, Option<u64>), Bolt12SemanticError> {
+		let basetime = self.inner.recurrence_basetime(created_at, self.resolved_basetime)?;
+		// Optional recurrence offers may be paid once without opting into recurrence.
+		let recurrence = match basetime {
+			Some(_) => self.inner.offer_recurrence(),
+			None => None,
+		};
+		Ok((recurrence, basetime))
+	}
+
 	/// Creates the next-state token for an invoice produced by the automatic LDK payee flow.
 	///
 	/// This flow always emits a token, so a subsequent request handled by the same flow must echo
@@ -1090,6 +1106,13 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// a preference. Note, however, that any privacy is lost if a public node id was used for
 	/// [`Offer::issuer_signing_pubkey`].
 	///
+	/// For recurring payments, callers constructing `payment_paths` should include the offer's
+	/// recurrence terms and the invoice's recurrence basetime in the paths' [`Bolt12OfferContext`].
+	/// This makes the timing information available when the payment is received. Use the same
+	/// `created_at` when determining the basetime and constructing the invoice if the first invoice
+	/// establishes the basetime. Leave both context fields absent for non-recurring payments,
+	/// including single payments for offers with optional recurrence.
+	///
 	/// Errors if the request contains unknown required features.
 	///
 	/// # Note
@@ -1100,6 +1123,7 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// instead.
 	///
 	/// [`Bolt12Invoice::created_at`]: crate::offers::invoice::Bolt12Invoice::created_at
+	/// [`Bolt12OfferContext`]: crate::blinded_path::payment::Bolt12OfferContext
 	/// [`OfferBuilder::deriving_signing_pubkey`]: crate::offers::offer::OfferBuilder::deriving_signing_pubkey
 	pub fn respond_with_no_std(
 		&$self, payment_paths: Vec<BlindedPaymentPath>, payment_hash: PaymentHash,

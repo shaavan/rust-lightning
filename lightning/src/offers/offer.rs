@@ -924,6 +924,13 @@ pub enum RecurrenceType {
 	Compulsory(Option<RecurrenceBase>),
 }
 
+// These encodings persist recurrence terms in payment contexts. Offers continue to encode
+// recurrence using their BOLT 12 TLV fields, independently of this representation.
+impl_ser_tlv_based_enum!(RecurrenceType,
+	(0, Optional) => {},
+	{2, Compulsory} => (),
+);
+
 /// Represents the recurrence-related fields in an Offer.
 ///
 /// `recurrence_type` records which wire variant the offer used, while the
@@ -939,6 +946,13 @@ pub struct Recurrence {
 	/// Maximum zero-based period index allowed for this Offer.
 	pub recurrence_limit: Option<RecurrenceLimit>,
 }
+
+impl_ser_tlv_based!(Recurrence, {
+	(0, recurrence_type, required),
+	(2, recurrence_period, required),
+	(3, recurrence_paywindow, option),
+	(5, recurrence_limit, option),
+});
 
 impl Recurrence {
 	/// Returns the schedule period index for an invoice request.

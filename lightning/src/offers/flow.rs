@@ -966,6 +966,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// For recurring requests, the invoice's blinded payment paths carry the offer's recurrence
+	/// terms and the invoice's basetime in [`Bolt12OfferContext`] for use when receiving payment.
+	/// These fields are absent when the request does not opt into recurrence.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
@@ -991,9 +995,17 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
+		// Use one creation time so the context and invoice agree when the first invoice
+		// establishes the recurrence basetime.
+		let created_at = self.duration_since_epoch();
+		let (offer_recurrence, invoice_recurrence_basetime) =
+			invoice_request.recurrence_payment_context(created_at)?;
+
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
+			offer_recurrence,
 			invoice_request: invoice_request.fields(),
+			invoice_recurrence_basetime,
 			payment_metadata,
 		});
 
@@ -1007,8 +1019,6 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				relative_expiry,
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let created_at = self.duration_since_epoch();
 
 		let mut builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
@@ -1044,6 +1054,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// For recurring requests, the invoice's blinded payment paths carry the offer's recurrence
+	/// terms and the invoice's basetime in [`Bolt12OfferContext`] for use when receiving payment.
+	/// These fields are absent when the request does not opt into recurrence.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
@@ -1069,9 +1083,17 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
+		// Use one creation time so the context and invoice agree when the first invoice
+		// establishes the recurrence basetime.
+		let created_at = self.duration_since_epoch();
+		let (offer_recurrence, invoice_recurrence_basetime) =
+			invoice_request.recurrence_payment_context(created_at)?;
+
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
+			offer_recurrence,
 			invoice_request: invoice_request.fields(),
+			invoice_recurrence_basetime,
 			payment_metadata,
 		});
 
@@ -1085,8 +1107,6 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				relative_expiry,
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
-
-		let created_at = self.duration_since_epoch();
 
 		let mut builder =
 			invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at)?;
