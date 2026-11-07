@@ -689,6 +689,9 @@ macro_rules! offer_accessors { ($self: ident, $contents: expr) => {
 
 	/// Duration since the Unix epoch when an invoice should no longer be requested.
 	///
+	/// For recurring payments, this deadline applies only to the initial request. Follow-up
+	/// requests, including cancellation, may continue after it passes.
+	///
 	/// If `None`, the offer does not expire.
 	pub fn absolute_expiry(&$self) -> Option<core::time::Duration> {
 		$contents.absolute_expiry()
