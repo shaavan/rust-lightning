@@ -7,11 +7,12 @@
 // You may not use this file except in accordance with one or both of these
 // licenses.
 
-//! Recurrence schedules, payment windows, and validation for offers.
+//! Recurrence schedules, request fields, payment windows, and validation for offers.
 
 use crate::io;
 use crate::ln::msgs::DecodeError;
 use crate::offers::parse::Bolt12SemanticError;
+use crate::prelude::Vec;
 use crate::util::ser::{HighZeroBytesDroppedBigSize, Readable, Writeable, Writer};
 use core::num::NonZeroU32;
 
@@ -478,5 +479,95 @@ impl Recurrence {
 			},
 			_ => Ok(()),
 		}
+	}
+}
+
+/// Recurrence fields carried by an invoice request.
+///
+/// The counter identifies the payer's request number. The start offset, when present, identifies
+/// where the payer began in a fixed schedule. Parsed and built requests are checked against the
+/// offer's recurrence terms.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RequestFields {
+	/// The payer's recurring request number, starting at zero.
+	pub counter: u32,
+	/// The schedule period where the payer begins recurring payments.
+	///
+	/// Required for a fixed offer anchor and absent for a first-invoice anchor. The requested
+	/// schedule period is `start + counter` when present, or `counter` otherwise.
+	pub start: Option<u32>,
+	/// Opaque state from the previous invoice, echoed unchanged by the payer.
+	///
+	/// Must be absent on the first request. The payer must not interpret or modify these bytes.
+	pub prev_state: Option<Vec<u8>>,
+	/// Whether this request cancels the recurrence. Must be false on the first request.
+	pub cancel: bool,
+}
+
+impl RequestFields {
+	/// Constructs recurrence fields from TLV values, rejecting fields without a counter
+	/// and invalid first-request fields. Field absence represents a non-recurring request.
+	pub(super) fn from_tlv_fields(
+		counter: Option<u32>, start: Option<u32>, prev_state: Option<Vec<u8>>, cancel: Option<()>,
+	) -> Result<Option<Self>, ()> {
+		match (counter, start, prev_state, cancel) {
+			(None, None, None, None) => Ok(None),
+			(Some(counter), start, prev_state, cancel) => {
+				let request = Self { counter, start, prev_state, cancel: cancel.is_some() };
+				request.validate()?;
+				Ok(Some(request))
+			},
+			_ => Err(()),
+		}
+	}
+
+	/// Rejects previous state or cancellation on the first recurring request.
+	fn validate(&self) -> Result<(), ()> {
+		if self.counter == 0 && (self.prev_state.is_some() || self.cancel) {
+			Err(())
+		} else {
+			Ok(())
+		}
+	}
+
+	/// Validates request recurrence against the offer's recurrence terms.
+	///
+	/// Checks whether recurrence is required or allowed, validates first-request fields, and
+	/// ensures the requested period matches the offer's anchor and does not exceed its limit.
+	pub(super) fn validate_for_offer(
+		offer_recurrence: Option<Recurrence>, request_recurrence: Option<&Self>,
+	) -> Result<(), Bolt12SemanticError> {
+		// Offer validation guarantees that optional recurrence has no fixed anchor.
+		if let Some(terms) = offer_recurrence {
+			debug_assert!(
+				terms.requirement != Requirement::Optional || terms.anchor == Anchor::FirstInvoice,
+				"optional recurrence must use a first-invoice anchor"
+			);
+		}
+
+		let (terms, request) = match (offer_recurrence, request_recurrence) {
+			(None, None) => return Ok(()),
+			(Some(terms), None) if terms.requirement == Requirement::Optional => {
+				return Ok(());
+			},
+			(Some(terms), Some(request)) => (terms, request),
+			_ => return Err(Bolt12SemanticError::InvalidRecurrence),
+		};
+
+		request.validate().map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+
+		let period_index = terms.period_index(request.counter, request.start)?;
+		if let Limit::Bounded(limit) = terms.limit {
+			if period_index > limit.get() {
+				return Err(Bolt12SemanticError::InvalidRecurrence);
+			}
+		}
+
+		Ok(())
+	}
+
+	/// Returns the wire fields, encoding cancellation as an optional empty TLV payload.
+	pub(super) fn fields(&self) -> (Option<u32>, Option<u32>, Option<&Vec<u8>>, Option<&()>) {
+		(Some(self.counter), self.start, self.prev_state.as_ref(), self.cancel.then_some(&()))
 	}
 }
