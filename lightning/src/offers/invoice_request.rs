@@ -684,6 +684,43 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Validates whether the automatic payee flow may issue an invoice at `created_at`.
+	///
+	/// Requires previous state on follow-up requests, rejects cancellation, and checks the
+	/// requested period's inclusive opening and exclusive closing bounds. `created_at` is the
+	/// time being checked: the current time during verification, or the invoice's creation time
+	/// when building a response. Recheck when building, since the request may have waited.
+	pub(crate) fn validate_recurring_request(
+		&self, created_at: Duration,
+	) -> Result<(), Bolt12SemanticError> {
+		let request = match self.inner.request_recurrence() {
+			Some(request) => request,
+			None => return Ok(()),
+		};
+
+		// Authentication checks supplied state; automatic continuation also requires its presence.
+		if request.counter > 0 && request.prev_state.is_none() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+		// Cancellation requests do not produce payable invoices.
+		if request.cancel {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
+		let (terms, basetime) = self
+			.recurrence_payment_context(created_at)?
+			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		let period_index = terms.period_index(request.counter, request.start)?;
+		let (opening, closing) = terms
+			.payment_window(basetime, period_index)
+			.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+		let now = created_at.as_secs();
+		if now < opening || now >= closing {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+		Ok(())
+	}
+
 	/// Resolves the offer terms and basetime to include in an inbound payment context.
 	///
 	/// Use the invoice's creation time when a first-invoice anchor establishes period zero.
@@ -759,6 +796,16 @@ pub enum InvoiceRequestVerifiedFromOffer {
 }
 
 impl InvoiceRequestVerifiedFromOffer {
+	/// Applies the automatic recurring-response rules for either signing strategy at `created_at`.
+	pub(crate) fn validate_recurring_request(
+		&self, created_at: Duration,
+	) -> Result<(), Bolt12SemanticError> {
+		match self {
+			Self::DerivedKeys(request) => request.validate_recurring_request(created_at),
+			Self::ExplicitKeys(request) => request.validate_recurring_request(created_at),
+		}
+	}
+
 	/// Returns a reference to the underlying `InvoiceRequest`.
 	pub(crate) fn inner(&self) -> &InvoiceRequest {
 		match self {

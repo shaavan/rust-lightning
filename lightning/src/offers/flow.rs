@@ -481,6 +481,8 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
 
+		invoice_request.validate_recurring_request(self.duration_since_epoch()).map_err(|_| ())?;
+
 		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
 	}
 
@@ -983,6 +985,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	/// - A recurring request with a nonzero counter has no previous state.
+	/// - The request cancels recurrence or its payment window excludes the creation time.
 	/// - The recurrence counter cannot be incremented to create the next-state token.
 	pub fn create_invoice_builder_from_invoice_request_with_keys<
 		'a,
@@ -1002,11 +1005,12 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		let amount_msats =
 			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
 
-		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
-
-		// Use one creation time so the context and invoice agree when the first invoice
-		// establishes the recurrence basetime.
+		// Recheck at creation time before allocating payment data: the request may have waited
+		// since verification. Reuse this time for the invoice, recurrence context, and token.
 		let created_at = self.duration_since_epoch();
+		invoice_request.validate_recurring_request(created_at)?;
+
+		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 		let (offer_recurrence, invoice_recurrence_basetime) =
 			match invoice_request.recurrence_payment_context(created_at)? {
 				Some((terms, basetime)) => (Some(terms), Some(basetime)),
@@ -1076,6 +1080,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	/// - A recurring request with a nonzero counter has no previous state.
+	/// - The request cancels recurrence or its payment window excludes the creation time.
 	/// - The recurrence counter cannot be incremented to create the next-state token.
 	pub fn create_invoice_builder_from_invoice_request_without_keys<
 		'a,
@@ -1095,11 +1100,12 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		let amount_msats =
 			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
 
-		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
-
-		// Use one creation time so the context and invoice agree when the first invoice
-		// establishes the recurrence basetime.
+		// Recheck at creation time before allocating payment data: the request may have waited
+		// since verification. Reuse this time for the invoice, recurrence context, and token.
 		let created_at = self.duration_since_epoch();
+		invoice_request.validate_recurring_request(created_at)?;
+
+		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 		let (offer_recurrence, invoice_recurrence_basetime) =
 			match invoice_request.recurrence_payment_context(created_at)? {
 				Some((terms, basetime)) => (Some(terms), Some(basetime)),
