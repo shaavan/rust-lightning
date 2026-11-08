@@ -71,7 +71,9 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
+use crate::offers::invoice::{
+	self, DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy,
+};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -737,6 +739,45 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Validates an automatic invoice response and returns its amount at `created_at`.
+	///
+	/// Requires previous state on follow-up requests, rejects cancellation, and checks the
+	/// requested period's inclusive opening and exclusive closing bounds. `created_at` is the
+	/// time being checked: the current time during verification, or the invoice's creation time
+	/// when building a response. Recheck when building, since the request may have waited.
+	pub(crate) fn validate_recurring_request(
+		&self, created_at: Duration,
+	) -> Result<u64, Bolt12SemanticError> {
+		let request = match self.inner.request_recurrence() {
+			Some(request) => request,
+			None => return self.inner.invoice_amount_msats(created_at),
+		};
+
+		// Authentication checks supplied state; automatic continuation also requires its presence.
+		if request.counter > 0 && request.prev_state.is_none() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+		// Cancellation requests do not produce payable invoices.
+		if request.cancel {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
+		let (terms, basetime) = self
+			.recurrence_payment_context(created_at)?
+			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		let period_index = terms.period_index(request.counter, request.start)?;
+		let (opening, closing) = terms
+			.payment_window(basetime, period_index)
+			.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+		let now = created_at.as_secs();
+		if now < opening || now >= closing {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+		// A supplied amount may be below the full-period price only for the joining invoice.
+		// Check its minimum now that the invoice creation time is available.
+		self.inner.invoice_amount_msats(created_at)
+	}
+
 	/// Resolves the offer terms and basetime to include in an inbound payment context.
 	///
 	/// Use the invoice's creation time when a first-invoice anchor establishes period zero.
@@ -812,6 +853,16 @@ pub enum InvoiceRequestVerifiedFromOffer {
 }
 
 impl InvoiceRequestVerifiedFromOffer {
+	/// Validates an automatic invoice response and resolves its amount for either signing strategy.
+	pub(crate) fn validate_recurring_request(
+		&self, created_at: Duration,
+	) -> Result<u64, Bolt12SemanticError> {
+		match self {
+			Self::DerivedKeys(request) => request.validate_recurring_request(created_at),
+			Self::ExplicitKeys(request) => request.validate_recurring_request(created_at),
+		}
+	}
+
 	/// Returns a reference to the underlying `InvoiceRequest`.
 	pub(crate) fn inner(&self) -> &InvoiceRequest {
 		match self {
@@ -1156,6 +1207,16 @@ impl InvoiceRequest {
 }
 
 impl InvoiceRequest {
+	/// Resolves the amount to invoice at `created_at`, including any initial joining discount.
+	///
+	/// Use the same creation time for payment data, payment paths, and the invoice so their amounts
+	/// agree. An explicit request amount is retained only if it covers the minimum at that time.
+	pub(crate) fn invoice_amount_msats(
+		&self, created_at: Duration,
+	) -> Result<u64, Bolt12SemanticError> {
+		invoice::resolve_amount_msats(&self.contents, created_at)
+	}
+
 	/// Verifies echoed recurrence state and recovers the basetime for subsequent invoices.
 	///
 	/// The token binds the request to the offer, payer, counter, and start offset without
