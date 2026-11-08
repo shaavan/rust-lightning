@@ -737,6 +737,23 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Resolves the offer terms and basetime to include in an inbound payment context.
+	///
+	/// Use the invoice's creation time when a first-invoice anchor establishes period zero.
+	/// Later requests with that anchor reuse the basetime recovered during verification. Fixed
+	/// anchors use the offer's basetime. Returns `None` when the request does not use recurrence,
+	/// including single payments for offers with optional recurrence.
+	pub(crate) fn recurrence_payment_context(
+		&self, created_at: Duration,
+	) -> Result<Option<(recurrence::Recurrence, u64)>, Bolt12SemanticError> {
+		let basetime = match self.inner.recurrence_basetime(created_at, self.recovered_basetime)? {
+			Some(basetime) => basetime,
+			None => return Ok(None),
+		};
+		let terms = self.inner.recurrence().ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		Ok(Some((terms, basetime)))
+	}
+
 	/// Creates state for the payer to echo in the next recurring request.
 	///
 	/// Automatic recurring responses always include a token, so requests with a nonzero
@@ -945,6 +962,15 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// must contain one or more elements ordered from most-preferred to least-preferred, if there's
 	/// a preference. Note, however, that any privacy is lost if a public node id was used for
 	/// [`Offer::issuer_signing_pubkey`].
+	///
+	/// For recurring payments, callers constructing `payment_paths` should include the offer's
+	/// recurrence terms and the invoice's recurrence basetime in the paths' [`Bolt12OfferContext`].
+	/// This makes the timing information available when the payment is received. Use the same
+	/// `created_at` when determining the basetime and constructing the invoice if the first invoice
+	/// establishes the basetime. Leave both context fields absent for non-recurring payments,
+	/// including single payments for offers with optional recurrence.
+	///
+	/// [`Bolt12OfferContext`]: crate::blinded_path::payment::Bolt12OfferContext
 	///
 	/// Errors if the request contains unknown required features.
 	///
@@ -1222,7 +1248,9 @@ macro_rules! invoice_request_respond_with_derived_signing_pubkey_methods { (
 	/// derived signing keys from the originating [`Offer`] to sign the [`Bolt12Invoice`]. Must use
 	/// the same [`ExpandedKey`] as the one used to create the offer.
 	///
-	/// See [`InvoiceRequest::respond_with_no_std`] for further details.
+	/// For recurring payments, include the offer's recurrence terms and invoice basetime in
+	/// the payment paths' context, using the same `created_at` to resolve the basetime and build
+	/// the invoice. See [`InvoiceRequest::respond_with_no_std`] for the context requirements.
 	///
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub fn respond_using_derived_keys_no_std(
