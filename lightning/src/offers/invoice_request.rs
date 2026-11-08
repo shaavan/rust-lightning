@@ -739,6 +739,19 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Requires previous state to be present for automatic recurring follow-up handling.
+	///
+	/// Supplied state was authenticated during verification. Its presence is required here even
+	/// for cancellation, while the payment-window checks apply only when issuing invoices.
+	pub(crate) fn require_recurring_state(&self) -> Result<(), Bolt12SemanticError> {
+		if let Some(request) = self.inner.request_recurrence() {
+			if request.counter > 0 && request.prev_state.is_none() {
+				return Err(Bolt12SemanticError::InvalidMetadata);
+			}
+		}
+		Ok(())
+	}
+
 	/// Validates an automatic invoice response and returns its amount at `created_at`.
 	///
 	/// Requires previous state on follow-up requests, rejects cancellation, and checks the
@@ -748,15 +761,12 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 	pub(crate) fn validate_recurring_request(
 		&self, created_at: Duration,
 	) -> Result<u64, Bolt12SemanticError> {
+		self.require_recurring_state()?;
 		let request = match self.inner.request_recurrence() {
 			Some(request) => request,
 			None => return self.inner.invoice_amount_msats(created_at),
 		};
 
-		// Authentication checks supplied state; automatic continuation also requires its presence.
-		if request.counter > 0 && request.prev_state.is_none() {
-			return Err(Bolt12SemanticError::InvalidMetadata);
-		}
 		// Cancellation requests do not produce payable invoices.
 		if request.cancel {
 			return Err(Bolt12SemanticError::UnexpectedRecurrence);
@@ -808,9 +818,7 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 			None => return Err(Bolt12SemanticError::UnexpectedRecurrence),
 		};
 
-		if request.counter > 0 && request.prev_state.is_none() {
-			return Err(Bolt12SemanticError::InvalidMetadata);
-		}
+		self.require_recurring_state()?;
 
 		let basetime = self
 			.inner
@@ -853,6 +861,14 @@ pub enum InvoiceRequestVerifiedFromOffer {
 }
 
 impl InvoiceRequestVerifiedFromOffer {
+	/// Requires continuity state for automatic handling with either signing strategy.
+	pub(crate) fn require_recurring_state(&self) -> Result<(), Bolt12SemanticError> {
+		match self {
+			Self::DerivedKeys(request) => request.require_recurring_state(),
+			Self::ExplicitKeys(request) => request.require_recurring_state(),
+		}
+	}
+
 	/// Validates an automatic invoice response and resolves its amount for either signing strategy.
 	pub(crate) fn validate_recurring_request(
 		&self, created_at: Duration,
