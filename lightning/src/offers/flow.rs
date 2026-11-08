@@ -418,6 +418,9 @@ pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
 	SendInvoice(InvoiceRequestVerifiedFromOffer),
+	/// The payer cancelled a recurring offer after the request and any supplied previous state
+	/// were authenticated. No invoice response is needed, and payment-window checks do not apply.
+	CancelRecurringOffer(InvoiceRequestVerifiedFromOffer),
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_slot` and calling
 	/// [`OffersMessageFlow::enqueue_static_invoice`].
@@ -504,7 +507,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
 
-		if invoice_request.request_recurrence().is_some() {
+		if let Some(request) = invoice_request.request_recurrence() {
+			if request.cancel {
+				// Automatic cancellation requires the previous token too. Applications that omit
+				// next_state must manage cancellation themselves.
+				if request.counter > 0 && request.prev_state.is_none() {
+					return Err(());
+				}
+				return Ok(InvreqResponseInstructions::CancelRecurringOffer(invoice_request));
+			}
+
 			invoice_request
 				.validate_recurring_request(
 					self.duration_since_epoch(),
