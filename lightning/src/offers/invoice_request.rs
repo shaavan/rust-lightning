@@ -736,6 +736,42 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 	pub keys: S,
 }
 
+impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Creates state for the payer to echo in the next recurring request.
+	///
+	/// Automatic recurring responses always include a token, so requests with a nonzero
+	/// counter must supply previous state. Returns an error if recurrence or required
+	/// state is missing, the basetime cannot be resolved, or the counter overflows.
+	pub(crate) fn create_recurrence_next_state(
+		&self, created_at: Duration, nonce: Nonce, key: &ExpandedKey,
+	) -> Result<Vec<u8>, Bolt12SemanticError> {
+		let request = match self.inner.request_recurrence() {
+			Some(request) => request,
+			None => return Err(Bolt12SemanticError::UnexpectedRecurrence),
+		};
+
+		if request.counter > 0 && request.prev_state.is_none() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+
+		let basetime = self
+			.inner
+			.recurrence_basetime(created_at, self.recovered_basetime)?
+			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+
+		signer::create_recurrence_next_state(
+			self.offer_id,
+			self.inner.payer_signing_pubkey(),
+			basetime,
+			request.counter,
+			request.start,
+			nonce,
+			key,
+		)
+		.map_err(|_| Bolt12SemanticError::InvalidRecurrence)
+	}
+}
+
 /// Represents a [`VerifiedInvoiceRequest`], along with information about how the resulting
 /// [`Bolt12Invoice`] should be signed.
 ///
