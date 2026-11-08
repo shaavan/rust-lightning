@@ -4075,6 +4075,7 @@ impl<
 			our_network_pubkey, current_timestamp, expanded_inbound_key,
 			node_signer.get_receive_auth_key(), secp_ctx.clone(), message_router, logger.clone(),
 		);
+		flow.set_enforce_recurrence_paywindow(config.enforce_recurrence_paywindow);
 
 		ChannelManager {
 			config: RwLock::new(config),
@@ -4166,7 +4167,9 @@ impl<
 	/// Updates the current [`UserConfig`] which controls some global behavior and includes the
 	/// default configuration applied to all new channels.
 	pub fn set_current_config(&self, new_config: UserConfig) {
-		*self.config.write().unwrap() = new_config;
+		let mut config = self.config.write().unwrap();
+		self.flow.set_enforce_recurrence_paywindow(new_config.enforce_recurrence_paywindow);
+		*config = new_config;
 	}
 
 	#[cfg(test)]
@@ -21488,6 +21491,7 @@ impl<
 			args.logger.clone(),
 		)
 		.with_async_payments_offers_cache(async_receive_offer_cache);
+		flow.set_enforce_recurrence_paywindow(args.config.enforce_recurrence_paywindow);
 
 		let channel_manager = ChannelManager {
 			chain_hash,
