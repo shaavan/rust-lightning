@@ -988,8 +988,11 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let created_at = self.duration_since_epoch();
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			created_at,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1010,13 +1013,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
+		// With proportional pricing, the price can fall between creating the payment secret
+		// and building the invoice. Use the same created_at so paying the invoiced amount
+		// is not rejected as insufficient.
 		let builder = invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
 			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
+			created_at,
 		);
 		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
@@ -1049,8 +1052,11 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		let created_at = self.duration_since_epoch();
+		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
+			&invoice_request.inner,
+			created_at,
+		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 
@@ -1071,14 +1077,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_with_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
+		// With proportional pricing, the price can fall between creating the payment secret
+		// and building the invoice. Use the same created_at so paying the invoiced amount
+		// is not rejected as insufficient.
+		let builder = invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at);
 
 		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
 
