@@ -71,7 +71,9 @@ use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
-use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
+use crate::offers::invoice::{
+	self, DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy,
+};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -88,6 +90,7 @@ use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
 use crate::types::string::{PrintableString, UntrustedString};
+use crate::util::logger::Logger;
 use crate::util::ser::{
 	CursorReadable, HighZeroBytesDroppedBigSize, LengthLimitedRead, LengthReadable, Readable,
 	WithoutLength, Writeable, Writer,
@@ -737,6 +740,87 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
+	/// Validates whether an invoice can be issued for this recurring request and returns its amount.
+	///
+	/// Validates or calculates the invoice amount and rejects cancellation requests.
+	///
+	/// # Paywindow Enforcement
+	///
+	/// When `enforce_paywindow` is enabled, requests outside the paywindow are rejected.
+	/// Otherwise, early and late requests are allowed and logged.
+	///
+	/// # Proportional Pricing
+	///
+	/// Initial requests for offers allowing [proportional pricing] are always rejected
+	/// if the requested period has already ended, regardless of `enforce_paywindow`,
+	/// because no time remains in that period.
+	///
+	/// `created_at` determines the paywindow and proportional price. When issuing an
+	/// invoice, use its creation time to ensure consistent validation and pricing.
+	///
+	/// [proportional pricing]: recurrence::Anchor::Fixed::proportional
+	pub(crate) fn validate_recurring_request<L: Logger>(
+		&self, created_at: Duration, enforce_paywindow: bool, logger: &L,
+	) -> Result<u64, Bolt12SemanticError> {
+		let request = match self.inner.request_recurrence() {
+			Some(request) => request,
+			None => return self.inner.invoice_amount_msats(created_at),
+		};
+
+		// Automatic responses always send next_state and require it back on follow-ups.
+		// Applications that omit next_state must manage the recurrence and responses themselves.
+		if request.counter > 0 && request.prev_state.is_none() {
+			return Err(Bolt12SemanticError::InvalidMetadata);
+		}
+
+		// Cancellation requests do not produce payable invoices.
+		if request.cancel {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
+		let (terms, basetime) = self
+			.recurrence_payment_context(created_at)?
+			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+		let period_index = terms.period_index(request.counter, request.start)?;
+		let now = created_at.as_secs();
+		let offer = &self.inner.contents.inner.offer;
+
+		// Proportional joins require an unfinished period, regardless of paywindow enforcement.
+		if joining_discount_terms(offer, Some(request)).is_some() {
+			let next_period_index =
+				period_index.checked_add(1).ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+			let period_end = terms
+				.period
+				.start_time(basetime, next_period_index)
+				.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+			if now >= period_end {
+				return Err(Bolt12SemanticError::InvalidRecurrence);
+			}
+		}
+
+		let (opening, closing) = terms
+			.payment_window(basetime, period_index)
+			.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+		let outside_paywindow = now < opening || now >= closing;
+		if enforce_paywindow && outside_paywindow {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
+		// A supplied amount may be below the full-period price only for the joining invoice.
+		// Check its minimum now that the invoice creation time is available.
+		let amount_msats = self.inner.invoice_amount_msats(created_at)?;
+
+		if outside_paywindow {
+			log_info!(
+				logger,
+				"Accepting {} recurring invoice request for period {} at {} outside paywindow [{}, {})",
+				if now < opening { "early" } else { "late" },
+				period_index, now, opening, closing
+			);
+		}
+		Ok(amount_msats)
+	}
+
 	/// Resolves the offer terms and basetime to include in an inbound payment context.
 	///
 	/// Use the invoice's creation time when a first-invoice anchor establishes period zero.
@@ -810,6 +894,20 @@ pub enum InvoiceRequestVerifiedFromOffer {
 }
 
 impl InvoiceRequestVerifiedFromOffer {
+	/// Validates an automatic invoice response and resolves its amount for either signing strategy.
+	pub(crate) fn validate_recurring_request<L: Logger>(
+		&self, created_at: Duration, enforce_paywindow: bool, logger: &L,
+	) -> Result<u64, Bolt12SemanticError> {
+		match self {
+			Self::DerivedKeys(request) => {
+				request.validate_recurring_request(created_at, enforce_paywindow, logger)
+			},
+			Self::ExplicitKeys(request) => {
+				request.validate_recurring_request(created_at, enforce_paywindow, logger)
+			},
+		}
+	}
+
 	/// Returns a reference to the underlying `InvoiceRequest`.
 	pub(crate) fn inner(&self) -> &InvoiceRequest {
 		match self {
@@ -967,6 +1065,9 @@ macro_rules! invoice_request_respond_with_explicit_signing_pubkey_methods { (
 	/// `created_at` when determining the basetime and constructing the invoice if the first invoice
 	/// establishes the basetime. Leave both context fields absent for non-recurring payments,
 	/// including single payments for offers with optional recurrence.
+	///
+	/// This method does not enforce recurrence paywindows. Callers handle those checks using
+	/// `created_at`.
 	///
 	/// [`Bolt12OfferContext`]: crate::blinded_path::payment::Bolt12OfferContext
 	///
@@ -1154,6 +1255,16 @@ impl InvoiceRequest {
 }
 
 impl InvoiceRequest {
+	/// Resolves the amount to invoice at `created_at`, including any initial joining discount.
+	///
+	/// Use the same creation time for payment data, payment paths, and the invoice so their amounts
+	/// agree. An explicit request amount is retained only if it covers the minimum at that time.
+	pub(crate) fn invoice_amount_msats(
+		&self, created_at: Duration,
+	) -> Result<u64, Bolt12SemanticError> {
+		invoice::resolve_amount_msats(&self.contents, created_at)
+	}
+
 	/// Verifies echoed recurrence state and recovers the basetime for subsequent invoices.
 	///
 	/// The token binds the request to the offer, payer, counter, and start offset without

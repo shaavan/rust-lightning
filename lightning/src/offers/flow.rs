@@ -12,7 +12,7 @@
 
 use alloc::collections::BTreeMap;
 
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use bitcoin::block::Header;
@@ -75,6 +75,7 @@ pub struct OffersMessageFlow<MR: MessageRouter, L: Logger> {
 
 	our_network_pubkey: PublicKey,
 	highest_seen_timestamp: AtomicUsize,
+	enforce_recurrence_paywindow: AtomicBool,
 	inbound_payment_key: inbound_payment::ExpandedKey,
 
 	receive_auth_key: ReceiveAuthKey,
@@ -107,6 +108,7 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 			our_network_pubkey,
 			highest_seen_timestamp: AtomicUsize::new(current_timestamp as usize),
+			enforce_recurrence_paywindow: AtomicBool::new(true),
 			inbound_payment_key,
 
 			receive_auth_key,
@@ -121,6 +123,27 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 
 			logger,
 		}
+	}
+
+	/// Sets whether the recurrence paywindow is enforced for inbound [`InvoiceRequest`]s.
+	///
+	/// By default, the paywindow is checked during request verification and invoice creation.
+	/// Disabling enforcement allows early and late requests, leaving the application
+	/// responsible for tracking recurrence state and enforcing paywindows.
+	///
+	/// All other [`InvoiceRequest`] checks still apply.
+	///
+	/// Initial requests for offers allowing [proportional pricing] are still rejected
+	/// if the requested period has already ended, regardless of this setting.
+	///
+	/// When using [`ChannelManager`], configure [`UserConfig::enforce_recurrence_paywindow`]
+	/// instead.
+	///
+	/// [proportional pricing]: recurrence::Anchor::Fixed::proportional
+	/// [`ChannelManager`]: crate::ln::channelmanager::ChannelManager
+	/// [`UserConfig::enforce_recurrence_paywindow`]: crate::util::config::UserConfig::enforce_recurrence_paywindow
+	pub fn set_enforce_recurrence_paywindow(&self, enforce: bool) {
+		self.enforce_recurrence_paywindow.store(enforce, Ordering::Relaxed);
 	}
 
 	/// If we are an async recipient, on startup we'll interactively build offers and static invoices
@@ -480,6 +503,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			},
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
+
+		if invoice_request.request_recurrence().is_some() {
+			invoice_request
+				.validate_recurring_request(
+					self.duration_since_epoch(),
+					self.enforce_recurrence_paywindow.load(Ordering::Relaxed),
+					&self.logger,
+				)
+				.map_err(|_| ())?;
+		}
 
 		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
 	}
@@ -983,6 +1016,9 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	/// - A follow-up request with a first-invoice anchor has no recovered basetime.
+	/// - The request cancels the recurrence ([`recurrence::RequestFields::cancel`]).
+	/// - Paywindow enforcement is enabled and it is too early or too late to issue the invoice.
+	/// - An initial request uses proportional pricing and its selected period has already ended.
 	/// - The recurrence counter cannot be incremented to create the next-state token.
 	pub fn create_invoice_builder_from_invoice_request_with_keys<
 		'a,
@@ -999,17 +1035,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
 		let created_at = self.duration_since_epoch();
-		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-			&invoice_request.inner,
+		let amount_msats = invoice_request.validate_recurring_request(
 			created_at,
+			self.enforce_recurrence_paywindow.load(Ordering::Relaxed),
+			&self.logger,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
-
-		// Use one creation time so the context and invoice agree when the first invoice
-		// establishes the recurrence basetime.
-		let created_at = self.duration_since_epoch();
 		let (offer_recurrence, invoice_recurrence_basetime) =
 			match invoice_request.recurrence_payment_context(created_at)? {
 				Some((terms, basetime)) => (Some(terms), Some(basetime)),
@@ -1079,6 +1114,9 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
 	/// - A follow-up request with a first-invoice anchor has no recovered basetime.
+	/// - The request cancels the recurrence ([`recurrence::RequestFields::cancel`]).
+	/// - Paywindow enforcement is enabled and it is too early or too late to issue the invoice.
+	/// - An initial request uses proportional pricing and its selected period has already ended.
 	/// - The recurrence counter cannot be incremented to create the next-state token.
 	pub fn create_invoice_builder_from_invoice_request_without_keys<
 		'a,
@@ -1095,17 +1133,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
 		let created_at = self.duration_since_epoch();
-		let amount_msats = InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
-			&invoice_request.inner,
+		let amount_msats = invoice_request.validate_recurring_request(
 			created_at,
+			self.enforce_recurrence_paywindow.load(Ordering::Relaxed),
+			&self.logger,
 		)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
-
-		// Use one creation time so the context and invoice agree when the first invoice
-		// establishes the recurrence basetime.
-		let created_at = self.duration_since_epoch();
 		let (offer_recurrence, invoice_recurrence_basetime) =
 			match invoice_request.recurrence_payment_context(created_at)? {
 				Some((terms, basetime)) => (Some(terms), Some(basetime)),
