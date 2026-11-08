@@ -9491,7 +9491,9 @@ impl<
 								let payment_purpose_context =
 									PaymentContext::Bolt12Offer(Bolt12OfferContext {
 										offer_id: verified_invreq.offer_id(),
+										offer_recurrence: None,
 										invoice_request: verified_invreq.fields(),
+										invoice_recurrence_basetime: None,
 										payment_metadata,
 									});
 								let from_parts_res = events::PaymentPurpose::from_parts(
