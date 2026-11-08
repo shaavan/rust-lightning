@@ -83,7 +83,7 @@ use crate::offers::offer::{
 use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError, ParsedMessage};
 use crate::offers::payer::{PayerContents, PayerTlvStream, PayerTlvStreamRef};
 use crate::offers::recurrence;
-use crate::offers::signer::{Metadata, MetadataMaterial};
+use crate::offers::signer::{self, Metadata, MetadataMaterial};
 use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
@@ -930,17 +930,19 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let recovered_basetime = inner.verify_recurrence_prev_state(offer_id, key)?;
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
-				recovered_basetime: None,
+				recovered_basetime,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
-				recovered_basetime: None,
+				recovered_basetime,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -977,17 +979,19 @@ macro_rules! invoice_request_verify_method {
 			{ $self.clone() }
 		};
 
+		let recovered_basetime = inner.verify_recurrence_prev_state(offer_id, key)?;
+
 		let verified = match keys {
 			None => InvoiceRequestVerifiedFromOffer::ExplicitKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
-				recovered_basetime: None,
+				recovered_basetime,
 				keys: ExplicitSigningPubkey {},
 			}),
 			Some(keys) => InvoiceRequestVerifiedFromOffer::DerivedKeys(VerifiedInvoiceRequest {
 				offer_id,
 				inner,
-				recovered_basetime: None,
+				recovered_basetime,
 				keys: DerivedSigningPubkey(keys),
 			}),
 		};
@@ -1034,6 +1038,34 @@ impl InvoiceRequest {
 }
 
 impl InvoiceRequest {
+	/// Verifies echoed recurrence state and recovers the basetime for subsequent invoices.
+	///
+	/// The token binds the request to the offer, payer, counter, and start offset without
+	/// storing per-payer state. An absent token returns `Ok(None)`; it is not required when
+	/// the previous invoice omitted next state. Verification permits replay of the same valid
+	/// request and does not prove prior payment.
+	fn verify_recurrence_prev_state(
+		&self, offer_id: OfferId, key: &ExpandedKey,
+	) -> Result<Option<u64>, ()> {
+		let request = match self.contents.request_recurrence() {
+			Some(request) => request,
+			None => return Ok(None),
+		};
+
+		match request.prev_state.as_ref() {
+			Some(prev_state) => signer::verify_recurrence_prev_state(
+				prev_state,
+				offer_id,
+				self.contents.payer_signing_pubkey(),
+				request.counter,
+				request.start,
+				key,
+			)
+			.map(Some),
+			None => Ok(None),
+		}
+	}
+
 	/// Returns no basetime for a non-recurring request, otherwise resolves its schedule anchor.
 	pub(crate) fn recurrence_basetime(
 		&self, created_at: Duration, recovered_basetime: Option<u64>,
