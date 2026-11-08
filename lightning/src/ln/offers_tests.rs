@@ -579,6 +579,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -586,6 +587,7 @@ fn creates_and_pays_for_offer_using_two_hop_blinded_path() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
@@ -765,6 +767,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -772,6 +775,7 @@ fn creates_and_pays_for_offer_using_one_hop_blinded_path() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
@@ -849,6 +853,7 @@ fn router_modifies_payment_metadata_in_blinded_path() {
 
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -856,6 +861,7 @@ fn router_modifies_payment_metadata_in_blinded_path() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: Some(expected_metadata),
 	});
 
@@ -934,6 +940,7 @@ fn pays_for_offer_with_payment_metadata_in_invoice_request_context() {
 
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -941,6 +948,7 @@ fn pays_for_offer_with_payment_metadata_in_invoice_request_context() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: Some(expected_metadata),
 	});
 
@@ -1107,6 +1115,7 @@ fn pays_for_offer_without_blinded_paths() {
 	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -1114,6 +1123,7 @@ fn pays_for_offer_without_blinded_paths() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 
@@ -1379,6 +1389,7 @@ fn creates_and_pays_for_offer_with_retry() {
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -1386,6 +1397,7 @@ fn creates_and_pays_for_offer_with_retry() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 	assert_eq!(invoice_request.amount_msats(), Some(10_000_000));
@@ -1448,6 +1460,7 @@ fn pays_bolt12_invoice_asynchronously() {
 	let (invoice_request, _) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -1455,6 +1468,7 @@ fn pays_bolt12_invoice_asynchronously() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 
@@ -1548,6 +1562,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 	let (invoice_request, reply_path) = extract_invoice_request(alice, &onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -1555,6 +1570,7 @@ fn creates_offer_with_blinded_path_using_unannounced_introduction_node() {
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 	assert_ne!(invoice_request.payer_signing_pubkey(), bob_id);
@@ -2767,6 +2783,7 @@ fn creates_and_pays_for_phantom_offer() {
 		let (invoice_request, _) = extract_invoice_request(&recipient, &onion_message);
 		let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: offer.id(),
+			offer_recurrence: None,
 			invoice_request: PayerFields {
 				payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 				quantity: None,
@@ -2774,6 +2791,7 @@ fn creates_and_pays_for_phantom_offer() {
 				human_readable_name: None,
 				request_recurrence: None,
 			},
+			invoice_recurrence_basetime: None,
 		payment_metadata: None,
 		});
 
@@ -2959,6 +2977,7 @@ fn get_invoice_via_offer_flow<'a, 'b, 'c>(
 	let (invoice_request, _) = extract_invoice_request(payee, &invoice_request_onion_message);
 	let payment_context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 		offer_id: offer.id(),
+		offer_recurrence: None,
 		invoice_request: PayerFields {
 			payer_signing_pubkey: invoice_request.payer_signing_pubkey(),
 			quantity: None,
@@ -2966,6 +2985,7 @@ fn get_invoice_via_offer_flow<'a, 'b, 'c>(
 			human_readable_name: None,
 			request_recurrence: None,
 		},
+		invoice_recurrence_basetime: None,
 		payment_metadata: None,
 	});
 
