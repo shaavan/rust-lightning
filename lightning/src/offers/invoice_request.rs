@@ -764,14 +764,17 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 		&self, created_at: Duration, enforce_paywindow: bool, logger: &L,
 	) -> Result<u64, Bolt12SemanticError> {
 		let request = match self.inner.request_recurrence() {
-			Some(request) => request,
+			Some(request) => {
+				// We include state in each recurring invoice to preserve the payment schedule.
+				// The payer must return that state with its next invoice request.
+				if request.counter > 0 && request.prev_state.is_none() {
+					return Err(Bolt12SemanticError::InvalidMetadata);
+				}
+				request
+			},
 			None => return self.inner.invoice_amount_msats(created_at),
 		};
 
-		// Authentication checks supplied state; automatic continuation also requires its presence.
-		if request.counter > 0 && request.prev_state.is_none() {
-			return Err(Bolt12SemanticError::InvalidMetadata);
-		}
 		// Cancellation requests do not produce payable invoices.
 		if request.cancel {
 			return Err(Bolt12SemanticError::UnexpectedRecurrence);
@@ -846,13 +849,16 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 		&self, created_at: Duration, nonce: Nonce, key: &ExpandedKey,
 	) -> Result<Vec<u8>, Bolt12SemanticError> {
 		let request = match self.inner.request_recurrence() {
-			Some(request) => request,
+			Some(request) => {
+				// We include state in each recurring invoice to preserve the payment schedule.
+				// The payer must return that state with its next invoice request.
+				if request.counter > 0 && request.prev_state.is_none() {
+					return Err(Bolt12SemanticError::InvalidMetadata);
+				}
+				request
+			},
 			None => return Err(Bolt12SemanticError::UnexpectedRecurrence),
 		};
-
-		if request.counter > 0 && request.prev_state.is_none() {
-			return Err(Bolt12SemanticError::InvalidMetadata);
-		}
 
 		let basetime = self
 			.inner
