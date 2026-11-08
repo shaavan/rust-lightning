@@ -7,7 +7,7 @@
 // You may not use this file except in accordance with one or both of these
 // licenses.
 
-//! Recurrence schedules, request fields, payment windows, and validation for offers.
+//! Recurrence schedules, request and invoice fields, payment windows, and validation for offers.
 
 use crate::io;
 use crate::ln::msgs::DecodeError;
@@ -605,8 +605,38 @@ impl RequestFields {
 		Ok(())
 	}
 
+	/// Resolves period zero from the offer anchor, invoice creation time, or recovered state.
+	///
+	/// A first request with a first-invoice anchor establishes the basetime at `created_at`, in
+	/// seconds since the Unix epoch. Later requests must reuse the basetime recovered from
+	/// previous state; missing recovery returns [`Bolt12SemanticError::InvalidMetadata`].
+	pub(super) fn resolve_basetime(
+		&self, anchor: Anchor, created_at: u64, recovered_basetime: Option<u64>,
+	) -> Result<u64, Bolt12SemanticError> {
+		match anchor {
+			Anchor::Fixed { basetime, .. } => Ok(basetime),
+			Anchor::FirstInvoice if self.counter == 0 => Ok(created_at),
+			Anchor::FirstInvoice => recovered_basetime.ok_or(Bolt12SemanticError::InvalidMetadata),
+		}
+	}
+
 	/// Returns the wire fields, encoding cancellation as an optional empty TLV payload.
 	pub(super) fn fields(&self) -> (Option<u32>, Option<u32>, Option<&Vec<u8>>, Option<&()>) {
 		(Some(self.counter), self.start, self.prev_state.as_ref(), self.cancel.then_some(&()))
 	}
+}
+
+/// Recurrence fields included in an invoice for a recurring offer.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct InvoiceFields {
+	/// The start of recurrence period zero, in seconds since the Unix epoch.
+	///
+	/// Must equal the offer's basetime for a fixed anchor. For a first-invoice anchor, it is
+	/// the first invoice's creation time and is reused for subsequent invoices.
+	pub basetime: u64,
+	/// Optional opaque state for the payer to echo in the next recurring invoice request.
+	///
+	/// The next request must include the exact bytes when this is `Some`, and omit previous
+	/// state when this is `None`. The payer must not interpret or modify these bytes.
+	pub next_state: Option<Vec<u8>>,
 }

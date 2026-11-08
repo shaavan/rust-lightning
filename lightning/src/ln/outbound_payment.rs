@@ -1435,6 +1435,7 @@ impl OutboundPayments {
 
 					let amount_msat = match InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(
 						invreq,
+						invoice.created_at(),
 					) {
 						Ok(amt) => amt,
 						Err(_) => {
