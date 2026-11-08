@@ -429,6 +429,20 @@ macro_rules! invoice_builder_methods {
 			Ok(Some(recurrence::InvoiceFields { basetime, next_state: None }))
 		}
 
+		/// Attaches opaque state for the payer to echo in the next recurring request.
+		pub(crate) fn set_recurrence_next_state(
+			$($self_mut)* $self: $self_type, next_state: Vec<u8>,
+		) -> Result<$return_type, Bolt12SemanticError> {
+			// State is only valid for invoices answering recurring requests.
+			match $self.invoice.fields_mut().invoice_recurrence.as_mut() {
+				Some(recurrence) => {
+					recurrence.next_state = Some(next_state);
+					Ok($return_value)
+				},
+				None => Err(Bolt12SemanticError::UnexpectedRecurrence),
+			}
+		}
+
 		#[cfg_attr(c_bindings, allow(dead_code))]
 		fn fields(
 			payment_paths: Vec<BlindedPaymentPath>, created_at: Duration,
