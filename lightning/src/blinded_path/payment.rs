@@ -25,6 +25,7 @@ use crate::ln::onion_utils;
 use crate::offers::invoice_request::PayerFields;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::OfferId;
+use crate::offers::recurrence;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
 use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
 use crate::types::features::BlindedHopFeatures;
@@ -707,11 +708,28 @@ pub struct Bolt12OfferContext {
 	/// [`Offer`]: crate::offers::offer::Offer
 	pub offer_id: OfferId,
 
+	/// The offer's recurrence terms for this recurring payment.
+	///
+	/// This is absent for non-recurring payments, including single payments for offers with
+	/// optional recurrence. It is also absent in contexts written before recurrence timing was
+	/// supported, so its absence does not establish whether a historical payment was recurring.
+	pub offer_recurrence: Option<recurrence::Recurrence>,
+
 	/// Fields from an [`InvoiceRequest`] sent for a [`Bolt12Invoice`].
 	///
 	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
 	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 	pub invoice_request: PayerFields,
+
+	/// The invoice's recurrence basetime, in seconds since the Unix epoch, anchoring period zero.
+	///
+	/// This must match the basetime in the invoice rather than the time the payment was received.
+	/// Together with [`Self::offer_recurrence`] and the recurrence counter and start in
+	/// [`Self::invoice_request`], it allows calculating subsequent payment windows.
+	///
+	/// This is absent for non-recurring payments and contexts written before recurrence timing
+	/// was supported.
+	pub invoice_recurrence_basetime: Option<u64>,
 
 	/// Additional data about this payment which is not used in LDK and can be used for any
 	/// purpose.
@@ -1301,6 +1319,8 @@ impl_ser_tlv_based!(Bolt12OfferContext, {
 	(0, offer_id, required),
 	(1, payment_metadata, (option, encoding: (BTreeMap<u64, Vec<u8>>, BigSizeKeyedMap))),
 	(2, invoice_request, required),
+	(3, offer_recurrence, option),
+	(5, invoice_recurrence_basetime, option),
 });
 
 impl_ser_tlv_based!(AsyncBolt12OfferContext, {
