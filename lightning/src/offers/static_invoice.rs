@@ -487,6 +487,8 @@ impl InvoiceContents {
 			node_id: Some(&self.signing_pubkey),
 			amount: None,
 			payment_hash: None,
+			invoice_recurrence_basetime: None,
+			invoice_recurrence_next_state: None,
 		};
 
 		let experimental_invoice = ExperimentalInvoiceTlvStreamRef {
@@ -686,6 +688,8 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				held_htlc_available_paths,
 				payment_hash,
 				amount,
+				invoice_recurrence_basetime,
+				invoice_recurrence_next_state,
 			},
 			experimental_offer_tlv_stream,
 			ExperimentalInvoiceTlvStream {
@@ -699,6 +703,10 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		}
 		if amount.is_some() {
 			return Err(Bolt12SemanticError::UnexpectedAmount);
+		}
+
+		if invoice_recurrence_basetime.is_some() || invoice_recurrence_next_state.is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
 		}
 
 		let payment_paths = construct_payment_paths(blindedpay, paths)?;
@@ -951,6 +959,8 @@ mod tests {
 					features: None,
 					node_id: Some(&signing_pubkey),
 					held_htlc_available_paths: Some(&paths),
+					invoice_recurrence_basetime: None,
+					invoice_recurrence_next_state: None,
 				},
 				SignatureTlvStreamRef { signature: Some(&invoice.signature()) },
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
