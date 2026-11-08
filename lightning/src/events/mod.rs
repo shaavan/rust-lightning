@@ -32,6 +32,7 @@ use crate::ln::outbound_payment::RecipientOnionFields;
 use crate::ln::types::ChannelId;
 use crate::offers::invoice::Bolt12Invoice;
 use crate::offers::invoice_request::InvoiceRequest;
+use crate::offers::offer::OfferId;
 pub use crate::offers::payer_proof::PaidBolt12Invoice;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::messenger::Responder;
@@ -2141,6 +2142,27 @@ pub enum Event {
 		/// [`ChannelManager::respond_to_static_invoice_request`]: crate::ln::channelmanager::ChannelManager::respond_to_static_invoice_request
 		invoice_request: InvoiceRequest,
 	},
+	/// Indicates that a payer cancelled a recurring payment for one of our offers.
+	///
+	/// The cancellation request has already been verified against the offer, the payer's signing
+	/// pubkey, and the recurrence state from the previous invoice. No invoice will be sent in
+	/// response.
+	///
+	/// The `(offer_id, payer_signing_pubkey)` pair identifies the recurrence state tracked by the
+	/// recipient. Use it to find and remove that state after handling the event. The same
+	/// cancellation request can be replayed and produce repeated events, so handling must be
+	/// idempotent.
+	///
+	/// # Failure Behavior and Persistence
+	/// This event will eventually be replayed after failures-to-handle (i.e., the event handler
+	/// returning `Err(ReplayEvent ())`) and will be persisted across restarts. Persist any removal
+	/// of the identified recurrence state before returning success from the event handler.
+	RecurringOfferCancelled {
+		/// The offer whose recurrence was cancelled.
+		offer_id: OfferId,
+		/// The payer signing pubkey used for this recurrence.
+		payer_signing_pubkey: PublicKey,
+	},
 	/// Indicates that a channel funding transaction constructed interactively is ready to be
 	/// signed. This event will only be triggered if a contribution was made to the transaction.
 	///
@@ -2220,7 +2242,8 @@ impl Event {
 			Event::StaticInvoiceRequested { .. } => false,
 			Event::OnionMessageIntercepted { .. } => false,
 			Event::OnionMessagePeerConnected { .. } => false,
-			Event::FundingTxBroadcastSafe { .. }
+			Event::RecurringOfferCancelled { .. }
+			| Event::FundingTxBroadcastSafe { .. }
 			| Event::PaymentClaimable { .. }
 			| Event::PaymentClaimed { .. }
 			| Event::InvoiceReceived { .. }
@@ -2849,6 +2872,15 @@ impl Writeable for Event {
 					(13, contributed_outputs, option),
 					(15, reason, required),
 					(17, funding_contribution, option),
+				});
+			},
+			&Event::RecurringOfferCancelled { ref offer_id, ref payer_signing_pubkey } => {
+				// An even type makes readers without cancellation support reject the event
+				// rather than silently discard a pending cancellation notification.
+				54u8.write(writer)?;
+				write_tlv_fields!(writer, {
+					(0, offer_id, required),
+					(2, payer_signing_pubkey, required),
 				});
 			},
 			// Note that, going forward, all new events must only write data inside of
@@ -3665,6 +3697,19 @@ impl MaybeReadable for Event {
 						(3, addresses, required_vec),
 					});
 					Ok(Some(Event::ConnectionNeeded { node_id: node_id.0.unwrap(), addresses }))
+				};
+				f()
+			},
+			54u8 => {
+				let mut f = || {
+					_init_and_read_len_prefixed_tlv_fields!(reader, {
+						(0, offer_id, required),
+						(2, payer_signing_pubkey, required),
+					});
+					Ok(Some(Event::RecurringOfferCancelled {
+						offer_id: offer_id.0.unwrap(),
+						payer_signing_pubkey: payer_signing_pubkey.0.unwrap(),
+					}))
 				};
 				f()
 			},
