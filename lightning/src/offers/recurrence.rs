@@ -640,3 +640,27 @@ pub struct InvoiceFields {
 	/// state when this is `None`. The payer must not interpret or modify these bytes.
 	pub next_state: Option<Vec<u8>>,
 }
+
+/// The recurrence basetime rule a payer expects the invoice answering a request to satisfy.
+///
+/// Records the rule known when the request is sent so the returned invoice can be checked
+/// against the payer's recurrence state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BasetimeExpectation {
+	/// The request was not recurring, so the invoice must not contain recurrence fields.
+	NonRecurring,
+	/// The first invoice must establish period zero at its own creation time.
+	///
+	/// Used for an initial request with a first-invoice anchor.
+	InvoiceCreatedAt,
+	/// The invoice must use this basetime, in seconds since the Unix epoch.
+	///
+	/// Used for fixed anchors and follow-up requests with a first-invoice anchor.
+	Exact(u64),
+}
+
+impl_ser_tlv_based_enum!(BasetimeExpectation,
+	(0, NonRecurring) => {},
+	(1, InvoiceCreatedAt) => {},
+	{2, Exact} => (),
+);
