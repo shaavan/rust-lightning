@@ -501,6 +501,11 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - If an [`OffersContext::OutboundPaymentForOffer`] or
 	///   [`OffersContext::OutboundPaymentForRefund`] is provided, the extracted [`PaymentId`] must
 	///   also match the context's `payment_id`.
+	/// - If an [`OffersContext::OutboundPaymentForOffer`] is provided, the invoice's recurrence
+	///   fields must match the recurrence basetime expectation in the context.
+	///   The first invoice without an explicit offer basetime establishes that basetime from its
+	///   creation time; subsequent invoices must preserve the established value. An explicit offer
+	///   basetime must be preserved for both first and subsequent invoices.
 	/// - If no context is provided, the invoice must correspond to a [`Refund`] without blinded
 	///   paths.
 	/// - If neither condition is met, verification fails.
@@ -520,14 +525,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None if invoice.is_for_refund_without_paths() => {
 				invoice.verify_using_metadata(expanded_key, secp_ctx)
 			},
-			Some(&OffersContext::OutboundPaymentForOffer { payment_id, .. }) => {
-				if invoice.is_for_offer() {
-					invoice.verify_using_metadata(expanded_key, secp_ctx).and_then(|extracted| {
-						(extracted == payment_id).then(|| payment_id).ok_or(())
-					})
-				} else {
-					Err(())
+			Some(&OffersContext::OutboundPaymentForOffer { payment_id, recurrence_basetime }) => {
+				if !invoice.is_for_offer() {
+					return Err(());
 				}
+				let extracted_payment_id = invoice.verify_using_metadata(expanded_key, secp_ctx)?;
+				if extracted_payment_id != payment_id {
+					return Err(());
+				}
+				Self::verify_invoice_recurrence(invoice, recurrence_basetime)?;
+				Ok(payment_id)
 			},
 			Some(&OffersContext::OutboundPaymentForRefund { payment_id }) => {
 				if invoice.is_for_refund() {
@@ -537,6 +544,29 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				} else {
 					Err(())
 				}
+			},
+			_ => Err(()),
+		}
+	}
+
+	/// Checks invoice recurrence against the payer's basetime expectation, allowing absent next state.
+	fn verify_invoice_recurrence(
+		invoice: &Bolt12Invoice, expected: recurrence::BasetimeExpectation,
+	) -> Result<(), ()> {
+		// Payer-side validation checks the basetime expectation separately from optional next-state;
+		// remote payees may omit next-state while still returning a valid recurring invoice.
+		let recurrence = invoice.invoice_recurrence();
+		match (expected, recurrence) {
+			(recurrence::BasetimeExpectation::NonRecurring, None) => Ok(()),
+			(recurrence::BasetimeExpectation::InvoiceCreatedAt, Some(recurrence))
+				if recurrence.basetime == invoice.created_at().as_secs() =>
+			{
+				Ok(())
+			},
+			(recurrence::BasetimeExpectation::Exact(basetime), Some(recurrence))
+				if recurrence.basetime == basetime =>
+			{
+				Ok(())
 			},
 			_ => Err(()),
 		}
