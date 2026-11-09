@@ -26,6 +26,7 @@ use crate::ln::msgs::DecodeError;
 use crate::ln::onion_utils;
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::OfferId;
+use crate::offers::recurrence;
 use crate::onion_message::packet::ControlTlvs;
 use crate::routing::gossip::{NodeId, ReadOnlyNetworkGraph};
 use crate::sign::{EntropySource, NodeSigner, ReceiveAuthKey, Recipient};
@@ -517,6 +518,22 @@ pub enum OffersContext {
 		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
 		/// [`Bolt12Invoice::verify_using_metadata`]: crate::offers::invoice::Bolt12Invoice::verify_using_metadata
 		payment_id: PaymentId,
+
+		/// The recurrence basetime expected in the [`Bolt12Invoice`] received over this reply
+		/// path.
+		///
+		/// Non-recurring invoice requests use [`recurrence::BasetimeExpectation::NonRecurring`].
+		/// An initial recurring request without an offer basetime uses
+		/// [`recurrence::BasetimeExpectation::InvoiceCreatedAt`], while subsequent requests use
+		/// [`recurrence::BasetimeExpectation::Exact`] to preserve the previously resolved
+		/// value. An offer with an explicit basetime uses `Exact` for both initial and subsequent
+		/// requests.
+		///
+		/// This expectation is serialized with the reply-path context so the basetime rule remains
+		/// available when the invoice is received, including after a restart.
+		///
+		/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+		recurrence_basetime: recurrence::BasetimeExpectation,
 	},
 	/// Context used by a [`BlindedMessagePath`] as a reply path for a [`Bolt12Invoice`].
 	///
@@ -710,6 +727,9 @@ impl_ser_tlv_based_enum!(OffersContext,
 	},
 	(4, OutboundPaymentForOffer) => {
 		(0, payment_id, required),
+		// This record is intentionally odd so older LDK versions can skip it when decoding reply-path contexts.
+		(1, recurrence_basetime,
+			(default_value, recurrence::BasetimeExpectation::NonRecurring)),
 	},
 );
 
