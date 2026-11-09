@@ -103,6 +103,7 @@ use crate::offers::invoice_request::{InvoiceRequest, InvoiceRequestVerifiedFromO
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Offer, OfferFromHrn};
 use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::recurrence;
 use crate::offers::refund::Refund;
 use crate::offers::static_invoice::StaticInvoice;
 use crate::onion_message::async_payments::{
@@ -880,6 +881,33 @@ impl Default for OptionalOfferPaymentParams {
 			retry_strategy: Retry::Attempts(3),
 		}
 	}
+}
+
+/// Recurrence-specific parameters for [`ChannelManager::pay_for_recurrence`].
+pub struct RecurrencePaymentParams {
+	/// The payer's recurring request number, starting at zero.
+	pub counter: u32,
+	/// The offer schedule period where recurring payments begin.
+	///
+	/// This must be set when the offer includes an explicit recurrence basetime and absent when the
+	/// recurrence is anchored by the first invoice's creation time.
+	pub start: Option<u32>,
+	/// Opaque recurrence state from the previous invoice, if the previous invoice included it.
+	///
+	/// This must be absent for the first request (`counter == 0`). It may also be absent for later
+	/// requests when a remote payee omitted next-state; otherwise it must contain the previous
+	/// invoice's state bytes unchanged.
+	pub prev_state: Option<Vec<u8>>,
+	/// Quantity to include in the invoice request, when the offer supports or requires one.
+	///
+	/// Must be supplied when the offer expects a quantity and must fall within its supported range.
+	pub quantity: Option<u64>,
+	/// The recurrence basetime expected in the invoice returned for this request.
+	///
+	/// May be omitted for a fixed anchor; when supplied, it must match the offer's basetime.
+	/// For a first-invoice anchor, this must be absent on request zero and must contain the
+	/// established basetime on subsequent requests.
+	pub expected_basetime: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -15969,6 +15997,93 @@ impl<
 		)
 	}
 
+	/// Requests one payment for a recurring [`Offer`] by sending an [`InvoiceRequest`] via an onion
+	/// message. [`ChannelManager`] pays the returned [`Bolt12Invoice`] once it has been validated.
+	///
+	/// The caller schedules subsequent payments and retains the state described in
+	/// [`RecurrencePaymentParams`].
+	///
+	/// Reuse `recurrence_id` for every request in the same recurrence, and use a unique `payment_id`
+	/// for each payment. See [Avoiding Duplicate Payments] for payment ID requirements.
+	///
+	/// `amount_msats` may exceed the offer's required amount and is required when the offer has no
+	/// amount. See [`Self::pay_for_offer`] for payment handling and abandonment.
+	///
+	/// # Privacy
+	///
+	/// Requests in the same recurrence use the same payer signing pubkey, allowing the payee to
+	/// associate them.
+	///
+	/// # Errors
+	///
+	/// Returns an error for a duplicate payment ID, an expired offer, invalid amount, quantity or
+	/// recurrence parameters, an unsupported chain, or failure to create a blinded reply path.
+	///
+	/// [`Bolt12Invoice`]: crate::offers::invoice::Bolt12Invoice
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	/// [Avoiding Duplicate Payments]: #avoiding-duplicate-payments
+	pub fn pay_for_recurrence(
+		&self, offer: &Offer, amount_msats: Option<u64>, payment_id: PaymentId,
+		recurrence_id: recurrence::Id, recurrence_params: RecurrencePaymentParams,
+		optional_params: OptionalOfferPaymentParams,
+	) -> Result<(), Bolt12SemanticError> {
+		let RecurrencePaymentParams { counter, start, prev_state, quantity, expected_basetime } =
+			recurrence_params;
+
+		let entropy = &self.entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+		let (builder, payer_keys) = self.flow.create_recurring_invoice_request_builder(
+			offer,
+			nonce,
+			payment_id,
+			recurrence_id,
+			counter,
+			start,
+			prev_state,
+			false,
+		)?;
+
+		let builder = match quantity {
+			None => builder,
+			Some(quantity) => builder.quantity(quantity)?,
+		};
+		let builder = match amount_msats {
+			None => builder,
+			Some(amount_msats) => builder.amount_msats(amount_msats)?,
+		};
+		let builder = match optional_params.payer_note {
+			None => builder,
+			Some(payer_note) => builder.payer_note(payer_note),
+		};
+
+		let invoice_request = builder.build_and_sign_with_keys(&payer_keys, &self.secp_ctx)?;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		self.flow.enqueue_invoice_request_with_expected_basetime(
+			invoice_request.clone(),
+			payment_id,
+			self.get_peers_for_blinded_path(),
+			expected_basetime,
+		)?;
+
+		let retryable_invoice_request = RetryableInvoiceRequest {
+			invoice_request,
+			nonce: Some(nonce),
+			expected_basetime,
+			needs_retry: true,
+		};
+
+		self.pending_outbound_payments
+			.add_new_awaiting_invoice(
+				payment_id,
+				StaleExpiration::TimerTicks(1),
+				optional_params.retry_strategy,
+				optional_params.route_params_config,
+				Some(retryable_invoice_request),
+			)
+			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)
+	}
+
 	#[rustfmt::skip]
 	fn pay_for_offer_intern<CPP: FnOnce(RetryableInvoiceRequest) -> Result<(), Bolt12SemanticError>>(
 		&self, offer: &Offer, quantity: Option<u64>, amount_msats: Option<u64>,
@@ -16010,6 +16125,7 @@ impl<
 		let retryable_invoice_request = RetryableInvoiceRequest {
 			invoice_request: invoice_request.clone(),
 			nonce: Some(nonce),
+			expected_basetime: None,
 			needs_retry: true,
 		};
 
@@ -18246,11 +18362,16 @@ impl<
 		for (payment_id, retryable_invoice_request) in
 			self.pending_outbound_payments.release_invoice_requests_awaiting_invoice()
 		{
-			let RetryableInvoiceRequest { invoice_request, .. } = retryable_invoice_request;
+			let RetryableInvoiceRequest { invoice_request, expected_basetime, .. } =
+				retryable_invoice_request;
 
 			let peers = self.get_peers_for_blinded_path();
-			let enqueue_invreq_res =
-				self.flow.enqueue_invoice_request(invoice_request, payment_id, peers);
+			let enqueue_invreq_res = self.flow.enqueue_invoice_request_with_expected_basetime(
+				invoice_request,
+				payment_id,
+				peers,
+				expected_basetime,
+			);
 			if enqueue_invreq_res.is_err() {
 				log_warn!(
 					self.logger,
