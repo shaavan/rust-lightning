@@ -13,8 +13,30 @@ use crate::io;
 use crate::ln::msgs::DecodeError;
 use crate::offers::parse::Bolt12SemanticError;
 use crate::prelude::Vec;
+use crate::sign::EntropySource;
 use crate::util::ser::{HighZeroBytesDroppedBigSize, Readable, Writeable, Writer};
 use core::num::NonZeroU32;
+
+/// Stable payer-side identifier for a recurring payment relationship.
+///
+/// The payer should create one [`Id`] when starting a recurrence and persist it for the
+/// lifetime of that relationship, reusing it for all later payments and cancellation requests.
+/// Individual payments still use unique [`PaymentId`] values; the stable recurrence id only keeps
+/// the payer signing key stable across those payments. LDK combines it with the offer id and
+/// [`ExpandedKey`] to derive the recurrence-specific payer signing key without exposing that key
+/// outside LDK.
+///
+/// [`PaymentId`]: crate::ln::channelmanager::PaymentId
+/// [`ExpandedKey`]: crate::ln::inbound_payment::ExpandedKey
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Id(pub [u8; 32]);
+
+impl Id {
+	/// Creates a new [`Id`] using bytes from the given entropy source.
+	pub fn from_entropy_source<ES: EntropySource>(entropy_source: &ES) -> Self {
+		Self(entropy_source.get_secure_random_bytes())
+	}
+}
 
 /// The length and time unit of a recurrence period.
 ///
