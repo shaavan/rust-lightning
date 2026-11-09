@@ -910,6 +910,21 @@ pub struct RecurrencePaymentParams {
 	pub expected_basetime: Option<u64>,
 }
 
+/// Recurrence-specific parameters for [`ChannelManager::cancel_recurrence`].
+pub struct RecurrenceCancellationParams {
+	/// The next recurring request number, which must be nonzero.
+	pub counter: u32,
+	/// The schedule period where this recurrence began.
+	///
+	/// Must match previous requests: present for a fixed offer anchor and absent
+	/// for a first-invoice anchor.
+	pub start: Option<u32>,
+	/// Opaque next-state bytes from the preceding invoice, echoed unchanged.
+	///
+	/// May be absent only when the preceding invoice omitted next-state.
+	pub prev_state: Option<Vec<u8>>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 /// Uniquely describes an HTLC by its source. Just the guaranteed-unique subset of [`HTLCSource`].
 pub(crate) enum SentHTLCId {
@@ -16083,6 +16098,48 @@ impl<
 				Some(retryable_invoice_request),
 			)
 			.map_err(|_| Bolt12SemanticError::DuplicatePaymentId)
+	}
+
+	/// Cancels a recurring [`Offer`] by sending a recurrence cancellation invoice request.
+	///
+	/// Use the same `recurrence_id` as previous requests to preserve the payer signing pubkey.
+	/// See [`RecurrenceCancellationParams`] for counter, start period, and previous-state rules.
+	///
+	/// Success means queued locally; delivery is not guaranteed and no acknowledgement is expected.
+	///
+	/// # Errors
+	///
+	/// Returns an error if the offer is not recurring or has expired, the counter is zero, the
+	/// start period is missing or unexpected, the period index overflows or exceeds the offer's
+	/// limit, the chain is unsupported, or no message destination is available.
+	pub fn cancel_recurrence(
+		&self, offer: &Offer, recurrence_id: recurrence::Id,
+		recurrence_params: RecurrenceCancellationParams,
+	) -> Result<(), Bolt12SemanticError> {
+		let RecurrenceCancellationParams { counter, start, prev_state } = recurrence_params;
+		if counter == 0 {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
+		let entropy = &self.entropy_source;
+		let nonce = Nonce::from_entropy_source(entropy);
+		// Request metadata needs a payment ID even though cancellation creates no tracked payment.
+		let payment_id = PaymentId(entropy.get_secure_random_bytes());
+		let (builder, payer_keys) = self.flow.create_recurring_invoice_request_builder(
+			offer,
+			nonce,
+			payment_id,
+			recurrence_id,
+			counter,
+			start,
+			prev_state,
+			true,
+		)?;
+
+		let invoice_request = builder.build_and_sign_with_keys(&payer_keys, &self.secp_ctx)?;
+		let _persistence_guard = PersistenceNotifierGuard::notify_on_drop(self);
+
+		self.flow.enqueue_cancellation_invoice_request(invoice_request)
 	}
 
 	#[rustfmt::skip]

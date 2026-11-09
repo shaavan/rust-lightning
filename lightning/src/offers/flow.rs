@@ -1298,6 +1298,35 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		Ok(())
 	}
 
+	/// Enqueues a recurrence cancellation [`InvoiceRequest`] without a reply path.
+	///
+	/// Cancellation is a best-effort notification; no response is expected.
+	pub(crate) fn enqueue_cancellation_invoice_request(
+		&self, invoice_request: InvoiceRequest,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		if !invoice_request.paths().is_empty() {
+			for path in invoice_request.paths().iter().take(OFFERS_MESSAGE_REQUEST_LIMIT) {
+				let instructions = MessageSendInstructions::WithoutReplyPath {
+					destination: Destination::BlindedPath(path.clone()),
+				};
+				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+				pending_offers_messages.push((message, instructions));
+			}
+		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
+			let instructions = MessageSendInstructions::WithoutReplyPath {
+				destination: Destination::Node(node_id),
+			};
+			let message = OffersMessage::InvoiceRequest(invoice_request);
+			pending_offers_messages.push((message, instructions));
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
+		}
+
+		Ok(())
+	}
+
 	/// Determines the invoice basetime expectation from the request and a caller-supplied basetime.
 	///
 	/// Rejects a supplied basetime that conflicts with a fixed anchor or is present on an initial
