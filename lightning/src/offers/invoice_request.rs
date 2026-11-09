@@ -163,6 +163,36 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 			}
 		}
 
+		/// Derives per-request metadata while retaining the supplied payer signing pubkey.
+		///
+		/// Use a fresh nonce and payment id for each request; the signing pubkey may remain stable
+		/// across a recurrence without reusing payment metadata.
+		pub(crate) fn deriving_metadata_with_payer_signing_pubkey(
+			offer: &'a Offer, expanded_key: &ExpandedKey, nonce: Nonce, payment_id: PaymentId,
+			payer_signing_pubkey: PublicKey,
+		) -> Self {
+			let payment_id = Some(payment_id);
+			let derivation_material = MetadataMaterial::new(nonce, expanded_key, payment_id);
+			let metadata = Metadata::Derived(derivation_material);
+			Self {
+				offer,
+				invoice_request: Self::create_contents(offer, metadata),
+				payer_signing_pubkey: Some(payer_signing_pubkey),
+				secp_ctx: None,
+			}
+		}
+
+		/// Builds an unsigned request with derived metadata and a supplied payer signing pubkey.
+		pub(crate) fn build(
+			$self: $self_type,
+		) -> Result<UnsignedInvoiceRequest, Bolt12SemanticError> {
+			let (unsigned_invoice_request, keys, secp_ctx) = $self.build_with_checks()?;
+			debug_assert!(keys.is_none());
+			debug_assert!(secp_ctx.is_none());
+
+			Ok(unsigned_invoice_request)
+		}
+
 		/// Builds a signed [`InvoiceRequest`] after checking for valid semantics.
 		pub fn build_and_sign($self: $self_type) -> Result<InvoiceRequest, Bolt12SemanticError> {
 			let (unsigned_invoice_request, keys, secp_ctx) = $self.build_with_checks()?;
@@ -178,6 +208,25 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 				})
 				.unwrap();
 			Ok(invoice_request)
+		}
+
+		/// Builds a request and signs it with the keys matching the supplied payer signing pubkey.
+		///
+		/// Metadata is derived per request while the signing keys remain scoped to the caller.
+		/// Returns [`Bolt12SemanticError::InvalidSigningPubkey`] if the supplied keys cannot sign
+		/// for the request's payer signing pubkey.
+		pub(crate) fn build_and_sign_with_keys(
+			$self: $self_type, keys: &Keypair, secp_ctx: &Secp256k1<$secp_context>,
+		) -> Result<InvoiceRequest, Bolt12SemanticError> {
+			let unsigned_invoice_request = $self.build()?;
+			#[cfg(c_bindings)]
+			let mut unsigned_invoice_request = unsigned_invoice_request;
+
+			unsigned_invoice_request
+				.sign(|message: &UnsignedInvoiceRequest| {
+					Ok(secp_ctx.sign_schnorr_no_aux_rand(message.as_ref().as_digest(), keys))
+				})
+				.map_err(|_| Bolt12SemanticError::InvalidSigningPubkey)
 		}
 	};
 }
