@@ -16021,8 +16021,9 @@ impl<
 	/// Reuse `recurrence_id` for every request in the same recurrence, and use a unique `payment_id`
 	/// for each payment. See [Avoiding Duplicate Payments] for payment ID requirements.
 	///
-	/// `amount_msats` may exceed the offer's required amount and is required when the offer has no
-	/// amount. See [`Self::pay_for_offer`] for payment handling and abandonment.
+	/// `amount_msats` may exceed the required amount and is required when the offer has no amount.
+	/// For a proportional joining price, a supplied amount must cover the price at invoice creation.
+	/// See [`Self::pay_for_offer`] for payment handling and abandonment.
 	///
 	/// # Privacy
 	///

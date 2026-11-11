@@ -120,15 +120,15 @@ use crate::blinded_path::BlindedPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
 #[cfg(test)]
 use crate::offers::invoice_macros::invoice_builder_methods_test_common;
 use crate::offers::invoice_macros::{invoice_accessors_common, invoice_builder_methods_common};
 use crate::offers::invoice_request::{
-	ExperimentalInvoiceRequestTlvStream, ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest,
-	InvoiceRequestContents, InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef,
-	EXPERIMENTAL_INVOICE_REQUEST_TYPES, INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES,
-	IV_BYTES as INVOICE_REQUEST_IV_BYTES,
+	joining_discount_terms, ExperimentalInvoiceRequestTlvStream,
+	ExperimentalInvoiceRequestTlvStreamRef, InvoiceRequest, InvoiceRequestContents,
+	InvoiceRequestTlvStream, InvoiceRequestTlvStreamRef, EXPERIMENTAL_INVOICE_REQUEST_TYPES,
+	INVOICE_REQUEST_PAYER_ID_TYPE, INVOICE_REQUEST_TYPES, IV_BYTES as INVOICE_REQUEST_IV_BYTES,
 };
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvRecord,
@@ -247,7 +247,7 @@ macro_rules! invoice_explicit_signing_pubkey_builder_methods {
 			created_at: Duration, recurrence_basetime: Option<u64>, payment_hash: PaymentHash,
 			signing_pubkey: PublicKey,
 		) -> Result<Self, Bolt12SemanticError> {
-			let amount_msats = Self::amount_msats(invoice_request)?;
+			let amount_msats = Self::amount_msats(invoice_request, created_at)?;
 			let invoice_recurrence = Self::recurrence_fields(invoice_request, recurrence_basetime)?;
 			let contents = InvoiceContents::ForOffer {
 				invoice_request: invoice_request.contents.clone(),
@@ -323,7 +323,7 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 			created_at: Duration, recurrence_basetime: Option<u64>, payment_hash: PaymentHash,
 			keys: Keypair,
 		) -> Result<Self, Bolt12SemanticError> {
-			let amount_msats = Self::amount_msats(invoice_request)?;
+			let amount_msats = Self::amount_msats(invoice_request, created_at)?;
 			let invoice_recurrence = Self::recurrence_fields(invoice_request, recurrence_basetime)?;
 			let signing_pubkey = keys.public_key();
 			let contents = InvoiceContents::ForOffer {
@@ -398,23 +398,69 @@ macro_rules! invoice_derived_signing_pubkey_builder_methods {
 	};
 }
 
+/// Resolves the invoice amount at its creation time, including an initial joining discount.
+///
+/// An explicit request amount is preserved, but must cover the discounted minimum. Follow-ups
+/// and non-recurring requests use the full-period amount. Quantity is applied before rounding.
+pub(super) fn resolve_amount_msats(
+	invoice_request: &InvoiceRequestContents, created_at: Duration,
+) -> Result<u64, Bolt12SemanticError> {
+	let offer = &invoice_request.inner.offer;
+	let request = invoice_request.request_recurrence();
+	let offer_amount = match offer.amount() {
+		Some(Amount::Bitcoin { amount_msats }) => Some(
+			amount_msats
+				.checked_mul(invoice_request.quantity().unwrap_or(1))
+				.ok_or(Bolt12SemanticError::InvalidAmount)?,
+		),
+		Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+		None => None,
+	};
+
+	let minimum_amount = match offer_amount {
+		None => None,
+		Some(full_amount) => {
+			if let Some(terms) = joining_discount_terms(offer, request) {
+				let period_index =
+					terms.period_index(0, request.and_then(|request| request.start))?;
+				Some(
+					terms
+						.proportional_amount_msats(full_amount, period_index, created_at.as_secs())
+						.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?,
+				)
+			} else {
+				Some(full_amount)
+			}
+		},
+	};
+
+	// An explicit amount may exceed the minimum, but must cover it when one is specified.
+	let requested_amount = invoice_request
+		.inner
+		.amount_msats()
+		.or(minimum_amount)
+		.ok_or(Bolt12SemanticError::MissingAmount)?;
+
+	if let Some(minimum) = minimum_amount {
+		if requested_amount < minimum {
+			return Err(Bolt12SemanticError::InsufficientAmount);
+		}
+	}
+	if requested_amount > MAX_VALUE_MSAT {
+		return Err(Bolt12SemanticError::InvalidAmount);
+	}
+	Ok(requested_amount)
+}
+
 macro_rules! invoice_builder_methods {
 	(
 	$self: ident, $self_type: ty, $return_type: ty, $return_value: expr, $type_param: ty $(, $self_mut: tt)?
 ) => {
+		/// Resolves the invoice amount from a complete request using the shared price calculation.
 		pub(crate) fn amount_msats(
-			invoice_request: &InvoiceRequest,
+			invoice_request: &InvoiceRequest, created_at: Duration,
 		) -> Result<u64, Bolt12SemanticError> {
-			match invoice_request.contents.inner.amount_msats() {
-				Some(amount_msats) => Ok(amount_msats),
-				None => match invoice_request.contents.inner.offer.amount() {
-					Some(Amount::Bitcoin { amount_msats }) => amount_msats
-						.checked_mul(invoice_request.quantity().unwrap_or(1))
-						.ok_or(Bolt12SemanticError::InvalidAmount),
-					Some(Amount::Currency { .. }) => Err(Bolt12SemanticError::UnsupportedCurrency),
-					None => Err(Bolt12SemanticError::MissingAmount),
-				},
-			}
+			resolve_amount_msats(&invoice_request.contents, created_at)
 		}
 
 		/// Creates invoice recurrence fields when the request carries recurrence and a basetime is resolved.
@@ -1937,10 +1983,10 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				},
 			}
 
-			if let Some(requested_amount_msats) = invoice_request.amount_msats() {
-				if amount_msats != requested_amount_msats {
-					return Err(Bolt12SemanticError::InvalidAmount);
-				}
+			// Use the invoice's creation time, not the time it is parsed, so a joining discount
+			// has the same value when the payer receives or later reloads the invoice.
+			if amount_msats != resolve_amount_msats(&invoice_request, created_at)? {
+				return Err(Bolt12SemanticError::InvalidAmount);
 			}
 
 			Ok(InvoiceContents::ForOffer { invoice_request, fields })

@@ -248,10 +248,10 @@ pub enum Anchor {
 	Fixed {
 		/// The start of period zero, in seconds since the Unix epoch.
 		basetime: u64,
-		/// Whether the price is proportional to the time remaining in the period.
+		/// Whether the initial invoice's price is proportional to the time remaining in its period.
 		///
-		/// Requires an offer amount. For example, paying three days into a 30-day period
-		/// reduces the price by approximately 10%.
+		/// Requires an offer amount. For example, joining three days into a 30-day period
+		/// reduces the initial price by approximately 10%. Later periods use the full price.
 		proportional: bool,
 	},
 }
@@ -455,6 +455,45 @@ impl Recurrence {
 				}
 			},
 		}
+	}
+
+	/// Calculates the initial payment's joining price. Follow-up requests use the full amount.
+	///
+	/// `amount_msats` includes quantity. `period_index` selects the period being joined, and
+	/// `created_at` is the invoice creation time in seconds since the Unix epoch.
+	///
+	/// Only fixed anchors with proportional pricing adjust the amount: full price before the
+	/// period starts, scaled by time remaining during it, and zero at or after its end.
+	/// Uses the period's actual length and rounds up to the nearest millisatoshi.
+	///
+	/// Returns an error on arithmetic overflow. Does not check the paywindow or period limit.
+	pub fn proportional_amount_msats(
+		&self, amount_msats: u64, period_index: u32, created_at: u64,
+	) -> Result<u64, ()> {
+		let basetime = match self.anchor {
+			Anchor::Fixed { basetime, proportional: true } => basetime,
+			_ => return Ok(amount_msats),
+		};
+
+		let period_start = self.period.start_time(basetime, period_index)?;
+		if created_at <= period_start {
+			return Ok(amount_msats);
+		}
+		let period_end =
+			self.period.start_time(basetime, period_index.checked_add(1).ok_or(())?)?;
+		if created_at >= period_end {
+			// No time remains in this period, so its proportional price is zero. Whether the
+			// request is still allowed is checked separately against the payment window.
+			return Ok(0);
+		}
+
+		let duration = u128::from(period_end - period_start);
+		let remaining = u128::from(period_end - created_at);
+
+		// Round up so a positive price never becomes free through rounding.
+		let numerator = u128::from(amount_msats) * remaining;
+		let scaled = numerator / duration + u128::from(numerator % duration != 0);
+		Ok(scaled as u64)
 	}
 
 	/// Returns inclusive opening and exclusive closing UNIX timestamps for a recurrence period.

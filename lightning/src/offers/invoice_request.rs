@@ -70,8 +70,10 @@ use crate::blinded_path::payment::BlindedPaymentPath;
 use crate::io;
 use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
-use crate::ln::msgs::DecodeError;
-use crate::offers::invoice::{DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy};
+use crate::ln::msgs::{DecodeError, MAX_VALUE_MSAT};
+use crate::offers::invoice::{
+	self, DerivedSigningPubkey, ExplicitSigningPubkey, SigningPubkeyStrategy,
+};
 use crate::offers::merkle::{
 	self, SignError, SignFn, SignatureTlvStream, SignatureTlvStreamRef, TaggedHash, TlvStream,
 };
@@ -229,19 +231,69 @@ macro_rules! invoice_request_derived_payer_signing_pubkey_builder_methods {
 	};
 }
 
+/// Returns the recurrence terms if a joining discount applies to this request.
+///
+/// Only the first payment can receive a joining discount. Follow-up requests and cancellations
+/// do not qualify.
+pub(super) fn joining_discount_terms(
+	offer: &OfferContents, request: Option<&recurrence::RequestFields>,
+) -> Option<recurrence::Recurrence> {
+	let terms = offer.recurrence()?;
+	let request = request?;
+	if request.counter != 0 || request.cancel {
+		return None;
+	}
+
+	match terms.anchor {
+		recurrence::Anchor::Fixed { proportional: true, .. } => Some(terms),
+		_ => None,
+	}
+}
+
+/// Checks request amounts without requiring an invoice creation time.
+///
+/// A joining discount depends on the invoice's creation time. Check the amount's range here and
+/// defer its minimum to invoice creation; ordinary requests retain the full-period minimum.
+fn check_request_amount(
+	offer: &OfferContents, amount: Option<u64>, quantity: Option<u64>,
+	request: Option<&recurrence::RequestFields>,
+) -> Result<(), Bolt12SemanticError> {
+	if joining_discount_terms(offer, request).is_some() {
+		match offer.amount() {
+			Some(Amount::Bitcoin { amount_msats }) => {
+				amount_msats
+					.checked_mul(quantity.unwrap_or(1))
+					.ok_or(Bolt12SemanticError::InvalidAmount)?;
+			},
+			Some(Amount::Currency { .. }) => return Err(Bolt12SemanticError::UnsupportedCurrency),
+			None => return Err(Bolt12SemanticError::MissingAmount),
+		}
+		if amount.map_or(false, |amount| amount > MAX_VALUE_MSAT) {
+			return Err(Bolt12SemanticError::InvalidAmount);
+		}
+		Ok(())
+	} else {
+		offer.check_amount_msats_for_quantity(amount, quantity)
+	}
+}
+
 /// Validates the request's amount and quantity against the offer.
 ///
 /// Cancellation requests may omit either field. Supplied values are still validated.
-/// Other requests must include each field required by the offer.
+/// Other requests must include each field required by the offer. Joining discounts are checked
+/// against the invoice creation time when an invoice is built or parsed.
 fn check_amount_and_quantity(
-	offer: &OfferContents, amount: Option<u64>, quantity: Option<u64>, cancel: bool,
+	offer: &OfferContents, amount: Option<u64>, quantity: Option<u64>,
+	request: Option<&recurrence::RequestFields>,
 ) -> Result<(), Bolt12SemanticError> {
-	if !cancel {
+	let is_cancellation = request.map_or(false, |request| request.cancel);
+
+	if !is_cancellation {
 		if offer.amount().is_none() && amount.is_none() {
 			return Err(Bolt12SemanticError::MissingAmount);
 		}
 		offer.check_quantity(quantity)?;
-		return offer.check_amount_msats_for_quantity(amount, quantity);
+		return check_request_amount(offer, amount, quantity, request);
 	}
 
 	if quantity.is_some() {
@@ -296,13 +348,16 @@ macro_rules! invoice_request_builder_methods { (
 
 	/// Sets the [`InvoiceRequest::amount_msats`] for paying an invoice. Errors if `amount_msats` is
 	/// not at least the expected invoice amount (i.e., [`Offer::amount`] times [`quantity`]).
+	/// For an initial request with proportional pricing, the minimum is checked when the invoice's
+	/// creation time is known; this method only checks the amount's range.
 	///
 	/// Successive calls to this method will override the previous setting.
 	///
 	/// [`quantity`]: Self::quantity
 	pub fn amount_msats($($self_mut)* $self: $self_type, amount_msats: u64) -> Result<$return_type, Bolt12SemanticError> {
-		$self.invoice_request.offer.check_amount_msats_for_quantity(
-			Some(amount_msats), $self.invoice_request.quantity
+		check_request_amount(
+			&$self.invoice_request.offer, Some(amount_msats), $self.invoice_request.quantity,
+			$self.invoice_request.request_recurrence.as_ref(),
 		)?;
 		$self.invoice_request.amount_msats = Some(amount_msats);
 		Ok($return_value)
@@ -381,7 +436,7 @@ macro_rules! invoice_request_builder_methods { (
 			&$self.invoice_request.offer,
 			$self.invoice_request.amount_msats,
 			$self.invoice_request.quantity,
-			$self.invoice_request.request_recurrence.as_ref().map_or(false, |request| request.cancel),
+			$self.invoice_request.request_recurrence.as_ref(),
 		)?;
 
 		Ok($self.build_without_checks())
@@ -746,7 +801,7 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 		Ok(())
 	}
 
-	/// Validates whether the automatic payee flow may issue an invoice at `created_at`.
+	/// Validates an automatic invoice response and returns its amount at `created_at`.
 	///
 	/// Requires previous state on follow-up requests, rejects cancellation, and checks the
 	/// requested period's inclusive opening and exclusive closing bounds. `created_at` is the
@@ -754,11 +809,11 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 	/// when building a response. Recheck when building, since the request may have waited.
 	pub(crate) fn validate_recurring_request(
 		&self, created_at: Duration,
-	) -> Result<(), Bolt12SemanticError> {
+	) -> Result<u64, Bolt12SemanticError> {
 		self.require_recurring_state()?;
 		let request = match self.inner.request_recurrence() {
 			Some(request) => request,
-			None => return Ok(()),
+			None => return self.inner.invoice_amount_msats(created_at),
 		};
 
 		// Cancellation requests do not produce payable invoices.
@@ -777,7 +832,9 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 		if now < opening || now >= closing {
 			return Err(Bolt12SemanticError::InvalidRecurrence);
 		}
-		Ok(())
+		// A supplied amount may be below the full-period price only for the joining invoice.
+		// Check its minimum now that the invoice creation time is available.
+		self.inner.invoice_amount_msats(created_at)
 	}
 
 	/// Resolves the offer terms and basetime to include in an inbound payment context.
@@ -861,10 +918,10 @@ impl InvoiceRequestVerifiedFromOffer {
 		}
 	}
 
-	/// Applies the automatic recurring-response rules for either signing strategy at `created_at`.
+	/// Validates an automatic invoice response and resolves its amount for either signing strategy.
 	pub(crate) fn validate_recurring_request(
 		&self, created_at: Duration,
-	) -> Result<(), Bolt12SemanticError> {
+	) -> Result<u64, Bolt12SemanticError> {
 		match self {
 			Self::DerivedKeys(request) => request.validate_recurring_request(created_at),
 			Self::ExplicitKeys(request) => request.validate_recurring_request(created_at),
@@ -930,7 +987,10 @@ macro_rules! invoice_request_accessors { ($self: ident, $contents: expr) => {
 	}
 
 	/// The amount to pay in msats (i.e., the minimum lightning-payable unit for [`chain`]), which
-	/// must be greater than or equal to [`Offer::amount`], converted if necessary.
+	/// accounts for quantity and any joining discount.
+	///
+	/// Returns `None` if the initial request uses proportional pricing without an explicit amount,
+	/// since its amount depends on the invoice's creation time.
 	///
 	/// [`chain`]: Self::chain
 	pub fn amount_msats(&$self) -> Option<u64> {
@@ -1212,6 +1272,16 @@ impl InvoiceRequest {
 }
 
 impl InvoiceRequest {
+	/// Resolves the amount to invoice at `created_at`, including any initial joining discount.
+	///
+	/// Use the same creation time for payment data, payment paths, and the invoice so their amounts
+	/// agree. An explicit request amount is retained only if it covers the minimum at that time.
+	pub(crate) fn invoice_amount_msats(
+		&self, created_at: Duration,
+	) -> Result<u64, Bolt12SemanticError> {
+		invoice::resolve_amount_msats(&self.contents, created_at)
+	}
+
 	/// Verifies echoed recurrence state and recovers the basetime for subsequent invoices.
 	///
 	/// The token binds the request to the offer, payer, counter, and start offset without
@@ -1446,7 +1516,17 @@ impl InvoiceRequestContents {
 	}
 
 	pub(super) fn amount_msats(&self) -> Option<u64> {
-		self.inner.amount_msats().or_else(|| match self.inner.offer.amount() {
+		if let Some(amount_msats) = self.inner.amount_msats() {
+			return Some(amount_msats);
+		}
+
+		// The first payment is discounted for time already elapsed in the period. Without the
+		// invoice's creation time, we cannot tell how much time remains or calculate the price.
+		if joining_discount_terms(&self.inner.offer, self.request_recurrence()).is_some() {
+			return None;
+		}
+
+		match self.inner.offer.amount() {
 			Some(Amount::Bitcoin { amount_msats }) => {
 				Some(amount_msats.saturating_mul(self.quantity().unwrap_or(1)))
 			},
@@ -1455,7 +1535,7 @@ impl InvoiceRequestContents {
 				debug_assert!(false);
 				None
 			},
-		})
+		}
 	}
 
 	pub(super) fn has_amount_msats(&self) -> bool {
@@ -1802,12 +1882,7 @@ impl TryFrom<PartialInvoiceRequestTlvStream> for InvoiceRequestContents {
 			request_recurrence.as_ref(),
 		)?;
 
-		check_amount_and_quantity(
-			&offer,
-			amount,
-			quantity,
-			request_recurrence.as_ref().map_or(false, |request| request.cancel),
-		)?;
+		check_amount_and_quantity(&offer, amount, quantity, request_recurrence.as_ref())?;
 
 		let inner = InvoiceRequestContentsWithoutPayerSigningPubkey {
 			payer,

@@ -1080,13 +1080,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
-
-		// Recheck at creation time before allocating payment data: the request may have waited
-		// since verification. Reuse this time for the invoice, recurrence context, and token.
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
 		let created_at = self.duration_since_epoch();
-		invoice_request.validate_recurring_request(created_at)?;
+		let amount_msats = invoice_request.validate_recurring_request(created_at)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 		let (offer_recurrence, invoice_recurrence_basetime) =
@@ -1175,13 +1172,10 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
-
-		// Recheck at creation time before allocating payment data: the request may have waited
-		// since verification. Reuse this time for the invoice, recurrence context, and token.
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
 		let created_at = self.duration_since_epoch();
-		invoice_request.validate_recurring_request(created_at)?;
+		let amount_msats = invoice_request.validate_recurring_request(created_at)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
 		let (offer_recurrence, invoice_recurrence_basetime) =
