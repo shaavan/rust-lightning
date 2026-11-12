@@ -17,7 +17,7 @@ use core::time::Duration;
 
 use bitcoin::block::Header;
 use bitcoin::constants::ChainHash;
-use bitcoin::secp256k1::{self, PublicKey, Secp256k1};
+use bitcoin::secp256k1::{self, Keypair, PublicKey, Secp256k1};
 
 use crate::blinded_path::message::{
 	AsyncPaymentsContext, BlindedMessagePath, MessageContext, MessageForwardNode, OffersContext,
@@ -46,7 +46,9 @@ use crate::offers::invoice_request::{
 use crate::offers::nonce::Nonce;
 use crate::offers::offer::{Amount, DerivedMetadata, Offer, OfferBuilder};
 use crate::offers::parse::Bolt12SemanticError;
+use crate::offers::recurrence;
 use crate::offers::refund::{Refund, RefundBuilder};
+use crate::offers::signer;
 use crate::offers::static_invoice::{StaticInvoice, StaticInvoiceBuilder};
 use crate::onion_message::async_payments::{
 	AsyncPaymentsMessage, HeldHtlcAvailable, OfferPaths, OfferPathsRequest, ServeStaticInvoice,
@@ -395,6 +397,9 @@ pub enum InvreqResponseInstructions {
 	/// We are the recipient of this payment, and a [`Bolt12Invoice`] should be sent in response to
 	/// the invoice request since it is now verified.
 	SendInvoice(InvoiceRequestVerifiedFromOffer),
+	/// The payer cancelled a recurring offer after the request and its previous state were
+	/// authenticated. No invoice response is needed, and payment-window checks do not apply.
+	CancelRecurringOffer(InvoiceRequestVerifiedFromOffer),
 	/// We are a static invoice server and should respond to this invoice request by retrieving the
 	/// [`StaticInvoice`] corresponding to the `recipient_id` and `invoice_slot` and calling
 	/// [`OffersMessageFlow::enqueue_static_invoice`].
@@ -481,6 +486,13 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None => invoice_request.verify_using_metadata(expanded_key, secp_ctx),
 		}?;
 
+		if invoice_request.request_recurrence().map(|request| request.cancel).unwrap_or(false) {
+			invoice_request.require_recurring_state().map_err(|_| ())?;
+			return Ok(InvreqResponseInstructions::CancelRecurringOffer(invoice_request));
+		}
+
+		invoice_request.validate_recurring_request(self.duration_since_epoch()).map_err(|_| ())?;
+
 		Ok(InvreqResponseInstructions::SendInvoice(invoice_request))
 	}
 
@@ -490,6 +502,11 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// - If an [`OffersContext::OutboundPaymentForOffer`] or
 	///   [`OffersContext::OutboundPaymentForRefund`] is provided, the extracted [`PaymentId`] must
 	///   also match the context's `payment_id`.
+	/// - If an [`OffersContext::OutboundPaymentForOffer`] is provided, the invoice's recurrence
+	///   fields must match the recurrence basetime expectation in the context.
+	///   The first invoice without an explicit offer basetime establishes that basetime from its
+	///   creation time; subsequent invoices must preserve the established value. An explicit offer
+	///   basetime must be preserved for both first and subsequent invoices.
 	/// - If no context is provided, the invoice must correspond to a [`Refund`] without blinded
 	///   paths.
 	/// - If neither condition is met, verification fails.
@@ -509,14 +526,16 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			None if invoice.is_for_refund_without_paths() => {
 				invoice.verify_using_metadata(expanded_key, secp_ctx)
 			},
-			Some(&OffersContext::OutboundPaymentForOffer { payment_id }) => {
-				if invoice.is_for_offer() {
-					invoice.verify_using_metadata(expanded_key, secp_ctx).and_then(|extracted| {
-						(extracted == payment_id).then(|| payment_id).ok_or(())
-					})
-				} else {
-					Err(())
+			Some(&OffersContext::OutboundPaymentForOffer { payment_id, recurrence_basetime }) => {
+				if !invoice.is_for_offer() {
+					return Err(());
 				}
+				let extracted_payment_id = invoice.verify_using_metadata(expanded_key, secp_ctx)?;
+				if extracted_payment_id != payment_id {
+					return Err(());
+				}
+				Self::verify_invoice_recurrence(invoice, recurrence_basetime)?;
+				Ok(payment_id)
 			},
 			Some(&OffersContext::OutboundPaymentForRefund { payment_id }) => {
 				if invoice.is_for_refund() {
@@ -526,6 +545,29 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 				} else {
 					Err(())
 				}
+			},
+			_ => Err(()),
+		}
+	}
+
+	/// Checks invoice recurrence against the payer's basetime expectation, allowing absent next state.
+	fn verify_invoice_recurrence(
+		invoice: &Bolt12Invoice, expected: recurrence::BasetimeExpectation,
+	) -> Result<(), ()> {
+		// Payer-side validation checks the basetime expectation separately from optional next-state;
+		// remote payees may omit next-state while still returning a valid recurring invoice.
+		let recurrence = invoice.invoice_recurrence();
+		match (expected, recurrence) {
+			(recurrence::BasetimeExpectation::NonRecurring, None) => Ok(()),
+			(recurrence::BasetimeExpectation::InvoiceCreatedAt, Some(recurrence))
+				if recurrence.basetime == invoice.created_at().as_secs() =>
+			{
+				Ok(())
+			},
+			(recurrence::BasetimeExpectation::Exact(basetime), Some(recurrence))
+				if recurrence.basetime == basetime =>
+			{
+				Ok(())
 			},
 			_ => Err(()),
 		}
@@ -834,6 +876,44 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		Ok(builder)
 	}
 
+	/// Creates an [`InvoiceRequestBuilder`] for a recurring payment or cancellation request.
+	///
+	/// A stable [`recurrence::Id`] derives the same payer signing pubkey for all requests in the
+	/// recurrence. Each request encrypts its own [`PaymentId`] into payer metadata. Setting `cancel`
+	/// marks the request as a cancellation rather than a request for the next invoice.
+	pub(crate) fn create_recurring_invoice_request_builder<'a>(
+		&'a self, offer: &'a Offer, nonce: Nonce, payment_id: PaymentId,
+		recurrence_id: recurrence::Id, counter: u32, start: Option<u32>,
+		prev_state: Option<Vec<u8>>, cancel: bool,
+	) -> Result<(InvoiceRequestBuilder<'a, 'a, secp256k1::All>, Keypair), Bolt12SemanticError> {
+		if offer.recurrence().is_none() {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
+
+		let expanded_key = &self.inbound_payment_key;
+		let secp_ctx = &self.secp_ctx;
+		let payer_keys = signer::derive_recurrence_payer_keys(
+			&recurrence_id,
+			offer.id(),
+			expanded_key,
+			secp_ctx,
+		);
+
+		let builder: InvoiceRequestBuilder<secp256k1::All> =
+			InvoiceRequestBuilder::deriving_metadata_with_payer_signing_pubkey(
+				offer,
+				expanded_key,
+				nonce,
+				payment_id,
+				payer_keys.public_key(),
+			)
+			.into();
+		let builder = builder.chain_hash(self.chain_hash)?;
+		let builder = builder.recurrence(counter, start, prev_state, cancel)?;
+
+		Ok((builder, payer_keys))
+	}
+
 	/// Creates a [`StaticInvoiceBuilder`] from the corresponding [`Offer`] and [`Nonce`] that were
 	/// created via [`Self::create_async_receive_offer_builder`].
 	///
@@ -973,29 +1053,50 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// For recurring requests, the invoice's blinded payment paths carry the offer's recurrence
+	/// terms and the invoice's basetime in [`Bolt12OfferContext`] for use when receiving payment.
+	/// These fields are absent when the request does not opt into recurrence.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_with_keys<'a, R: Router, F>(
+	/// - A recurring request with a nonzero counter has no previous state.
+	/// - The request cancels recurrence or its payment window excludes the creation time.
+	/// - The recurrence counter cannot be incremented to create the next-state token.
+	pub fn create_invoice_builder_from_invoice_request_with_keys<
+		'a,
+		R: Router,
+		F,
+		ES: EntropySource,
+	>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<DerivedSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
-		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
+		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>, entropy_source: &ES,
 	) -> Result<(InvoiceBuilder<'a, DerivedSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
+		let created_at = self.duration_since_epoch();
+		let amount_msats = invoice_request.validate_recurring_request(created_at)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
+		let (offer_recurrence, invoice_recurrence_basetime) =
+			match invoice_request.recurrence_payment_context(created_at)? {
+				Some((terms, basetime)) => (Some(terms), Some(basetime)),
+				None => (None, None),
+			};
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
+			offer_recurrence,
 			invoice_request: invoice_request.fields(),
+			invoice_recurrence_basetime,
 			payment_metadata,
 		});
 
@@ -1010,15 +1111,25 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_using_derived_keys(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_using_derived_keys_no_std(
+		let mut builder = InvoiceBuilder::from(invoice_request.respond_using_derived_keys_no_std(
 			payment_paths,
 			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
-		);
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+			created_at,
+		)?);
+
+		// Each recurring response supplies fresh state that the next request must echo,
+		// allowing the payee to recover the schedule without per-payer storage.
+		if invoice_request.request_recurrence().is_some() {
+			let nonce = Nonce::from_entropy_source(entropy_source);
+			let next_state = invoice_request.create_recurrence_next_state(
+				created_at,
+				nonce,
+				&self.inbound_payment_key,
+			)?;
+			builder = builder.set_recurrence_next_state(next_state)?;
+		}
+
+		let builder = builder.allow_mpp();
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
@@ -1034,29 +1145,50 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 	/// Use this method when you want to inspect or modify the [`InvoiceBuilder`]
 	/// before signing and generating the final [`Bolt12Invoice`].
 	///
+	/// For recurring requests, the invoice's blinded payment paths carry the offer's recurrence
+	/// terms and the invoice's basetime in [`Bolt12OfferContext`] for use when receiving payment.
+	/// These fields are absent when the request does not opt into recurrence.
+	///
 	/// # Errors
 	///
 	/// Returns a [`Bolt12SemanticError`] if:
 	/// - Valid blinded payment paths could not be generated for the [`Bolt12Invoice`].
 	/// - The [`InvoiceBuilder`] could not be created from the [`InvoiceRequest`].
-	pub fn create_invoice_builder_from_invoice_request_without_keys<'a, R: Router, F>(
+	/// - A recurring request with a nonzero counter has no previous state.
+	/// - The request cancels recurrence or its payment window excludes the creation time.
+	/// - The recurrence counter cannot be incremented to create the next-state token.
+	pub fn create_invoice_builder_from_invoice_request_without_keys<
+		'a,
+		R: Router,
+		F,
+		ES: EntropySource,
+	>(
 		&self, router: &R, invoice_request: &'a VerifiedInvoiceRequest<ExplicitSigningPubkey>,
 		usable_channels: Vec<ChannelDetails>, get_payment_info: F,
-		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>,
+		payment_metadata: Option<BTreeMap<u64, Vec<u8>>>, entropy_source: &ES,
 	) -> Result<(InvoiceBuilder<'a, ExplicitSigningPubkey>, MessageContext), Bolt12SemanticError>
 	where
 		F: Fn(u64, u32) -> Result<(PaymentHash, PaymentSecret), Bolt12SemanticError>,
 	{
 		let relative_expiry = DEFAULT_RELATIVE_EXPIRY.as_secs() as u32;
 
-		let amount_msats =
-			InvoiceBuilder::<DerivedSigningPubkey>::amount_msats(&invoice_request.inner)?;
+		// Use one creation time for the joining price, payment window, invoice, context, and token.
+		// Recheck before allocating payment data: the request may have waited since verification.
+		let created_at = self.duration_since_epoch();
+		let amount_msats = invoice_request.validate_recurring_request(created_at)?;
 
 		let (payment_hash, payment_secret) = get_payment_info(amount_msats, relative_expiry)?;
+		let (offer_recurrence, invoice_recurrence_basetime) =
+			match invoice_request.recurrence_payment_context(created_at)? {
+				Some((terms, basetime)) => (Some(terms), Some(basetime)),
+				None => (None, None),
+			};
 
 		let context = PaymentContext::Bolt12Offer(Bolt12OfferContext {
 			offer_id: invoice_request.offer_id,
+			offer_recurrence,
 			invoice_request: invoice_request.fields(),
+			invoice_recurrence_basetime,
 			payment_metadata,
 		});
 
@@ -1071,16 +1203,23 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 			)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
 
-		#[cfg(all(feature = "std", not(fuzzing)))]
-		let builder = invoice_request.respond_with(payment_paths, payment_hash);
-		#[cfg(any(not(feature = "std"), fuzzing))]
-		let builder = invoice_request.respond_with_no_std(
-			payment_paths,
-			payment_hash,
-			Duration::from_secs(self.highest_seen_timestamp.load(Ordering::Acquire) as u64),
+		let mut builder = InvoiceBuilder::from(
+			invoice_request.respond_with_no_std(payment_paths, payment_hash, created_at)?,
 		);
 
-		let builder = builder.map(|b| InvoiceBuilder::from(b).allow_mpp())?;
+		// Each recurring response supplies fresh state that the next request must echo,
+		// allowing the payee to recover the schedule without per-payer storage.
+		if invoice_request.request_recurrence().is_some() {
+			let nonce = Nonce::from_entropy_source(entropy_source);
+			let next_state = invoice_request.create_recurrence_next_state(
+				created_at,
+				nonce,
+				&self.inbound_payment_key,
+			)?;
+			builder = builder.set_recurrence_next_state(next_state)?;
+		}
+
+		let builder = builder.allow_mpp();
 
 		let context = MessageContext::Offers(OffersContext::InboundPayment { payment_hash });
 
@@ -1110,7 +1249,25 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		&self, invoice_request: InvoiceRequest, payment_id: PaymentId,
 		peers: Vec<MessageForwardNode>,
 	) -> Result<(), Bolt12SemanticError> {
-		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer { payment_id });
+		self.enqueue_invoice_request_with_expected_basetime(
+			invoice_request,
+			payment_id,
+			peers,
+			None,
+		)
+	}
+
+	/// Enqueues a request with the established basetime used to verify its returned invoice.
+	/// Retries supply the same basetime so they preserve the original recurrence expectation.
+	pub(crate) fn enqueue_invoice_request_with_expected_basetime(
+		&self, invoice_request: InvoiceRequest, payment_id: PaymentId,
+		peers: Vec<MessageForwardNode>, expected_basetime: Option<u64>,
+	) -> Result<(), Bolt12SemanticError> {
+		let recurrence_basetime = Self::basetime_expectation(&invoice_request, expected_basetime)?;
+		let context = MessageContext::Offers(OffersContext::OutboundPaymentForOffer {
+			payment_id,
+			recurrence_basetime,
+		});
 		let reply_paths = self
 			.create_blinded_paths(peers, context)
 			.map_err(|_| Bolt12SemanticError::MissingPaths)?;
@@ -1139,6 +1296,69 @@ impl<MR: MessageRouter, L: Logger> OffersMessageFlow<MR, L> {
 		}
 
 		Ok(())
+	}
+
+	/// Enqueues a recurrence cancellation [`InvoiceRequest`] without a reply path.
+	///
+	/// Cancellation is a best-effort notification; no response is expected.
+	pub(crate) fn enqueue_cancellation_invoice_request(
+		&self, invoice_request: InvoiceRequest,
+	) -> Result<(), Bolt12SemanticError> {
+		let mut pending_offers_messages = self.pending_offers_messages.lock().unwrap();
+		if !invoice_request.paths().is_empty() {
+			for path in invoice_request.paths().iter().take(OFFERS_MESSAGE_REQUEST_LIMIT) {
+				let instructions = MessageSendInstructions::WithoutReplyPath {
+					destination: Destination::BlindedPath(path.clone()),
+				};
+				let message = OffersMessage::InvoiceRequest(invoice_request.clone());
+				pending_offers_messages.push((message, instructions));
+			}
+		} else if let Some(node_id) = invoice_request.issuer_signing_pubkey() {
+			let instructions = MessageSendInstructions::WithoutReplyPath {
+				destination: Destination::Node(node_id),
+			};
+			let message = OffersMessage::InvoiceRequest(invoice_request);
+			pending_offers_messages.push((message, instructions));
+		} else {
+			debug_assert!(false);
+			return Err(Bolt12SemanticError::MissingIssuerSigningPubkey);
+		}
+
+		Ok(())
+	}
+
+	/// Determines the invoice basetime expectation from the request and a caller-supplied basetime.
+	///
+	/// Rejects a supplied basetime that conflicts with a fixed anchor or is present on an initial
+	/// first-invoice request. Follow-up requests with a first-invoice anchor require a known basetime.
+	fn basetime_expectation(
+		invoice_request: &InvoiceRequest, expected_basetime: Option<u64>,
+	) -> Result<recurrence::BasetimeExpectation, Bolt12SemanticError> {
+		let Some(request) = invoice_request.request_recurrence() else {
+			// Non-recurring requests cannot have an expected recurrence basetime.
+			return match expected_basetime {
+				None => Ok(recurrence::BasetimeExpectation::NonRecurring),
+				Some(_) => Err(Bolt12SemanticError::InvalidRecurrence),
+			};
+		};
+
+		let terms = invoice_request.recurrence().ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+
+		match terms.anchor {
+			// A supplied basetime must match the offer's fixed anchor.
+			recurrence::Anchor::Fixed { basetime, .. } => match expected_basetime {
+				Some(expected) if expected != basetime => {
+					Err(Bolt12SemanticError::InvalidRecurrence)
+				},
+				_ => Ok(recurrence::BasetimeExpectation::Exact(basetime)),
+			},
+			// The first invoice establishes the basetime; later requests must supply it.
+			recurrence::Anchor::FirstInvoice => match (request.counter, expected_basetime) {
+				(0, None) => Ok(recurrence::BasetimeExpectation::InvoiceCreatedAt),
+				(0, Some(_)) | (_, None) => Err(Bolt12SemanticError::InvalidRecurrence),
+				(_, Some(basetime)) => Ok(recurrence::BasetimeExpectation::Exact(basetime)),
+			},
+		}
 	}
 
 	/// Enqueues the created [`Bolt12Invoice`] corresponding to a [`Refund`] to be sent
