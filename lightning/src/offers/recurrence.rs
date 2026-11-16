@@ -482,8 +482,8 @@ impl Recurrence {
 		let period_end =
 			self.period.start_time(basetime, period_index.checked_add(1).ok_or(())?)?;
 		if created_at >= period_end {
-			// No time remains in this period, so its proportional price is zero. Whether the
-			// request is still allowed is checked separately against the payment window.
+			// The period has ended, so the proportional amount is zero. Whether an invoice
+			// can be issued for this request is validated separately.
 			return Ok(0);
 		}
 
@@ -575,19 +575,12 @@ impl RequestFields {
 			(None, None, None, None) => Ok(None),
 			(Some(counter), start, prev_state, cancel) => {
 				let request = Self { counter, start, prev_state, cancel: cancel.is_some() };
-				request.validate()?;
+				if request.counter == 0 && (request.prev_state.is_some() || request.cancel) {
+					return Err(());
+				}
 				Ok(Some(request))
 			},
 			_ => Err(()),
-		}
-	}
-
-	/// Rejects previous state or cancellation on the first recurring request.
-	fn validate(&self) -> Result<(), ()> {
-		if self.counter == 0 && (self.prev_state.is_some() || self.cancel) {
-			Err(())
-		} else {
-			Ok(())
 		}
 	}
 
@@ -615,7 +608,9 @@ impl RequestFields {
 			_ => return Err(Bolt12SemanticError::InvalidRecurrence),
 		};
 
-		request.validate().map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+		if request.counter == 0 && (request.prev_state.is_some() || request.cancel) {
+			return Err(Bolt12SemanticError::InvalidRecurrence);
+		}
 
 		let period_index = terms.period_index(request.counter, request.start)?;
 		if let Limit::Bounded(limit) = terms.limit {

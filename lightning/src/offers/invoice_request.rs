@@ -90,6 +90,7 @@ use crate::onion_message::dns_resolution::HumanReadableName;
 use crate::types::features::InvoiceRequestFeatures;
 use crate::types::payment::PaymentHash;
 use crate::types::string::{PrintableString, UntrustedString};
+use crate::util::logger::Logger;
 use crate::util::ser::{
 	CursorReadable, HighZeroBytesDroppedBigSize, LengthLimitedRead, LengthReadable, Readable,
 	WithoutLength, Writeable, Writer,
@@ -788,31 +789,38 @@ pub struct VerifiedInvoiceRequest<S: SigningPubkeyStrategy> {
 }
 
 impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
-	/// Requires previous state to be present for automatic recurring follow-up handling.
+	/// Validates whether an invoice can be issued for this recurring request and returns its amount.
 	///
-	/// Supplied state was authenticated during verification. Its presence is required here even
-	/// for cancellation, while the payment-window checks apply only when issuing invoices.
-	pub(crate) fn require_recurring_state(&self) -> Result<(), Bolt12SemanticError> {
-		if let Some(request) = self.inner.request_recurrence() {
-			if request.counter > 0 && request.prev_state.is_none() {
-				return Err(Bolt12SemanticError::InvalidMetadata);
-			}
-		}
-		Ok(())
-	}
-
-	/// Validates an automatic invoice response and returns its amount at `created_at`.
+	/// Requires the previous recurrence state for successive [`InvoiceRequest`]s and validates
+	/// or calculates the invoice amount. Rejects issuing invoices for cancellation requests.
 	///
-	/// Requires previous state on follow-up requests, rejects cancellation, and checks the
-	/// requested period's inclusive opening and exclusive closing bounds. `created_at` is the
-	/// time being checked: the current time during verification, or the invoice's creation time
-	/// when building a response. Recheck when building, since the request may have waited.
-	pub(crate) fn validate_recurring_request(
-		&self, created_at: Duration,
+	/// # Paywindow Enforcement
+	///
+	/// When `enforce_paywindow` is enabled, requests outside the paywindow are rejected.
+	/// Otherwise, early and late requests are allowed and logged.
+	///
+	/// # Proportional Pricing
+	///
+	/// Initial requests for offers allowing [proportional pricing] are always rejected
+	/// if the requested period has already ended, regardless of `enforce_paywindow`,
+	/// because no time remains in that period.
+	///
+	/// `created_at` determines the paywindow and proportional price. When issuing an
+	/// invoice, use its creation time to ensure consistent validation and pricing.
+	///
+	/// [proportional pricing]: recurrence::Anchor::Fixed::proportional
+	pub(crate) fn validate_recurring_request<L: Logger>(
+		&self, created_at: Duration, enforce_paywindow: bool, logger: &L,
 	) -> Result<u64, Bolt12SemanticError> {
-		self.require_recurring_state()?;
 		let request = match self.inner.request_recurrence() {
-			Some(request) => request,
+			Some(request) => {
+				// We include state in each recurring invoice to preserve the payment schedule.
+				// The payer must return that state with its next invoice request.
+				if request.counter > 0 && request.prev_state.is_none() {
+					return Err(Bolt12SemanticError::InvalidMetadata);
+				}
+				request
+			},
 			None => return self.inner.invoice_amount_msats(created_at),
 		};
 
@@ -825,16 +833,43 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 			.recurrence_payment_context(created_at)?
 			.ok_or(Bolt12SemanticError::InvalidRecurrence)?;
 		let period_index = terms.period_index(request.counter, request.start)?;
+		let now = created_at.as_secs();
+		let offer = &self.inner.contents.inner.offer;
+
+		// Proportional joins require an unfinished period, regardless of paywindow enforcement.
+		if joining_discount_terms(offer, Some(request)).is_some() {
+			let next_period_index =
+				period_index.checked_add(1).ok_or(Bolt12SemanticError::InvalidRecurrence)?;
+			let period_end = terms
+				.period
+				.start_time(basetime, next_period_index)
+				.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
+			if now >= period_end {
+				return Err(Bolt12SemanticError::InvalidRecurrence);
+			}
+		}
+
 		let (opening, closing) = terms
 			.payment_window(basetime, period_index)
 			.map_err(|_| Bolt12SemanticError::InvalidRecurrence)?;
-		let now = created_at.as_secs();
-		if now < opening || now >= closing {
+		let outside_paywindow = now < opening || now >= closing;
+		if enforce_paywindow && outside_paywindow {
 			return Err(Bolt12SemanticError::InvalidRecurrence);
 		}
+
 		// A supplied amount may be below the full-period price only for the joining invoice.
 		// Check its minimum now that the invoice creation time is available.
-		self.inner.invoice_amount_msats(created_at)
+		let amount_msats = self.inner.invoice_amount_msats(created_at)?;
+
+		if outside_paywindow {
+			log_info!(
+				logger,
+				"Accepting {} recurring invoice request for period {} at {} outside paywindow [{}, {})",
+				if now < opening { "early" } else { "late" },
+				period_index, now, opening, closing
+			);
+		}
+		Ok(amount_msats)
 	}
 
 	/// Resolves the offer terms and basetime to include in an inbound payment context.
@@ -863,11 +898,16 @@ impl<S: SigningPubkeyStrategy> VerifiedInvoiceRequest<S> {
 		&self, created_at: Duration, nonce: Nonce, key: &ExpandedKey,
 	) -> Result<Vec<u8>, Bolt12SemanticError> {
 		let request = match self.inner.request_recurrence() {
-			Some(request) => request,
+			Some(request) => {
+				// We include state in each recurring invoice to preserve the payment schedule.
+				// The payer must return that state with its next invoice request.
+				if request.counter > 0 && request.prev_state.is_none() {
+					return Err(Bolt12SemanticError::InvalidMetadata);
+				}
+				request
+			},
 			None => return Err(Bolt12SemanticError::UnexpectedRecurrence),
 		};
-
-		self.require_recurring_state()?;
 
 		let basetime = self
 			.inner
@@ -910,21 +950,17 @@ pub enum InvoiceRequestVerifiedFromOffer {
 }
 
 impl InvoiceRequestVerifiedFromOffer {
-	/// Requires continuity state for automatic handling with either signing strategy.
-	pub(crate) fn require_recurring_state(&self) -> Result<(), Bolt12SemanticError> {
-		match self {
-			Self::DerivedKeys(request) => request.require_recurring_state(),
-			Self::ExplicitKeys(request) => request.require_recurring_state(),
-		}
-	}
-
 	/// Validates an automatic invoice response and resolves its amount for either signing strategy.
-	pub(crate) fn validate_recurring_request(
-		&self, created_at: Duration,
+	pub(crate) fn validate_recurring_request<L: Logger>(
+		&self, created_at: Duration, enforce_paywindow: bool, logger: &L,
 	) -> Result<u64, Bolt12SemanticError> {
 		match self {
-			Self::DerivedKeys(request) => request.validate_recurring_request(created_at),
-			Self::ExplicitKeys(request) => request.validate_recurring_request(created_at),
+			Self::DerivedKeys(request) => {
+				request.validate_recurring_request(created_at, enforce_paywindow, logger)
+			},
+			Self::ExplicitKeys(request) => {
+				request.validate_recurring_request(created_at, enforce_paywindow, logger)
+			},
 		}
 	}
 
