@@ -129,6 +129,10 @@ impl<'a> StaticInvoiceBuilder<'a> {
 			return Err(Bolt12SemanticError::UnexpectedChain);
 		}
 
+		if offer.recurrence().is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
 		if payment_paths.is_empty()
 			|| held_htlc_available_paths.is_empty()
 			|| offer.paths().is_empty()
@@ -483,6 +487,8 @@ impl InvoiceContents {
 			node_id: Some(&self.signing_pubkey),
 			amount: None,
 			payment_hash: None,
+			invoice_recurrence_basetime: None,
+			invoice_recurrence_next_state: None,
 		};
 
 		let experimental_invoice = ExperimentalInvoiceTlvStreamRef {
@@ -682,6 +688,8 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 				held_htlc_available_paths,
 				payment_hash,
 				amount,
+				invoice_recurrence_basetime,
+				invoice_recurrence_next_state,
 			},
 			experimental_offer_tlv_stream,
 			ExperimentalInvoiceTlvStream {
@@ -695,6 +703,10 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 		}
 		if amount.is_some() {
 			return Err(Bolt12SemanticError::UnexpectedAmount);
+		}
+
+		if invoice_recurrence_basetime.is_some() || invoice_recurrence_next_state.is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
 		}
 
 		let payment_paths = construct_payment_paths(blindedpay, paths)?;
@@ -724,8 +736,14 @@ impl TryFrom<PartialInvoiceTlvStream> for InvoiceContents {
 			return Err(Bolt12SemanticError::UnexpectedChain);
 		}
 
+		let offer = OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?;
+
+		if offer.recurrence().is_some() {
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
 		Ok(InvoiceContents {
-			offer: OfferContents::try_from((offer_tlv_stream, experimental_offer_tlv_stream))?,
+			offer,
 			payment_paths,
 			held_htlc_available_paths,
 			created_at,
@@ -922,6 +940,11 @@ mod tests {
 					issuer: None,
 					quantity_max: None,
 					issuer_id: Some(&signing_pubkey),
+					recurrence_compulsory: None,
+					recurrence_optional: None,
+					recurrence_base: None,
+					recurrence_paywindow: None,
+					recurrence_limit: None,
 				},
 				InvoiceTlvStreamRef {
 					paths: Some(Iterable(
@@ -936,6 +959,8 @@ mod tests {
 					features: None,
 					node_id: Some(&signing_pubkey),
 					held_htlc_available_paths: Some(&paths),
+					invoice_recurrence_basetime: None,
+					invoice_recurrence_next_state: None,
 				},
 				SignatureTlvStreamRef { signature: Some(&invoice.signature()) },
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },

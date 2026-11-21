@@ -577,6 +577,7 @@ impl Refund {
 				.clone()
 				.map(|s| UntrustedString(string_truncate_safe(s, PAYER_NOTE_LIMIT))),
 			human_readable_name: None,
+			request_recurrence: None,
 		}
 	}
 }
@@ -806,6 +807,11 @@ impl RefundContents {
 			issuer: self.issuer.as_ref(),
 			quantity_max: None,
 			issuer_id: None,
+			recurrence_compulsory: None,
+			recurrence_optional: None,
+			recurrence_base: None,
+			recurrence_paywindow: None,
+			recurrence_limit: None,
 		};
 
 		let features = {
@@ -825,6 +831,10 @@ impl RefundContents {
 			payer_note: self.payer_note.as_ref(),
 			paths: self.paths.as_ref(),
 			offer_from_hrn: None,
+			recurrence_counter: None,
+			recurrence_start: None,
+			recurrence_cancel: None,
+			recurrence_prev_state: None,
 		};
 
 		let experimental_offer = ExperimentalOfferTlvStreamRef {
@@ -935,6 +945,11 @@ impl TryFrom<RefundTlvStream> for RefundContents {
 				issuer,
 				quantity_max,
 				issuer_id,
+				recurrence_compulsory,
+				recurrence_optional,
+				recurrence_base,
+				recurrence_paywindow,
+				recurrence_limit,
 			},
 			InvoiceRequestTlvStream {
 				chain,
@@ -945,6 +960,10 @@ impl TryFrom<RefundTlvStream> for RefundContents {
 				payer_note,
 				paths,
 				offer_from_hrn,
+				recurrence_counter,
+				recurrence_start,
+				recurrence_cancel,
+				recurrence_prev_state,
 			},
 			ExperimentalOfferTlvStream {
 				#[cfg(test)]
@@ -996,9 +1015,26 @@ impl TryFrom<RefundTlvStream> for RefundContents {
 			return Err(Bolt12SemanticError::UnexpectedIssuerSigningPubkey);
 		}
 
+		if recurrence_compulsory.is_some()
+			|| recurrence_optional.is_some()
+			|| recurrence_base.is_some()
+			|| recurrence_paywindow.is_some()
+			|| recurrence_limit.is_some()
+		{
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
+		}
+
 		if offer_from_hrn.is_some() {
 			// Only offers can be resolved using Human Readable Names
 			return Err(Bolt12SemanticError::UnexpectedHumanReadableName);
+		}
+
+		if recurrence_counter.is_some()
+			|| recurrence_start.is_some()
+			|| recurrence_cancel.is_some()
+			|| recurrence_prev_state.is_some()
+		{
+			return Err(Bolt12SemanticError::UnexpectedRecurrence);
 		}
 
 		let amount_msats = match amount {
@@ -1125,6 +1161,11 @@ mod tests {
 					issuer: None,
 					quantity_max: None,
 					issuer_id: None,
+					recurrence_compulsory: None,
+					recurrence_optional: None,
+					recurrence_base: None,
+					recurrence_paywindow: None,
+					recurrence_limit: None,
 				},
 				InvoiceRequestTlvStreamRef {
 					chain: None,
@@ -1135,6 +1176,10 @@ mod tests {
 					payer_note: None,
 					paths: None,
 					offer_from_hrn: None,
+					recurrence_counter: None,
+					recurrence_start: None,
+					recurrence_cancel: None,
+					recurrence_prev_state: None,
 				},
 				ExperimentalOfferTlvStreamRef { experimental_foo: None },
 				ExperimentalInvoiceRequestTlvStreamRef { experimental_bar: None },
