@@ -1142,6 +1142,22 @@ pub struct UserConfig {
 		        ChannelManager::pay_for_bolt12_invoice (being careful to avoid duplicative payments)."
 	)]
 	pub manually_handle_bolt12_invoices: bool,
+	/// Determines whether recurrence paywindow checks are enforced for inbound [`InvoiceRequest`]s.
+	///
+	/// By default, requests outside the paywindow are rejected. Set to `false` to allow
+	/// early and late requests, leaving the application responsible for tracking
+	/// recurrence state and enforcing paywindows.
+	///
+	/// All other [`InvoiceRequest`] checks still apply, including authentication,
+	/// recurrence limits, and amount validation.
+	///
+	/// This setting does not affect outbound requests or the settlement of issued invoices.
+	///
+	/// Default value: `true`
+	///
+	/// [`InvoiceRequest`]: crate::offers::invoice_request::InvoiceRequest
+	pub enforce_recurrence_paywindow: bool,
+
 	/// If this is set to `true`, dual-funded channels will be enabled.
 	///
 	/// Default value: `false`
@@ -1196,6 +1212,7 @@ impl Default for UserConfig {
 			accept_inbound_channels: true,
 			htlc_interception_flags: 0,
 			manually_handle_bolt12_invoices: false,
+			enforce_recurrence_paywindow: true,
 			enable_dual_funded_channels: false,
 			enable_htlc_hold: false,
 			hold_outbound_htlcs_at_next_hop: false,
@@ -1223,6 +1240,7 @@ impl Readable for UserConfig {
 			hold_outbound_htlcs_at_next_hop: Readable::read(reader)?,
 			enable_htlc_hold: Readable::read(reader)?,
 			reject_inbound_splices: Readable::read(reader)?,
+			enforce_recurrence_paywindow: Readable::read(reader)?,
 		})
 	}
 }

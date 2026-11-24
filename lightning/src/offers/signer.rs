@@ -13,6 +13,8 @@ use crate::ln::channelmanager::PaymentId;
 use crate::ln::inbound_payment::{ExpandedKey, IV_LEN};
 use crate::offers::merkle::TlvRecord;
 use crate::offers::nonce::Nonce;
+use crate::offers::offer::OfferId;
+use crate::offers::recurrence;
 use crate::util::ser::Writeable;
 use bitcoin::hashes::cmp::fixed_time_eq;
 use bitcoin::hashes::hmac::{Hmac, HmacEngine};
@@ -48,6 +50,20 @@ const WITH_ENCRYPTED_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[4; 16];
 // const OFFER_PAYMENT_ID_HMAC_INPUT: &[u8; 16] = &[5; 16];
 // const PAYMENT_HASH_HMAC_INPUT: &[u8; 16] = &[7; 16];
 // const PAYMENT_TLVS_HMAC_INPUT: &[u8; 16] = &[8; 16];
+
+// The encrypted basetime occupies the same eight bytes as its big-endian u64 encoding.
+const RECURRENCE_BASETIME_LEN: usize = 8;
+
+// Recurrence state is encoded as `encrypted_basetime || nonce || hmac`. It provides stateless
+// continuity for the automatic LDK payee flow and allows the payee to recover the period-0
+// basetime without storing it locally. State is not required by the wire format when a remote
+// invoice omits its next-state field, and it does not prove that the previous invoice was paid.
+const RECURRENCE_STATE_LEN: usize = RECURRENCE_BASETIME_LEN + Nonce::LENGTH + Sha256::LEN;
+const RECURRENCE_STATE_HMAC_INPUT: &[u8; 16] = &[9; 16];
+
+// Separates recurrence payer signing key derivation from both metadata-derived payer keys and
+// recurrence state tokens. This value must remain unique across offer-flow HMAC domains.
+const RECURRENCE_PAYER_KEYS_HMAC_INPUT: &[u8; 16] = &[10; 16];
 
 /// Message metadata which possibly is derived from [`MetadataMaterial`] such that it can be
 /// verified.
@@ -290,6 +306,24 @@ pub(super) fn derive_keys(nonce: Nonce, expanded_key: &ExpandedKey) -> Keypair {
 	Keypair::from_secret_key(&secp_ctx, &privkey)
 }
 
+/// Derives the payer signing keys for a recurring payment relationship.
+///
+/// The recurrence id is supplied by the payer's persistence layer and kept stable across all
+/// invoice requests belonging to the same recurrence. Binding the derivation to the offer id keeps
+/// accidental recurrence-id reuse across unrelated offers from producing the same payer pubkey.
+pub(super) fn derive_recurrence_payer_keys<T: secp256k1::Signing>(
+	recurrence_id: &recurrence::Id, offer_id: OfferId, expanded_key: &ExpandedKey,
+	secp_ctx: &Secp256k1<T>,
+) -> Keypair {
+	let mut hmac = expanded_key.hmac_for_offer();
+	hmac.input(RECURRENCE_PAYER_KEYS_HMAC_INPUT);
+	hmac.input(&offer_id.0);
+	hmac.input(&recurrence_id.0);
+
+	let privkey = SecretKey::from_slice(Hmac::from_engine(hmac).as_byte_array()).unwrap();
+	Keypair::from_secret_key(secp_ctx, &privkey)
+}
+
 /// Re-derives the payer signing keypair from the on-wire payer `metadata`.
 ///
 /// Performs the same derivation as keys created by [`Metadata::derive_from`] when using
@@ -431,6 +465,96 @@ fn verify_metadata<T: secp256k1::Signing>(
 			Err(())
 		}
 	}
+}
+
+/// Creates authenticated state for the next counter, binding it to the offer, payer, and start.
+///
+/// Encrypts the basetime so it can be recovered without local recurrence storage. The nonce
+/// must be fresh and must not be reused for other offer encryption. Counter overflow is rejected.
+pub(super) fn create_recurrence_next_state(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, basetime: u64, current_counter: u32,
+	start: Option<u32>, nonce: Nonce, expanded_key: &ExpandedKey,
+) -> Result<Vec<u8>, ()> {
+	let expected_counter = current_counter.checked_add(1).ok_or(())?;
+	let encrypted_basetime = expanded_key.crypt_for_offer(basetime.to_be_bytes(), nonce);
+	let hmac = recurrence_state_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		basetime,
+		expected_counter,
+		start,
+		expanded_key,
+	);
+
+	let mut state = Vec::with_capacity(RECURRENCE_STATE_LEN);
+	state.extend_from_slice(&encrypted_basetime);
+	state.extend_from_slice(nonce.as_slice());
+	state.extend_from_slice(hmac.as_byte_array());
+	Ok(state)
+}
+
+/// Authenticates echoed state for this request and recovers its period-zero basetime.
+///
+/// Rejects malformed tokens or changes to the bound offer, payer, counter, start, or basetime.
+/// The same valid request can be replayed: this check authenticates continuity but does not
+/// track prior use or establish whether the preceding invoice was paid.
+pub(super) fn verify_recurrence_prev_state(
+	prev_state: &[u8], offer_id: OfferId, payer_signing_pubkey: PublicKey, expected_counter: u32,
+	start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Result<u64, ()> {
+	if prev_state.len() != RECURRENCE_STATE_LEN {
+		return Err(());
+	}
+
+	let (encrypted_basetime, remaining) = prev_state.split_at(RECURRENCE_BASETIME_LEN);
+	let (nonce, hmac) = remaining.split_at(Nonce::LENGTH);
+	let encrypted_basetime: [u8; RECURRENCE_BASETIME_LEN] =
+		encrypted_basetime.try_into().map_err(|_| ())?;
+	let nonce = Nonce::try_from(nonce).expect("slice length is validated above");
+	let basetime = u64::from_be_bytes(expanded_key.crypt_for_offer(encrypted_basetime, nonce));
+	let expected_hmac = recurrence_state_hmac(
+		offer_id,
+		payer_signing_pubkey,
+		nonce,
+		basetime,
+		expected_counter,
+		start,
+		expanded_key,
+	);
+
+	if !fixed_time_eq(hmac, &expected_hmac.to_byte_array()) {
+		return Err(());
+	}
+
+	Ok(basetime)
+}
+
+/// Authenticates recurrence state with a distinct domain and an explicit start-presence marker.
+///
+/// Binding the next counter and payer prevents using state for a different request sequence;
+/// the presence marker distinguishes an omitted start from an explicit zero.
+fn recurrence_state_hmac(
+	offer_id: OfferId, payer_signing_pubkey: PublicKey, nonce: Nonce, basetime: u64,
+	expected_counter: u32, start: Option<u32>, expanded_key: &ExpandedKey,
+) -> Hmac<Sha256> {
+	let mut hmac = expanded_key.hmac_for_offer();
+	hmac.input(RECURRENCE_STATE_HMAC_INPUT);
+	hmac.input(&offer_id.0);
+	hmac.input(&payer_signing_pubkey.serialize());
+	hmac.input(nonce.as_slice());
+	hmac.input(&basetime.to_be_bytes());
+	hmac.input(&expected_counter.to_be_bytes());
+
+	match start {
+		Some(start) => {
+			hmac.input(&[1]);
+			hmac.input(&start.to_be_bytes());
+		},
+		None => hmac.input(&[0]),
+	}
+
+	Hmac::from_engine(hmac)
 }
 
 fn hmac_for_message<'a>(
