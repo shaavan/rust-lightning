@@ -1767,6 +1767,7 @@ mod tests {
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
+	use crate::offers::recurrence;
 	use crate::offers::test_utils::*;
 	use crate::types::features::{InvoiceRequestFeatures, OfferFeatures};
 	use crate::types::string::{PrintableString, UntrustedString};
@@ -1777,6 +1778,508 @@ mod tests {
 	use core::num::NonZeroU64;
 	#[cfg(feature = "std")]
 	use core::time::Duration;
+
+	/// Supplies a schedule whose optional recurrence can also be used for ordinary requests.
+	fn request_recurrence_terms() -> recurrence::Recurrence {
+		recurrence::Recurrence {
+			requirement: recurrence::Requirement::Optional,
+			period: recurrence::Period::Days(core::num::NonZeroU32::new(1).unwrap()),
+			anchor: recurrence::Anchor::FirstInvoice,
+			paywindow: recurrence::Paywindow::Default,
+			limit: recurrence::Limit::Unbounded,
+		}
+	}
+
+	/// Constructs recurring requests directly because the single-payment offer API rejects compulsory recurrence.
+	fn recurrence_request_builder<'a, 'b>(
+		offer: &'a crate::offers::offer::Offer, secp_ctx: &'b Secp256k1<secp256k1::All>,
+	) -> super::InvoiceRequestBuilder<'a, 'b, secp256k1::All> {
+		super::InvoiceRequestBuilder::deriving_signing_pubkey(
+			offer,
+			&ExpandedKey::new([42; 32]),
+			Nonce::from_entropy_source(&FixedEntropy {}),
+			secp_ctx,
+			PaymentId([1; 32]),
+		)
+	}
+
+	/// Signed requests preserve zero start indices, opaque state, and cancellation on both schedules.
+	#[test]
+	fn recurrence_request_roundtrip() {
+		let secp_ctx = Secp256k1::new();
+		for anchor in [
+			recurrence::Anchor::FirstInvoice,
+			recurrence::Anchor::Fixed { basetime: 100, proportional: false },
+		] {
+			let mut terms = request_recurrence_terms();
+			terms.requirement = recurrence::Requirement::Compulsory;
+			terms.anchor = anchor;
+			let offer = OfferBuilder::new(recipient_pubkey())
+				.amount_msats(1000)
+				.recurrence(terms)
+				.build()
+				.unwrap();
+			let start = match anchor {
+				recurrence::Anchor::FirstInvoice => None,
+				_ => Some(0),
+			};
+			for (counter, state, cancel) in
+				[(0, None, false), (1, Some(vec![]), false), (2, Some(vec![0, 255, 42]), true)]
+			{
+				let request = recurrence_request_builder(&offer, &secp_ctx)
+					.recurrence(counter, start, state.clone(), cancel)
+					.unwrap()
+					.build_and_sign()
+					.unwrap();
+				let fields =
+					recurrence::RequestFields { counter, start, prev_state: state, cancel };
+				assert_eq!(request.request_recurrence(), Some(&fields));
+				let parsed = InvoiceRequest::try_from(request.encode()).unwrap();
+				assert_eq!(parsed.request_recurrence(), Some(&fields));
+				assert_eq!(parsed.payer_signing_pubkey(), request.payer_signing_pubkey());
+			}
+		}
+	}
+
+	/// Builders and parsers enforce the same recurrence presence, anchor, and period-limit rules.
+	#[test]
+	fn recurrence_request_invalid_terms() {
+		let secp_ctx = Secp256k1::new();
+		let optional = request_recurrence_terms();
+		let mut compulsory = optional;
+		compulsory.requirement = recurrence::Requirement::Compulsory;
+		let mut fixed = compulsory;
+		fixed.anchor = recurrence::Anchor::Fixed { basetime: 100, proportional: false };
+		fixed.limit = recurrence::Limit::Bounded(core::num::NonZeroU32::new(3).unwrap());
+		let first =
+			recurrence::RequestFields { counter: 0, start: None, prev_state: None, cancel: false };
+		for (terms, fields, valid) in [
+			(None, None, true),
+			(None, Some(first.clone()), false),
+			(Some(optional), None, true),
+			(Some(compulsory), None, false),
+			(Some(compulsory), Some(first.clone()), true),
+			(
+				Some(compulsory),
+				Some(recurrence::RequestFields { start: Some(0), ..first.clone() }),
+				false,
+			),
+			(
+				Some(compulsory),
+				Some(recurrence::RequestFields { prev_state: Some(vec![]), ..first.clone() }),
+				false,
+			),
+			(
+				Some(compulsory),
+				Some(recurrence::RequestFields { cancel: true, ..first.clone() }),
+				false,
+			),
+			(Some(fixed), Some(first.clone()), false),
+			// The limit is inclusive: period three is allowed, period four is not.
+			(
+				Some(fixed),
+				Some(recurrence::RequestFields { counter: 1, start: Some(2), ..first.clone() }),
+				true,
+			),
+			(
+				Some(fixed),
+				Some(recurrence::RequestFields { counter: 2, start: Some(2), ..first.clone() }),
+				false,
+			),
+			(
+				Some(fixed),
+				Some(recurrence::RequestFields { counter: 1, start: Some(u32::MAX), ..first }),
+				false,
+			),
+		] {
+			let offer = match terms {
+				Some(terms) => OfferBuilder::new(recipient_pubkey())
+					.amount_msats(1000)
+					.recurrence(terms)
+					.build()
+					.unwrap(),
+				None => OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap(),
+			};
+			let make_request = || {
+				let mut builder = recurrence_request_builder(&offer, &secp_ctx);
+				// Inject invalid combinations so the final builder check is exercised too.
+				builder.invoice_request.request_recurrence = fields.clone();
+				builder
+			};
+			let built = make_request().build_and_sign();
+			let parsed =
+				InvoiceRequest::try_from(make_request().build_unchecked_and_sign().encode());
+			if valid {
+				assert!(built.is_ok());
+				assert!(parsed.is_ok());
+			} else {
+				assert_eq!(built.err(), Some(Bolt12SemanticError::InvalidRecurrence));
+				assert_eq!(
+					parsed.err(),
+					Some(Bolt12ParseError::InvalidSemantics(
+						Bolt12SemanticError::InvalidRecurrence
+					))
+				);
+			}
+		}
+	}
+
+	/// Recurrence detail TLVs require a counter, and request zero cannot carry state or cancellation.
+	#[test]
+	fn recurrence_request_field_presence() {
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.recurrence(request_recurrence_terms())
+			.build()
+			.unwrap();
+		let request = recurrence_request_builder(&offer, &secp_ctx).build_and_sign().unwrap();
+		let state = vec![42];
+		for (counter, start, previous, cancel) in [
+			(None, Some(0), None, None),
+			(None, None, Some(&state), None),
+			(None, None, None, Some(&())),
+			(Some(0), None, Some(&state), None),
+			(Some(0), None, None, Some(&())),
+		] {
+			let mut stream = request.as_tlv_stream();
+			stream.2.recurrence_counter = counter;
+			stream.2.recurrence_start = start;
+			stream.2.recurrence_prev_state = previous;
+			stream.2.recurrence_cancel = cancel;
+			assert_eq!(
+				InvoiceRequest::try_from(stream.encode()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidRecurrence))
+			);
+		}
+		for (previous, cancel) in [(Some(state), false), (None, true)] {
+			assert!(recurrence_request_builder(&offer, &secp_ctx)
+				.recurrence(0, None, previous, cancel)
+				.is_err());
+		}
+	}
+
+	/// Counter/start zero and cancellation have empty payloads; opaque state is not length-prefixed inside its TLV.
+	#[test]
+	fn recurrence_request_wire_records() {
+		let secp_ctx = Secp256k1::new();
+		let mut terms = request_recurrence_terms();
+		terms.requirement = recurrence::Requirement::Compulsory;
+		terms.anchor = recurrence::Anchor::Fixed { basetime: 100, proportional: false };
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.recurrence(terms)
+			.build()
+			.unwrap();
+		for (counter, state, cancel, expected) in [
+			(0, None, false, &[92, 0, 93, 0][..]),
+			(1, Some(vec![42, 43]), true, &[92, 1, 1, 93, 0, 94, 0, 96, 2, 42, 43]),
+		] {
+			let request = recurrence_request_builder(&offer, &secp_ctx)
+				.recurrence(counter, Some(0), state, cancel)
+				.unwrap()
+				.build_and_sign()
+				.unwrap();
+			assert!(request.as_tlv_stream().2.encode().ends_with(expected));
+			assert_eq!(
+				InvoiceRequest::try_from(request.encode()).unwrap().request_recurrence(),
+				request.request_recurrence()
+			);
+		}
+	}
+
+	/// Request recurrence integers must be canonical and the cancellation payload must be empty.
+	#[test]
+	fn recurrence_request_malformed_records() {
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.recurrence(request_recurrence_terms())
+			.build()
+			.unwrap();
+		let request = recurrence_request_builder(&offer, &secp_ctx).build_unchecked();
+		for record in [
+			&[92, 1, 0][..],         // Zero counters use an empty payload, not a zero byte.
+			&[92, 5, 1, 0, 0, 0, 0], // Counter exceeds u32.
+			&[92, 1, 1, 93, 1, 0],   // Noncanonical zero start index.
+			&[92, 1, 1, 94, 1, 0],   // Cancellation has no payload.
+		] {
+			let mut bytes = request.contents.as_tlv_stream().encode();
+			bytes.extend_from_slice(record);
+			assert!(
+				matches!(InvoiceRequest::try_from(bytes), Err(Bolt12ParseError::Decode(_))),
+				"{:?}",
+				record
+			);
+		}
+	}
+
+	/// Cancellation may omit payment fields, while supplied values and ordinary payments remain checked.
+	#[test]
+	fn recurrence_cancellation_amount_and_quantity() {
+		let secp_ctx = Secp256k1::new();
+		for offer_amount in [None, Some(1000)] {
+			for supported_quantity in
+				[Quantity::One, Quantity::Bounded(NonZeroU64::new(3).unwrap())]
+			{
+				let make_offer = || {
+					crate::offers::offer::OfferBuilder::new(recipient_pubkey())
+						.description("subscription".into())
+						.supported_quantity(supported_quantity)
+						.recurrence(request_recurrence_terms())
+				};
+				let offer = match offer_amount {
+					Some(amount) => make_offer().amount_msats(amount).build().unwrap(),
+					None => make_offer().build().unwrap(),
+				};
+				let quantity_error = if supported_quantity == Quantity::One {
+					Bolt12SemanticError::UnexpectedQuantity
+				} else {
+					Bolt12SemanticError::InvalidQuantity
+				};
+				let supplied_quantity_error = if supported_quantity == Quantity::One {
+					Some(Bolt12SemanticError::UnexpectedQuantity)
+				} else {
+					None
+				};
+				let insufficient_error = if supported_quantity == Quantity::One {
+					Some(Bolt12SemanticError::UnexpectedQuantity)
+				} else if offer_amount.is_some() {
+					Some(Bolt12SemanticError::InsufficientAmount)
+				} else {
+					None
+				};
+				for (amount, quantity, error) in [
+					(None, None, None),
+					(Some(2000), None, None),
+					(None, Some(0), Some(quantity_error.clone())),
+					(None, Some(4), Some(quantity_error)),
+					(None, Some(2), supplied_quantity_error.clone()),
+					(Some(2000), Some(2), supplied_quantity_error),
+					(Some(1500), Some(2), insufficient_error),
+					(Some(MAX_VALUE_MSAT + 1), None, Some(Bolt12SemanticError::InvalidAmount)),
+				] {
+					let make_request = || {
+						let mut builder = recurrence_request_builder(&offer, &secp_ctx)
+							.recurrence(1, None, None, true)
+							.unwrap();
+						builder.invoice_request.amount_msats = amount;
+						builder.invoice_request.quantity = quantity;
+						builder
+					};
+					let built = make_request().build_and_sign();
+					let parsed = InvoiceRequest::try_from(
+						make_request().build_unchecked_and_sign().encode(),
+					);
+					if let Some(error) = error {
+						assert_eq!(built.err(), Some(error.clone()));
+						assert_eq!(parsed.err(), Some(Bolt12ParseError::InvalidSemantics(error)));
+					} else {
+						let request = built.unwrap();
+						assert!(parsed.is_ok());
+						if offer_amount.is_none() && amount.is_none() {
+							assert_eq!(request.amount_msats(), None);
+						}
+					}
+				}
+				// Omitting fields on an ordinary payment must still fail when the offer requires them.
+				if offer_amount.is_none() || supported_quantity != Quantity::One {
+					let error = if offer_amount.is_none() {
+						Bolt12SemanticError::MissingAmount
+					} else {
+						Bolt12SemanticError::MissingQuantity
+					};
+					assert_eq!(
+						recurrence_request_builder(&offer, &secp_ctx)
+							.recurrence(1, None, None, false)
+							.unwrap()
+							.build_and_sign()
+							.err(),
+						Some(error)
+					);
+				}
+			}
+		}
+	}
+
+	/// Only a joining payment may defer its minimum until the invoice creation time is known.
+	#[test]
+	fn recurrence_joining_amount_validation() {
+		let secp_ctx = Secp256k1::new();
+		let mut terms = request_recurrence_terms();
+		terms.requirement = recurrence::Requirement::Compulsory;
+		terms.anchor = recurrence::Anchor::Fixed { basetime: 100, proportional: true };
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.recurrence(terms)
+			.build()
+			.unwrap();
+		let first = recurrence_request_builder(&offer, &secp_ctx)
+			.recurrence(0, Some(0), None, false)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(first.amount_msats(), None);
+		let first = recurrence_request_builder(&offer, &secp_ctx)
+			.recurrence(0, Some(0), None, false)
+			.unwrap()
+			.amount_msats(1)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(first.amount_msats(), Some(1));
+		assert_eq!(InvoiceRequest::try_from(first.encode()).unwrap().amount_msats(), Some(1));
+		for (counter, cancel) in [(1, false), (1, true)] {
+			assert_eq!(
+				recurrence_request_builder(&offer, &secp_ctx)
+					.recurrence(counter, Some(0), None, cancel)
+					.unwrap()
+					.amount_msats(1)
+					.err(),
+				Some(Bolt12SemanticError::InsufficientAmount)
+			);
+		}
+		let followup = recurrence_request_builder(&offer, &secp_ctx)
+			.recurrence(1, Some(0), None, false)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(followup.amount_msats(), Some(1000));
+		assert!(recurrence_request_builder(&offer, &secp_ctx)
+			.recurrence(0, Some(0), None, false)
+			.unwrap()
+			.amount_msats(MAX_VALUE_MSAT + 1)
+			.is_err());
+	}
+
+	/// Deferring the joining minimum does not permit quantity multiplication to overflow.
+	#[test]
+	fn recurrence_joining_quantity_overflow() {
+		let secp_ctx = Secp256k1::new();
+		let mut terms = request_recurrence_terms();
+		terms.requirement = recurrence::Requirement::Compulsory;
+		terms.anchor = recurrence::Anchor::Fixed { basetime: 100, proportional: true };
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.supported_quantity(Quantity::Unbounded)
+			.recurrence(terms)
+			.build()
+			.unwrap();
+		let make_request = || {
+			recurrence_request_builder(&offer, &secp_ctx)
+				.recurrence(0, Some(0), None, false)
+				.unwrap()
+				.quantity(u64::MAX)
+				.unwrap()
+		};
+		assert_eq!(make_request().build_and_sign().err(), Some(Bolt12SemanticError::InvalidAmount));
+		assert_eq!(
+			InvoiceRequest::try_from(make_request().build_unchecked_and_sign().encode()).err(),
+			Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidAmount))
+		);
+	}
+
+	/// Offer expiry prevents new subscriptions, but does not stop existing payments or cancellation.
+	#[cfg(feature = "std")]
+	#[test]
+	fn recurrence_request_expiry() {
+		let secp_ctx = Secp256k1::new();
+		let offer = OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.absolute_expiry(Duration::from_secs(0))
+			.recurrence(request_recurrence_terms())
+			.build()
+			.unwrap();
+		assert_eq!(
+			recurrence_request_builder(&offer, &secp_ctx).build_and_sign().err(),
+			Some(Bolt12SemanticError::AlreadyExpired)
+		);
+		assert_eq!(
+			recurrence_request_builder(&offer, &secp_ctx)
+				.recurrence(0, None, None, false)
+				.unwrap()
+				.build_and_sign()
+				.err(),
+			Some(Bolt12SemanticError::AlreadyExpired)
+		);
+		for cancel in [false, true] {
+			assert!(recurrence_request_builder(&offer, &secp_ctx)
+				.recurrence(1, None, None, cancel)
+				.unwrap()
+				.build_and_sign()
+				.is_ok());
+		}
+	}
+
+	/// Verified requests copy recurrence state into the payer fields used by payment contexts.
+	#[test]
+	fn recurrence_verified_payer_fields() {
+		let secp_ctx = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce::from_entropy_source(&FixedEntropy {});
+		let offer = crate::offers::offer::OfferBuilder::deriving_signing_pubkey(
+			recipient_pubkey(),
+			&expanded_key,
+			nonce,
+			&secp_ctx,
+		)
+		.amount_msats(1000)
+		.recurrence(request_recurrence_terms())
+		.build()
+		.unwrap();
+		let request = recurrence_request_builder(&offer, &secp_ctx)
+			.recurrence(1, None, Some(vec![42]), false)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		let expected = request.request_recurrence().cloned();
+		let verified = request.verify_using_metadata(&expanded_key, &secp_ctx).unwrap();
+		let fields = match verified {
+			super::InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => request.fields(),
+			super::InvoiceRequestVerifiedFromOffer::ExplicitKeys(request) => request.fields(),
+		};
+		assert_eq!(fields.request_recurrence, expected);
+		assert_eq!(PayerFields::read(&mut fields.encode().as_slice()).unwrap(), fields);
+	}
+
+	/// Payment contexts retain legacy fields and encode recurrence using distinct optional TLVs.
+	#[test]
+	fn recurrence_payer_fields_persistence() {
+		let mut fields = PayerFields {
+			payer_signing_pubkey: payer_pubkey(),
+			quantity: Some(2),
+			payer_note_truncated: None,
+			human_readable_name: None,
+			request_recurrence: None,
+		};
+		let mut body = vec![0, 33];
+		body.extend_from_slice(&payer_pubkey().serialize());
+		body.extend_from_slice(&[2, 1, 2]);
+		let mut legacy = vec![body.len() as u8];
+		legacy.extend_from_slice(&body);
+		assert_eq!(fields.encode(), legacy);
+		assert_eq!(PayerFields::read(&mut legacy.as_slice()).unwrap(), fields);
+		fields.request_recurrence = Some(recurrence::RequestFields {
+			counter: 1,
+			start: Some(0),
+			prev_state: Some(vec![42, 43]),
+			cancel: true,
+		});
+		body.extend_from_slice(&[3, 1, 1, 5, 0, 7, 0, 9, 2, 42, 43]);
+		let mut expected = vec![body.len() as u8];
+		expected.extend_from_slice(&body);
+		assert_eq!(fields.encode(), expected);
+		assert_eq!(PayerFields::read(&mut expected.as_slice()).unwrap(), fields);
+		for detail in [&[5, 0][..], &[7, 0], &[9, 1, 42], &[3, 0, 7, 0], &[3, 0, 9, 1, 42]] {
+			let mut invalid = legacy.clone();
+			invalid[0] += detail.len() as u8;
+			invalid.extend_from_slice(detail);
+			assert_eq!(
+				PayerFields::read(&mut invalid.as_slice()).err(),
+				Some(DecodeError::InvalidValue)
+			);
+		}
+	}
 
 	#[test]
 	fn builds_invoice_request_with_defaults() {

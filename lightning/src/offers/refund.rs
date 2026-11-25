@@ -1123,6 +1123,31 @@ mod tests {
 		}
 	}
 
+	/// Refunds reject request recurrence fields even when they would be valid on a recurring request.
+	#[test]
+	fn recurrence_request_fields_rejected_on_refunds() {
+		let refund =
+			RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap().build().unwrap();
+		let state = vec![42];
+		for (counter, start, previous, cancel) in [
+			(Some(0), None, None, None),
+			(None, Some(0), None, None),
+			(None, None, Some(&state), None),
+			(None, None, None, Some(&())),
+			(Some(1), Some(0), Some(&state), Some(&())),
+		] {
+			let mut stream = refund.as_tlv_stream();
+			stream.2.recurrence_counter = counter;
+			stream.2.recurrence_start = start;
+			stream.2.recurrence_prev_state = previous;
+			stream.2.recurrence_cancel = cancel;
+			assert_eq!(
+				Refund::try_from(stream.to_bytes()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence))
+			);
+		}
+	}
+
 	/// Refunds reject every recurrence TLV, even when no recurrence period accompanies it.
 	#[test]
 	fn recurrence_fields_rejected_on_refunds() {
