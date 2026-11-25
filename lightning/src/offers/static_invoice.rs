@@ -869,6 +869,24 @@ mod tests {
 		)
 	}
 
+	/// Static invoices reject invoice recurrence records even when their offer is non-recurring.
+	#[test]
+	fn recurrence_invoice_fields_rejected_on_static_invoices() {
+		let invoice = invoice();
+		let state = vec![42];
+		for (basetime, next_state) in
+			[(Some(0), None), (None, Some(&state)), (Some(1000), Some(&state))]
+		{
+			let mut stream = invoice.as_tlv_stream();
+			stream.1.invoice_recurrence_basetime = basetime;
+			stream.1.invoice_recurrence_next_state = next_state;
+			assert_eq!(
+				StaticInvoice::try_from(tlv_stream_to_bytes(&stream)).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence))
+			);
+		}
+	}
+
 	/// Static invoices cannot represent either optional or compulsory recurrence.
 	#[test]
 	fn recurrence_rejected_on_static_invoices() {

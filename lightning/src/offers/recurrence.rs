@@ -848,4 +848,32 @@ mod tests {
 		terms.anchor = Anchor::FirstInvoice;
 		assert_eq!(Recurrence::read(&mut terms.encode().as_slice()).unwrap(), terms);
 	}
+
+	/// The first invoice establishes the basetime. Later invoices must recover it unless the
+	/// offer fixes it.
+	#[test]
+	fn recurrence_resolve_basetime() {
+		for counter in [0, 1] {
+			let request = RequestFields { counter, start: None, prev_state: None, cancel: false };
+			for recovered in [None, Some(1000)] {
+				assert_eq!(
+					request.resolve_basetime(
+						Anchor::Fixed { basetime: 500, proportional: false },
+						1050,
+						recovered
+					),
+					Ok(500)
+				);
+				let expected = if counter == 0 {
+					Ok(1050)
+				} else {
+					recovered.ok_or(Bolt12SemanticError::InvalidMetadata)
+				};
+				assert_eq!(
+					request.resolve_basetime(Anchor::FirstInvoice, 1050, recovered),
+					expected
+				);
+			}
+		}
+	}
 }

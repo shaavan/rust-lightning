@@ -2065,6 +2065,7 @@ mod tests {
 	};
 	use crate::offers::parse::{Bolt12ParseError, Bolt12SemanticError};
 	use crate::offers::payer::PayerTlvStreamRef;
+	use crate::offers::recurrence;
 	use crate::offers::test_utils::*;
 	use crate::prelude::*;
 	use crate::types::features::{Bolt12InvoiceFeatures, InvoiceRequestFeatures, OfferFeatures};
@@ -2091,6 +2092,417 @@ mod tests {
 			self.3.write(&mut buffer).unwrap();
 			self.4.write(&mut buffer).unwrap();
 			buffer
+		}
+	}
+
+	/// Supplies a fixed-length schedule so invoice amounts have simple, independent expectations.
+	fn invoice_recurrence_terms(anchor: recurrence::Anchor) -> recurrence::Recurrence {
+		recurrence::Recurrence {
+			requirement: recurrence::Requirement::Compulsory,
+			period: recurrence::Period::Seconds(core::num::NonZeroU32::new(100).unwrap()),
+			anchor,
+			paywindow: recurrence::Paywindow::Default,
+			limit: recurrence::Limit::Unbounded,
+		}
+	}
+
+	/// Builds a signed recurring request without using the single-payment offer API.
+	fn recurring_invoice_request(
+		terms: recurrence::Recurrence, counter: u32, start: Option<u32>, cancel: bool,
+	) -> crate::offers::invoice_request::InvoiceRequest {
+		let secp_ctx = Secp256k1::new();
+		let offer = crate::offers::offer::OfferBuilder::new(recipient_pubkey())
+			.amount_msats(1000)
+			.recurrence(terms)
+			.build()
+			.unwrap();
+		crate::offers::invoice_request::InvoiceRequestBuilder::deriving_signing_pubkey(
+			&offer,
+			&ExpandedKey::new([42; 32]),
+			Nonce::from_entropy_source(&FixedEntropy {}),
+			&secp_ctx,
+			PaymentId([1; 32]),
+		)
+		.recurrence(counter, start, None, cancel)
+		.unwrap()
+		.build_and_sign()
+		.unwrap()
+	}
+
+	/// Attaches optional issuer state before signing so round trips exercise a valid invoice
+	/// signature.
+	fn sign_recurring_invoice(
+		request: &crate::offers::invoice_request::InvoiceRequest, created_at: u64,
+		next_state: Option<Vec<u8>>,
+	) -> Bolt12Invoice {
+		let mut builder: super::InvoiceBuilder<super::ExplicitSigningPubkey> = request
+			.respond_with_no_std(payment_paths(), payment_hash(), Duration::from_secs(created_at))
+			.unwrap()
+			.into();
+		builder.invoice.fields_mut().invoice_recurrence.as_mut().unwrap().next_state = next_state;
+		builder.build().unwrap().sign(recipient_sign).unwrap()
+	}
+
+	/// First invoices establish their anchor; fixed schedules retain theirs on initial and later
+	/// invoices.
+	#[test]
+	fn recurrence_invoice_roundtrip() {
+		for (anchor, counter, start, basetime) in [
+			(recurrence::Anchor::FirstInvoice, 0, None, 1025),
+			(recurrence::Anchor::Fixed { basetime: 1000, proportional: false }, 0, Some(2), 1000),
+			(recurrence::Anchor::Fixed { basetime: 1000, proportional: false }, 1, Some(2), 1000),
+		] {
+			let request =
+				recurring_invoice_request(invoice_recurrence_terms(anchor), counter, start, false);
+			for next_state in [None, Some(vec![]), Some(vec![0, 42, 255])] {
+				let invoice = sign_recurring_invoice(&request, 1025, next_state.clone());
+				let expected = recurrence::InvoiceFields { basetime, next_state };
+				assert_eq!(invoice.invoice_recurrence(), Some(&expected));
+				assert_eq!(invoice.amount_msats(), 1000);
+				assert_eq!(
+					Bolt12Invoice::try_from(invoice.encode()).unwrap().invoice_recurrence(),
+					Some(&expected)
+				);
+				assert_eq!(
+					UnsignedBolt12Invoice::try_from(invoice.contents.as_tlv_stream().encode())
+						.unwrap()
+						.invoice_recurrence(),
+					Some(&expected)
+				);
+			}
+		}
+	}
+
+	/// Invoices require recurrence fields matching the request and cannot carry state without a
+	/// basetime.
+	#[test]
+	fn recurrence_invoice_invalid_fields() {
+		for anchor in [
+			recurrence::Anchor::FirstInvoice,
+			recurrence::Anchor::Fixed { basetime: 1000, proportional: false },
+		] {
+			let start = if anchor == recurrence::Anchor::FirstInvoice { None } else { Some(0) };
+			let request =
+				recurring_invoice_request(invoice_recurrence_terms(anchor), 0, start, false);
+			let invoice = sign_recurring_invoice(&request, 1025, None);
+			let state = vec![42];
+			for (basetime, next_state) in [(None, None), (None, Some(&state)), (Some(999), None)] {
+				let mut stream = invoice.as_tlv_stream();
+				stream.3.invoice_recurrence_basetime = basetime;
+				stream.3.invoice_recurrence_next_state = next_state;
+				assert_eq!(
+					Bolt12Invoice::try_from(stream.to_bytes()).err(),
+					Some(Bolt12ParseError::InvalidSemantics(
+						Bolt12SemanticError::InvalidRecurrence
+					))
+				);
+			}
+		}
+	}
+
+	/// Cancellation cannot create an invoice or be accepted as the request behind a payable
+	/// invoice.
+	#[test]
+	fn recurrence_cancellation_invoice_rejected() {
+		let terms = invoice_recurrence_terms(recurrence::Anchor::Fixed {
+			basetime: 1000,
+			proportional: false,
+		});
+		let cancellation = recurring_invoice_request(terms, 1, Some(0), true);
+		assert_eq!(
+			cancellation
+				.respond_with_no_std(payment_paths(), payment_hash(), Duration::from_secs(1125))
+				.err(),
+			Some(Bolt12SemanticError::UnexpectedRecurrence)
+		);
+		let request = recurring_invoice_request(terms, 1, Some(0), false);
+		let invoice = sign_recurring_invoice(&request, 1125, None);
+		let mut stream = invoice.as_tlv_stream();
+		stream.2.recurrence_cancel = Some(&());
+		assert_eq!(
+			Bolt12Invoice::try_from(stream.to_bytes()).err(),
+			Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence))
+		);
+	}
+
+	/// Compact basetime and raw next-state encodings are pinned independently of their readers.
+	#[test]
+	fn recurrence_invoice_wire_records() {
+		for (basetime, next_state, expected) in [
+			(0, None, &[177, 0][..]),
+			(256, Some(vec![]), &[177, 2, 1, 0, 178, 0]),
+			(256, Some(vec![42, 43]), &[177, 2, 1, 0, 178, 2, 42, 43]),
+		] {
+			let terms = invoice_recurrence_terms(recurrence::Anchor::Fixed {
+				basetime,
+				proportional: false,
+			});
+			let request = recurring_invoice_request(terms, 0, Some(0), false);
+			let invoice = sign_recurring_invoice(&request, basetime, next_state);
+			assert!(invoice.as_tlv_stream().3.encode().ends_with(expected));
+			assert!(Bolt12Invoice::try_from(invoice.encode()).is_ok());
+		}
+	}
+
+	/// Invoice basetimes reject leading zeros and values wider than a u64.
+	#[test]
+	fn recurrence_invoice_malformed_basetime() {
+		let terms = invoice_recurrence_terms(recurrence::Anchor::Fixed {
+			basetime: 1000,
+			proportional: false,
+		});
+		let request = recurring_invoice_request(terms, 0, Some(0), false);
+		let invoice = sign_recurring_invoice(&request, 1025, None);
+		let mut stream = invoice.as_tlv_stream();
+		stream.3.invoice_recurrence_basetime = None;
+		for record in [&[177, 1, 0][..], &[177, 9, 1, 0, 0, 0, 0, 0, 0, 0, 0]] {
+			let mut bytes = Vec::new();
+			stream.0.write(&mut bytes).unwrap();
+			stream.1.write(&mut bytes).unwrap();
+			stream.2.write(&mut bytes).unwrap();
+			stream.3.write(&mut bytes).unwrap();
+			bytes.extend_from_slice(record);
+			stream.4.write(&mut bytes).unwrap();
+			assert!(matches!(Bolt12Invoice::try_from(bytes), Err(Bolt12ParseError::Decode(_))));
+		}
+	}
+
+	/// Joining discounts use the selected period and the invoice time, even when parsed much later.
+	#[test]
+	fn recurrence_invoice_proportional_amount() {
+		let terms = invoice_recurrence_terms(recurrence::Anchor::Fixed {
+			basetime: 1000,
+			proportional: true,
+		});
+		let request = recurring_invoice_request(terms, 0, Some(2), false);
+		for (created_at, amount) in [(1199, 1000), (1200, 1000), (1225, 750), (1299, 10)] {
+			let invoice = sign_recurring_invoice(&request, created_at, None);
+			assert_eq!(invoice.amount_msats(), amount);
+			assert_eq!(Bolt12Invoice::try_from(invoice.encode()).unwrap().amount_msats(), amount);
+			let mut stream = invoice.as_tlv_stream();
+			stream.3.amount = Some(amount + 1);
+			assert_eq!(
+				Bolt12Invoice::try_from(stream.to_bytes()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidAmount))
+			);
+		}
+		// A follow-up uses the full price even when issued partway through its period.
+		let followup = recurring_invoice_request(terms, 1, Some(2), false);
+		assert_eq!(sign_recurring_invoice(&followup, 1325, None).amount_msats(), 1000);
+	}
+
+	/// Explicit amounts must cover the joining price, and quantity is multiplied before rounding.
+	#[test]
+	fn recurrence_invoice_requested_amount_and_quantity() {
+		let secp_ctx = Secp256k1::new();
+		let terms = invoice_recurrence_terms(recurrence::Anchor::Fixed {
+			basetime: 1000,
+			proportional: true,
+		});
+		let offer = crate::offers::offer::OfferBuilder::new(recipient_pubkey())
+			.amount_msats(101)
+			.supported_quantity(Quantity::Unbounded)
+			.recurrence(terms)
+			.build()
+			.unwrap();
+		let make_request = || {
+			crate::offers::invoice_request::InvoiceRequestBuilder::deriving_signing_pubkey(
+				&offer,
+				&ExpandedKey::new([42; 32]),
+				Nonce::from_entropy_source(&FixedEntropy {}),
+				&secp_ctx,
+				PaymentId([1; 32]),
+			)
+			.recurrence(0, Some(0), None, false)
+			.unwrap()
+			.quantity(3)
+			.unwrap()
+		};
+		let request = make_request().build_and_sign().unwrap();
+		// Half of 303 rounds to 152; rounding each item first would incorrectly charge 153.
+		assert_eq!(sign_recurring_invoice(&request, 1050, None).amount_msats(), 152);
+		for amount in [152, 200] {
+			let request = make_request().amount_msats(amount).unwrap().build_and_sign().unwrap();
+			let invoice = sign_recurring_invoice(&request, 1050, None);
+			assert_eq!(invoice.amount_msats(), amount);
+			assert_eq!(Bolt12Invoice::try_from(invoice.encode()).unwrap().amount_msats(), amount);
+			// Matching an explicit request amount cannot bypass the minimum price.
+			let mut stream = invoice.as_tlv_stream();
+			stream.2.amount = Some(151);
+			stream.3.amount = Some(151);
+			assert_eq!(
+				Bolt12Invoice::try_from(stream.to_bytes()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InsufficientAmount))
+			);
+		}
+		let request = make_request().amount_msats(151).unwrap().build_and_sign().unwrap();
+		assert_eq!(
+			request
+				.respond_with_no_std(payment_paths(), payment_hash(), Duration::from_secs(1050))
+				.err(),
+			Some(Bolt12SemanticError::InsufficientAmount)
+		);
+	}
+
+	/// A follow-up with a first-invoice anchor cannot reset its basetime when previous state is
+	/// unavailable.
+	#[test]
+	fn recurrence_invoice_requires_recovered_basetime() {
+		let request = recurring_invoice_request(
+			invoice_recurrence_terms(recurrence::Anchor::FirstInvoice),
+			1,
+			None,
+			false,
+		);
+		assert_eq!(
+			request
+				.respond_with_no_std(payment_paths(), payment_hash(), Duration::from_secs(1125))
+				.err(),
+			Some(Bolt12SemanticError::InvalidMetadata)
+		);
+		assert_eq!(
+			request.recurrence_basetime(Duration::from_secs(1125), Some(1000)),
+			Ok(Some(1000))
+		);
+	}
+
+	/// Derived-key responses use the same amount calculation and retain recovered first-invoice
+	/// anchors.
+	#[test]
+	fn recurrence_invoice_derived_response() {
+		let secp_ctx = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce::from_entropy_source(&FixedEntropy {});
+		for anchor in [
+			recurrence::Anchor::FirstInvoice,
+			recurrence::Anchor::Fixed { basetime: 1000, proportional: true },
+		] {
+			for counter in [0, 1] {
+				let offer = crate::offers::offer::OfferBuilder::deriving_signing_pubkey(
+					recipient_pubkey(),
+					&expanded_key,
+					nonce,
+					&secp_ctx,
+				)
+				.path(blinded_path())
+				.amount_msats(1000)
+				.recurrence(invoice_recurrence_terms(anchor))
+				.build()
+				.unwrap();
+				let start = if anchor == recurrence::Anchor::FirstInvoice { None } else { Some(0) };
+				let request =
+					crate::offers::invoice_request::InvoiceRequestBuilder::deriving_signing_pubkey(
+						&offer,
+						&expanded_key,
+						nonce,
+						&secp_ctx,
+						PaymentId([1; 32]),
+					)
+					.recurrence(counter, start, None, false)
+					.unwrap()
+					.build_and_sign()
+					.unwrap();
+				let mut verified = match request
+					.verify_using_recipient_data(nonce, &expanded_key, &secp_ctx)
+					.unwrap()
+				{
+					InvoiceRequestVerifiedFromOffer::DerivedKeys(request) => request,
+					_ => panic!("expected derived signing keys"),
+				};
+				// State authentication arrives later; supply its recovered value to exercise the response.
+				if counter > 0 {
+					verified.recovered_basetime = Some(1000);
+				}
+				let created_at = Duration::from_secs(1050);
+				let expected = if anchor != recurrence::Anchor::FirstInvoice && counter == 0 {
+					500
+				} else {
+					1000
+				};
+				assert_eq!(
+					super::InvoiceBuilder::<super::DerivedSigningPubkey>::amount_msats(
+						&verified.inner,
+						created_at
+					),
+					Ok(expected)
+				);
+				let builder: super::InvoiceBuilder<super::DerivedSigningPubkey> = verified
+					.respond_using_derived_keys_no_std(payment_paths(), payment_hash(), created_at)
+					.unwrap()
+					.into();
+				let invoice = builder.build_and_sign(&secp_ctx).unwrap();
+				assert_eq!(invoice.amount_msats(), expected);
+				assert_eq!(invoice.created_at(), created_at);
+				let basetime = if anchor == recurrence::Anchor::FirstInvoice && counter == 0 {
+					1050
+				} else {
+					1000
+				};
+				assert_eq!(invoice.invoice_recurrence().unwrap().basetime, basetime);
+				assert!(Bolt12Invoice::try_from(invoice.encode()).is_ok());
+			}
+		}
+	}
+
+	/// An ordinary payment cannot gain recurrence fields in its returned invoice.
+	#[test]
+	fn recurrence_fields_rejected_on_non_recurring_invoice() {
+		let secp_ctx = Secp256k1::new();
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let offer = OfferBuilder::new(recipient_pubkey()).amount_msats(1000).build().unwrap();
+		let request = offer
+			.request_invoice(
+				&expanded_key,
+				Nonce::from_entropy_source(&FixedEntropy {}),
+				&secp_ctx,
+				PaymentId([1; 32]),
+			)
+			.unwrap()
+			.build_and_sign()
+			.unwrap();
+		assert_eq!(request.recurrence_basetime(now(), None), Ok(None));
+		let invoice = request
+			.respond_with_no_std(payment_paths(), payment_hash(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+		assert_eq!(invoice.invoice_recurrence(), None);
+		let state = vec![42];
+		for next_state in [None, Some(&state)] {
+			let mut stream = invoice.as_tlv_stream();
+			stream.3.invoice_recurrence_basetime = Some(1000);
+			stream.3.invoice_recurrence_next_state = next_state;
+			assert_eq!(
+				Bolt12Invoice::try_from(stream.to_bytes()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence))
+			);
+		}
+	}
+
+	/// Refund invoices must not acquire recurrence fields through their invoice TLVs.
+	#[test]
+	fn recurrence_fields_rejected_on_refund_invoices() {
+		let refund =
+			RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap().build().unwrap();
+		let invoice = refund
+			.respond_with_no_std(payment_paths(), payment_hash(), recipient_pubkey(), now())
+			.unwrap()
+			.build()
+			.unwrap()
+			.sign(recipient_sign)
+			.unwrap();
+		assert_eq!(invoice.invoice_recurrence(), None);
+		let state = vec![42];
+		for next_state in [None, Some(&state)] {
+			let mut stream = invoice.as_tlv_stream();
+			stream.3.invoice_recurrence_basetime = Some(1000);
+			stream.3.invoice_recurrence_next_state = next_state;
+			assert_eq!(
+				Bolt12Invoice::try_from(stream.to_bytes()).err(),
+				Some(Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence))
+			);
 		}
 	}
 
