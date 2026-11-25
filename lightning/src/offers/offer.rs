@@ -1543,6 +1543,197 @@ mod tests {
 	use core::num::NonZeroU64;
 	use core::time::Duration;
 
+	/// Checks that explicit recurrence settings survive both offer encodings.
+	#[test]
+	fn recurrence_offer_roundtrip() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		for requirement in [Requirement::Optional, Requirement::Compulsory] {
+			for explicit in [false, true] {
+				let terms = Recurrence {
+					requirement,
+					period: Period::Months(NonZeroU32::new(1).unwrap()),
+					anchor: if explicit && requirement == Requirement::Compulsory {
+						Anchor::Fixed { basetime: 12345, proportional: true }
+					} else {
+						Anchor::FirstInvoice
+					},
+					paywindow: if explicit {
+						Paywindow::Custom { seconds_before: 60, seconds_after: 256 }
+					} else {
+						Paywindow::Default
+					},
+					limit: if explicit {
+						Limit::Bounded(NonZeroU32::new(10).unwrap())
+					} else {
+						Limit::Unbounded
+					},
+				};
+				let offer = OfferBuilder::new(pubkey(42))
+					.amount_msats(1000)
+					.recurrence(terms)
+					.build()
+					.unwrap();
+				assert_eq!(offer.recurrence(), Some(terms));
+				assert_eq!(Offer::try_from(offer.encode()).unwrap().recurrence(), Some(terms));
+				assert_eq!(offer.to_string().parse::<Offer>().unwrap().recurrence(), Some(terms));
+				let stream = offer.as_tlv_stream().0;
+				assert_eq!(
+					stream.recurrence_compulsory.is_some(),
+					requirement == Requirement::Compulsory
+				);
+				assert_eq!(
+					stream.recurrence_optional.is_some(),
+					requirement == Requirement::Optional
+				);
+				assert_eq!(
+					stream.recurrence_base.is_some(),
+					explicit && requirement == Requirement::Compulsory
+				);
+				assert_eq!(stream.recurrence_paywindow.is_some(), explicit);
+				assert_eq!(stream.recurrence_limit.is_some(), explicit);
+			}
+		}
+	}
+
+	/// Literal records pin the offer TLV numbers and their compact integer payloads.
+	#[test]
+	fn recurrence_offer_wire_records() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		for requirement in [Requirement::Optional, Requirement::Compulsory] {
+			let terms = Recurrence {
+				requirement,
+				period: Period::Days(NonZeroU32::new(7).unwrap()),
+				anchor: Anchor::FirstInvoice,
+				paywindow: Paywindow::Custom { seconds_before: 60, seconds_after: 256 },
+				limit: Limit::Bounded(NonZeroU32::new(10).unwrap()),
+			};
+			let offer = OfferBuilder::new(pubkey(42)).recurrence(terms).build().unwrap();
+			let mut expected = OfferBuilder::new(pubkey(42)).build().unwrap().encode();
+			let period_tag = if requirement == Requirement::Compulsory { 24 } else { 25 };
+			expected.extend_from_slice(&[period_tag, 2, 1, 7, 27, 6, 0, 0, 0, 60, 1, 0, 29, 1, 10]);
+			assert_eq!(offer.encode(), expected);
+			assert_eq!(Offer::try_from(expected).unwrap().recurrence(), Some(terms));
+		}
+	}
+
+	/// TLV framing rejects oversized and noncanonical payloads from another implementation.
+	#[test]
+	fn recurrence_offer_malformed_records() {
+		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();
+		for record in [
+			&[24, 1, 0][..],                                  // Missing nonzero period count.
+			&[24, 3, 0, 0, 1],                                // Leading zero in period count.
+			&[24, 6, 0, 1, 0, 0, 0, 0],                       // Period count exceeds u32.
+			&[24, 2, 3, 1],                                   // Unknown time unit.
+			&[24, 2, 0, 1, 26, 1, 2],                         // Unknown anchor flag.
+			&[24, 2, 0, 1, 26, 2, 0, 0],                      // Noncanonical zero basetime.
+			&[24, 2, 0, 1, 27, 3, 0, 0, 0],                   // Truncated seconds_before.
+			&[24, 2, 0, 1, 27, 5, 0, 0, 0, 1, 0],             // Noncanonical zero seconds_after.
+			&[24, 2, 0, 1, 27, 9, 0, 0, 0, 1, 1, 0, 0, 0, 0], // seconds_after exceeds u32.
+			&[24, 2, 0, 1, 29, 0],                            // Zero limit.
+			&[24, 2, 0, 1, 29, 5, 1, 0, 0, 0, 0],             // Limit exceeds u32.
+		] {
+			let mut bytes = offer.encode();
+			bytes.extend_from_slice(record);
+			assert!(
+				matches!(Offer::try_from(bytes), Err(Bolt12ParseError::Decode(_))),
+				"{:?}",
+				record
+			);
+		}
+	}
+
+	/// Builders and parsers reject the same invalid combinations of recurrence terms.
+	#[test]
+	fn recurrence_offer_invalid_terms() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		let period = Period::Days(NonZeroU32::new(1).unwrap());
+		let base = Anchor::Fixed { basetime: 100, proportional: true };
+		let window = Paywindow::Custom { seconds_before: 1, seconds_after: 2 };
+		let limit = Limit::Bounded(NonZeroU32::new(1).unwrap());
+		// Cases that add an amount need a description to reach recurrence validation.
+		let offer =
+			OfferBuilder::new(pubkey(42)).description("recurring payment".into()).build().unwrap();
+		let non_proportional = Anchor::Fixed { basetime: 100, proportional: false };
+		// Dependent fields need a period; optional recurrence cannot have a fixed anchor.
+		for (compulsory, optional, anchor, paywindow, limit, amount) in [
+			(None, None, Some(&base), None, None, None),
+			(None, None, None, Some(&window), None, None),
+			(None, None, None, None, Some(&limit), None),
+			(Some(&period), Some(&period), None, None, None, None),
+			(None, Some(&period), Some(&non_proportional), None, None, Some(1000)),
+			(None, Some(&period), Some(&base), None, None, Some(1000)),
+			// Proportional pricing also requires an offer amount.
+			(Some(&period), None, Some(&base), None, None, None),
+		] {
+			let mut stream = offer.as_tlv_stream();
+			stream.0.recurrence_compulsory = compulsory;
+			stream.0.recurrence_optional = optional;
+			stream.0.recurrence_base = anchor;
+			stream.0.recurrence_paywindow = paywindow;
+			stream.0.recurrence_limit = limit;
+			stream.0.amount = amount;
+			let mut bytes = Vec::new();
+			stream.write(&mut bytes).unwrap();
+			assert_eq!(
+				Offer::try_from(bytes).unwrap_err(),
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::InvalidRecurrence)
+			);
+		}
+		for (requirement, proportional, has_amount) in [
+			(Requirement::Optional, false, true),
+			(Requirement::Optional, true, true),
+			(Requirement::Compulsory, true, false),
+		] {
+			let terms = Recurrence {
+				requirement,
+				period,
+				anchor: Anchor::Fixed { basetime: 100, proportional },
+				paywindow: Paywindow::Default,
+				limit: Limit::Unbounded,
+			};
+			let result = if has_amount {
+				OfferBuilder::new(pubkey(42)).amount_msats(1000).recurrence(terms).build()
+			} else {
+				OfferBuilder::new(pubkey(42)).recurrence(terms).build()
+			};
+			assert_eq!(result.unwrap_err(), Bolt12SemanticError::InvalidRecurrence);
+		}
+	}
+
+	/// A single-payment request may opt out of optional recurrence, but not compulsory recurrence.
+	#[test]
+	fn recurrence_single_payment_requests() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce::from_entropy_source(&FixedEntropy {});
+		let secp_ctx = Secp256k1::new();
+		for requirement in [Requirement::Optional, Requirement::Compulsory] {
+			let terms = Recurrence {
+				requirement,
+				period: Period::Days(NonZeroU32::new(1).unwrap()),
+				anchor: Anchor::FirstInvoice,
+				paywindow: Paywindow::Default,
+				limit: Limit::Unbounded,
+			};
+			let offer =
+				OfferBuilder::new(pubkey(42)).amount_msats(1000).recurrence(terms).build().unwrap();
+			let result = offer.request_invoice(&expanded_key, nonce, &secp_ctx, PaymentId([1; 32]));
+			match requirement {
+				Requirement::Optional => {
+					assert!(result.is_ok());
+				},
+				Requirement::Compulsory => {
+					assert_eq!(result.err(), Some(Bolt12SemanticError::UnexpectedRecurrence));
+				},
+			}
+		}
+	}
+
 	#[test]
 	fn builds_offer_with_defaults() {
 		let offer = OfferBuilder::new(pubkey(42)).build().unwrap();

@@ -520,3 +520,216 @@ impl Recurrence {
 		}
 	}
 }
+
+#[cfg(test)]
+mod tests {
+	use super::*;
+	use crate::prelude::*;
+
+	/// Supplies default terms so each test can change the rule it exercises.
+	fn recurrence(period: Period) -> Recurrence {
+		Recurrence {
+			requirement: Requirement::Compulsory,
+			period,
+			anchor: Anchor::FirstInvoice,
+			paywindow: Paywindow::Default,
+			limit: Limit::Unbounded,
+		}
+	}
+
+	/// Checks exact payload bytes as well as decoding, so matching reader/writer bugs cannot hide.
+	fn check_encoding<T: Writeable + Readable + core::fmt::Debug + PartialEq>(
+		value: T, bytes: &[u8],
+	) {
+		assert_eq!(value.encode(), bytes);
+		assert_eq!(T::read(&mut bytes.as_ref()).unwrap(), value);
+	}
+
+	/// Seconds and days preserve the anchor's time of day and report timestamp overflow.
+	#[test]
+	fn recurrence_seconds_and_days() {
+		for period in [
+			Period::Seconds(NonZeroU32::new(172_800).unwrap()),
+			Period::Days(NonZeroU32::new(2).unwrap()),
+		] {
+			assert_eq!(period.start_time(12_345, 0), Ok(12_345));
+			assert_eq!(period.start_time(12_345, 3), Ok(530_745));
+			assert_eq!(period.start_time(u64::MAX, 0), Ok(u64::MAX));
+			assert_eq!(period.start_time(u64::MAX, 1), Err(()));
+		}
+		let max = NonZeroU32::new(u32::MAX).unwrap();
+		assert_eq!(Period::Seconds(max).start_time(0, u32::MAX), Ok(u64::from(u32::MAX).pow(2)));
+		assert_eq!(Period::Days(max).start_time(0, u32::MAX), Err(()));
+	}
+
+	/// Month offsets clamp from the original date, rather than carrying February's shorter day forward.
+	#[test]
+	fn recurrence_calendar_months() {
+		let month = Period::Months(NonZeroU32::new(1).unwrap());
+		// These are UTC timestamps for January 31, February's last day, and March 31.
+		for (january, february, march) in [
+			(1_612_051_200, 1_614_470_400, 1_617_148_800), // 2021: ordinary year.
+			(1_580_428_800, 1_582_934_400, 1_585_612_800), // 2020: leap year.
+		] {
+			assert_eq!(month.start_time(january + 12_345, 1), Ok(february + 12_345));
+			assert_eq!(month.start_time(january + 12_345, 2), Ok(march + 12_345));
+		}
+		// December advances into the next year; a twelve-month period preserves leap-day clamping.
+		assert_eq!(month.start_time(1_609_372_800, 1), Ok(1_612_051_200));
+		let year = Period::Months(NonZeroU32::new(12).unwrap());
+		assert_eq!(year.start_time(1_582_934_400, 1), Ok(1_614_470_400));
+		assert_eq!(year.start_time(1_582_934_400, 4), Ok(1_709_164_800));
+		assert_eq!(month.start_time(u64::MAX, 0), Ok(u64::MAX));
+		assert_eq!(month.start_time(u64::MAX, 1), Err(()));
+		assert_eq!(
+			Period::Months(NonZeroU32::new(u32::MAX).unwrap()).start_time(0, u32::MAX),
+			Err(())
+		);
+	}
+
+	/// Gregorian century exceptions remain correct on both sides of the Unix epoch.
+	#[test]
+	fn recurrence_gregorian_cycles() {
+		for (year, leap) in [(1600, true), (1900, false), (2000, true), (2100, false), (2400, true)]
+		{
+			assert_eq!(is_leap_year(year), leap);
+			let last_day = if leap { 29 } else { 28 };
+			let february = days_from_civil(year, 2, last_day);
+			assert_eq!(civil_from_days(february), (year, 2, last_day));
+			assert_eq!(civil_from_days(february + 1), (year, 3, 1));
+		}
+		assert_eq!(days_from_civil(1970, 1, 1), 0);
+		assert_eq!(civil_from_days(-1), (1969, 12, 31));
+	}
+
+	/// Fixed schedules require a start index; first-invoice schedules must not carry one.
+	#[test]
+	fn recurrence_period_indices() {
+		let mut terms = recurrence(Period::Seconds(NonZeroU32::new(60).unwrap()));
+		assert_eq!(terms.period_index(u32::MAX, None), Ok(u32::MAX));
+		assert_eq!(terms.period_index(0, Some(0)), Err(Bolt12SemanticError::InvalidRecurrence));
+		terms.anchor = Anchor::Fixed { basetime: 100, proportional: false };
+		assert_eq!(terms.period_index(0, None), Err(Bolt12SemanticError::InvalidRecurrence));
+		assert_eq!(terms.period_index(0, Some(0)), Ok(0));
+		assert_eq!(terms.period_index(2, Some(3)), Ok(5));
+		assert_eq!(
+			terms.period_index(1, Some(u32::MAX)),
+			Err(Bolt12SemanticError::InvalidRecurrence)
+		);
+	}
+
+	/// Default windows include the preceding period, while custom bounds saturate only at zero.
+	#[test]
+	fn recurrence_payment_windows() {
+		let mut terms = recurrence(Period::Seconds(NonZeroU32::new(60).unwrap()));
+		assert_eq!(terms.payment_window(100, 0), Ok((100, 160)));
+		// Window calculation does not enforce the offer's period limit.
+		terms.limit = Limit::Bounded(NonZeroU32::new(1).unwrap());
+		assert_eq!(terms.payment_window(100, 2), Ok((160, 280)));
+		assert_eq!(terms.payment_window(0, u32::MAX), Err(()));
+		assert_eq!(terms.payment_window(u64::MAX, 0), Err(()));
+		terms.paywindow = Paywindow::Custom { seconds_before: 120, seconds_after: 30 };
+		assert_eq!(terms.payment_window(100, 0), Ok((0, 130)));
+		assert_eq!(terms.payment_window(100, 2), Ok((100, 250)));
+		assert_eq!(terms.payment_window(u64::MAX, 0), Err(()));
+		terms.paywindow = Paywindow::Custom { seconds_before: 0, seconds_after: 0 };
+		assert_eq!(terms.payment_window(100, 0), Ok((100, 100)));
+		terms.period = Period::Months(NonZeroU32::new(1).unwrap());
+		terms.paywindow = Paywindow::Default;
+		assert_eq!(terms.payment_window(1_612_051_200, 1), Ok((1_612_051_200, 1_617_148_800)));
+	}
+
+	/// Joining prices use the selected period and round up, without overflowing large amounts.
+	#[test]
+	fn recurrence_proportional_amounts() {
+		let mut terms = recurrence(Period::Seconds(NonZeroU32::new(100).unwrap()));
+		terms.anchor = Anchor::Fixed { basetime: 1000, proportional: true };
+		for (time, amount) in
+			[(999, 1000), (1000, 1000), (1025, 750), (1099, 10), (1100, 0), (1101, 0)]
+		{
+			assert_eq!(terms.proportional_amount_msats(1000, 0, time), Ok(amount));
+		}
+		assert_eq!(terms.proportional_amount_msats(1000, 2, 1225), Ok(750));
+		assert_eq!(terms.proportional_amount_msats(1, 0, 1099), Ok(1));
+		assert_eq!(terms.proportional_amount_msats(101, 0, 1025), Ok(76));
+		assert_eq!(terms.proportional_amount_msats(0, 0, 1025), Ok(0));
+		assert_eq!(terms.proportional_amount_msats(u64::MAX, 0, 1050), Ok(u64::MAX / 2 + 1));
+		assert_eq!(terms.proportional_amount_msats(1000, u32::MAX, u64::MAX), Err(()));
+		terms.anchor = Anchor::Fixed { basetime: u64::MAX - 1, proportional: true };
+		assert_eq!(terms.proportional_amount_msats(1000, 0, u64::MAX), Err(()));
+		// Non-proportional schedules do not apply a discount, even after the period ends.
+		for anchor in [Anchor::FirstInvoice, Anchor::Fixed { basetime: 1000, proportional: false }]
+		{
+			terms.anchor = anchor;
+			assert_eq!(terms.proportional_amount_msats(1000, 0, 2000), Ok(1000));
+		}
+		// February 2021 lasts 28 days; joining halfway through costs half the full amount.
+		terms.period = Period::Months(NonZeroU32::new(1).unwrap());
+		terms.anchor = Anchor::Fixed { basetime: 1_609_459_200, proportional: true };
+		assert_eq!(terms.proportional_amount_msats(1000, 1, 1_613_347_200), Ok(500));
+	}
+
+	/// Literal wire vectors cover truncated integers, including their empty encoding for zero.
+	#[test]
+	fn recurrence_wire_encodings() {
+		check_encoding(Period::Seconds(NonZeroU32::new(1).unwrap()), &[0, 1]);
+		check_encoding(Period::Days(NonZeroU32::new(256).unwrap()), &[1, 1, 0]);
+		check_encoding(
+			Period::Months(NonZeroU32::new(u32::MAX).unwrap()),
+			&[2, 255, 255, 255, 255],
+		);
+		check_encoding(Anchor::Fixed { basetime: 0, proportional: false }, &[0]);
+		check_encoding(Anchor::Fixed { basetime: 256, proportional: true }, &[1, 1, 0]);
+		check_encoding(
+			Anchor::Fixed { basetime: u64::MAX, proportional: false },
+			&[0, 255, 255, 255, 255, 255, 255, 255, 255],
+		);
+		check_encoding(Paywindow::Custom { seconds_before: 1, seconds_after: 0 }, &[0, 0, 0, 1]);
+		check_encoding(
+			Paywindow::Custom { seconds_before: 1, seconds_after: 256 },
+			&[0, 0, 0, 1, 1, 0],
+		);
+		check_encoding(
+			Paywindow::Custom { seconds_before: u32::MAX, seconds_after: u32::MAX },
+			&[255; 8],
+		);
+		check_encoding(Limit::Bounded(NonZeroU32::new(256).unwrap()), &[1, 0]);
+		check_encoding(Limit::Bounded(NonZeroU32::new(u32::MAX).unwrap()), &[255; 4]);
+		check_encoding(Requirement::Optional, &[0, 0]);
+		check_encoding(Requirement::Compulsory, &[1, 0]);
+		assert!(Anchor::FirstInvoice.write(&mut Vec::new()).is_err());
+		assert!(Paywindow::Default.write(&mut Vec::new()).is_err());
+		assert!(Limit::Unbounded.write(&mut Vec::new()).is_err());
+	}
+
+	/// Malformed payloads must not accept zero counts, unknown tags, or noncanonical integers.
+	#[test]
+	fn recurrence_invalid_wire_encodings() {
+		for bytes in [&[][..], &[0], &[0, 0], &[0, 0, 1], &[3, 1]] {
+			assert!(Period::read(&mut bytes.as_ref()).is_err());
+		}
+		for bytes in [&[][..], &[2], &[0, 0], &[1, 0, 1]] {
+			assert!(Anchor::read(&mut bytes.as_ref()).is_err());
+		}
+		for bytes in [&[][..], &[0, 0, 0], &[0, 0, 0, 1, 0], &[0, 0, 0, 1, 0, 1]] {
+			assert!(Paywindow::read(&mut bytes.as_ref()).is_err());
+		}
+		for bytes in [&[][..], &[0], &[0, 1]] {
+			assert!(Limit::read(&mut bytes.as_ref()).is_err());
+		}
+	}
+
+	/// Persisted terms restore omitted defaults and retain each explicit setting.
+	#[test]
+	fn recurrence_persistence() {
+		let mut terms = recurrence(Period::Days(NonZeroU32::new(7).unwrap()));
+		check_encoding(terms, &[8, 0, 2, 1, 0, 2, 2, 1, 7]);
+		terms.anchor = Anchor::Fixed { basetime: 12345, proportional: true };
+		terms.paywindow = Paywindow::Custom { seconds_before: 100, seconds_after: 256 };
+		terms.limit = Limit::Bounded(NonZeroU32::new(10).unwrap());
+		assert_eq!(Recurrence::read(&mut terms.encode().as_slice()).unwrap(), terms);
+		terms.requirement = Requirement::Optional;
+		terms.anchor = Anchor::FirstInvoice;
+		assert_eq!(Recurrence::read(&mut terms.encode().as_slice()).unwrap(), terms);
+	}
+}

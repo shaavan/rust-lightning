@@ -861,6 +861,58 @@ mod tests {
 		)
 	}
 
+	/// Static invoices cannot represent either optional or compulsory recurrence.
+	#[test]
+	fn recurrence_rejected_on_static_invoices() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		let expanded_key = ExpandedKey::new([42; 32]);
+		let nonce = Nonce::from_entropy_source(&FixedEntropy {});
+		let secp_ctx = Secp256k1::new();
+		let period = Period::Days(NonZeroU32::new(1).unwrap());
+		for requirement in [Requirement::Optional, Requirement::Compulsory] {
+			let terms = Recurrence {
+				requirement,
+				period,
+				anchor: Anchor::FirstInvoice,
+				paywindow: Paywindow::Default,
+				limit: Limit::Unbounded,
+			};
+			let offer = OfferBuilder::deriving_signing_pubkey(
+				recipient_pubkey(),
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+			)
+			.path(blinded_path())
+			.recurrence(terms)
+			.build()
+			.unwrap();
+			let result = StaticInvoiceBuilder::for_offer_using_derived_keys(
+				&offer,
+				payment_paths(),
+				vec![blinded_path()],
+				now(),
+				&expanded_key,
+				nonce,
+				&secp_ctx,
+			);
+			assert_eq!(result.err(), Some(Bolt12SemanticError::UnexpectedRecurrence));
+
+			// Reject recurrence fields during parsing, before checking the invoice signature.
+			let invoice = invoice();
+			let mut stream = invoice.as_tlv_stream();
+			match requirement {
+				Requirement::Optional => stream.0.recurrence_optional = Some(&period),
+				Requirement::Compulsory => stream.0.recurrence_compulsory = Some(&period),
+			}
+			assert_eq!(
+				StaticInvoice::try_from(tlv_stream_to_bytes(&stream)).unwrap_err(),
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+			);
+		}
+	}
+
 	#[test]
 	fn builds_invoice_for_offer_with_defaults() {
 		let node_id = recipient_pubkey();

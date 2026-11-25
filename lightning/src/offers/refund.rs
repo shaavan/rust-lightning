@@ -1106,6 +1106,34 @@ mod tests {
 		}
 	}
 
+	/// Refunds reject every recurrence TLV, even when no recurrence period accompanies it.
+	#[test]
+	fn recurrence_fields_rejected_on_refunds() {
+		use crate::offers::recurrence::*;
+		use core::num::NonZeroU32;
+		let refund =
+			RefundBuilder::new(vec![1; 32], payer_pubkey(), 1000).unwrap().build().unwrap();
+		let period = Period::Days(NonZeroU32::new(1).unwrap());
+		let base = Anchor::Fixed { basetime: 100, proportional: false };
+		let window = Paywindow::Custom { seconds_before: 1, seconds_after: 2 };
+		let limit = Limit::Bounded(NonZeroU32::new(1).unwrap());
+		for field in 0..5 {
+			let mut stream = refund.as_tlv_stream();
+			match field {
+				0 => stream.1.recurrence_compulsory = Some(&period),
+				1 => stream.1.recurrence_optional = Some(&period),
+				2 => stream.1.recurrence_base = Some(&base),
+				3 => stream.1.recurrence_paywindow = Some(&window),
+				4 => stream.1.recurrence_limit = Some(&limit),
+				_ => unreachable!(),
+			}
+			assert_eq!(
+				Refund::try_from(stream.to_bytes()).unwrap_err(),
+				Bolt12ParseError::InvalidSemantics(Bolt12SemanticError::UnexpectedRecurrence)
+			);
+		}
+	}
+
 	#[test]
 	fn builds_refund_with_defaults() {
 		let refund =
