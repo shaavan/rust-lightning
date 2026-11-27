@@ -11,11 +11,11 @@
 
 use alloc::collections::BTreeMap;
 
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 use bitcoin::hashes::hmac::{Hmac, HmacEngine};
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 use bitcoin::hashes::sha256::Hash as Sha256;
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
@@ -460,13 +460,13 @@ impl ForwardTlvsInfo for TrampolineForwardTlvs {
 	}
 }
 
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 /// Common CLTV expiry deltas eligible for dummy-hop relay policies.
 const DUMMY_CLTV_EXPIRY_DELTAS: &[u16] = &[40, 80, 144];
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 /// Common proportional fees eligible for dummy-hop relay policies.
 const DUMMY_FEE_PROPORTIONAL_MILLIONTHS: &[u32] = &[0, 1, 10, 100];
-#[cfg(not(any(test, feature = "_externalize_tests")))]
+#[cfg(any(test, not(feature = "_externalize_tests")))]
 /// Common base fees eligible for dummy-hop relay policies.
 const DUMMY_FEE_BASE_MSATS: &[u32] = &[0, 1_000];
 
@@ -574,7 +574,7 @@ impl DummyTlvs {
 	/// The secret key prevents payers from computing the dummy policies from the public
 	/// introduction node id. Including the hop's position gives each dummy its own policy while
 	/// keeping it consistent across paths through the same introduction node.
-	#[cfg(not(any(test, feature = "_externalize_tests")))]
+	#[cfg(any(test, not(feature = "_externalize_tests")))]
 	fn derived_relay(
 		local_node_receive_key: ReceiveAuthKey, introduction_node_id: PublicKey, hop_idx: usize,
 	) -> PaymentRelay {
@@ -1343,11 +1343,34 @@ mod tests {
 		PaymentForwardNode, PaymentRelay, ReceiveTlvs,
 	};
 	use crate::ln::functional_test_utils::TEST_FINAL_CLTV;
+	use crate::sign::ReceiveAuthKey;
 	use crate::types::features::BlindedHopFeatures;
 	use crate::types::payment::PaymentSecret;
-	use bitcoin::secp256k1::PublicKey;
+	use bitcoin::secp256k1::{PublicKey, Secp256k1, SecretKey};
 
 	use super::{bucket_fee_base_msat, bucket_fee_proportional_millionths};
+
+	/// Repeated invoices share policies, while a different key or introduction node selects its
+	/// own policies. Compare whole tails because individual policies can coincide by chance.
+	#[test]
+	fn dummy_relay_policies_depend_on_key_and_introduction_node() {
+		let secp_ctx = Secp256k1::new();
+		let introduction =
+			PublicKey::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[1; 32]).unwrap());
+		let other_introduction =
+			PublicKey::from_secret_key(&secp_ctx, &SecretKey::from_slice(&[2; 32]).unwrap());
+		let policies = |key, node_id| {
+			(0..8)
+				.map(|index| DummyTlvs::derived_relay(ReceiveAuthKey(key), node_id, index))
+				.collect::<Vec<_>>()
+		};
+		let expected = policies([42; 32], introduction);
+		assert_eq!(expected, policies([42; 32], introduction));
+		assert_ne!(expected, policies([43; 32], introduction));
+		assert_ne!(expected, policies([42; 32], other_introduction));
+		// Hop positions must affect selection instead of assigning one policy to the whole tail.
+		assert!(expected.windows(2).any(|hops| hops[0] != hops[1]));
+	}
 
 	#[test]
 	fn buckets_forwarding_fees() {
