@@ -180,7 +180,8 @@ where
 			})
 			.map(|(details, short_channel_id, payment_relay)| {
 				let (dummy_tlvs, last_payment_constraints) = DummyTlvs::new_dummy_tail_from_receive_constraints(
-					DEFAULT_PAYMENT_DUMMY_HOPS, tlvs.payment_constraints, &self.entropy_source
+					DEFAULT_PAYMENT_DUMMY_HOPS, tlvs.payment_constraints,
+					local_node_receive_key, details.counterparty.node_id
 				)?;
 
 				// The real first hop forwards into the dummy tail, so its CLTV constraint is derived
@@ -217,7 +218,8 @@ where
 			_ => {
 				if network_graph.nodes().contains_key(&NodeId::from_pubkey(&recipient)) {
 					let (dummy_tlvs, _) = DummyTlvs::new_dummy_tail_from_receive_constraints(
-						DEFAULT_PAYMENT_DUMMY_HOPS, tlvs.payment_constraints, &self.entropy_source
+						DEFAULT_PAYMENT_DUMMY_HOPS, tlvs.payment_constraints,
+						local_node_receive_key, recipient
 					)?;
 					BlindedPaymentPath::new_with_dummy_hops(
 						&[], recipient, &dummy_tlvs,

@@ -11,6 +11,12 @@
 
 use alloc::collections::BTreeMap;
 
+#[cfg(not(any(test, feature = "_externalize_tests")))]
+use bitcoin::hashes::hmac::{Hmac, HmacEngine};
+#[cfg(not(any(test, feature = "_externalize_tests")))]
+use bitcoin::hashes::sha256::Hash as Sha256;
+#[cfg(not(any(test, feature = "_externalize_tests")))]
+use bitcoin::hashes::{Hash, HashEngine};
 use bitcoin::secp256k1::ecdh::SharedSecret;
 use bitcoin::secp256k1::{self, PublicKey, Secp256k1, SecretKey};
 
@@ -501,20 +507,30 @@ impl DummyTlvs {
 	/// returned, which the caller must use in place of `receive_constraints` when building that
 	/// hop.
 	///
+	/// Relay policies are derived from `local_node_receive_key`, `introduction_node_id`, and each
+	/// dummy hop's position. Use the same key and introduction node across invoices and offers so
+	/// that repeated invoice requests do not provide fresh samples of the dummy fees and CLTV
+	/// deltas, which could reveal the real path's contribution. When the recipient is itself the
+	/// introduction node, pass its node id.
+	///
+	/// Stable policies can help payers correlate paths through the same introduction node when
+	/// their real forwarding policies also match.
+	///
 	/// Returns `Err(())` if the accumulated CLTV expiry would overflow.
-	pub fn new_dummy_tail_from_receive_constraints<ES: EntropySource>(
-		num_hops: usize, receive_constraints: PaymentConstraints, entropy_source: &ES,
+	pub fn new_dummy_tail_from_receive_constraints(
+		num_hops: usize, receive_constraints: PaymentConstraints,
+		local_node_receive_key: ReceiveAuthKey, introduction_node_id: PublicKey,
 	) -> Result<(Vec<Self>, PaymentConstraints), ()> {
 		#[cfg(any(test, feature = "_externalize_tests"))]
-		let _ = entropy_source;
+		let _ = (local_node_receive_key, introduction_node_id);
 
 		let mut dummy_tlvs = Vec::with_capacity(num_hops);
 		let mut last_payment_constraints = receive_constraints;
-		for _ in 0..num_hops {
+		for _hop_idx in 0..num_hops {
 			#[cfg(any(test, feature = "_externalize_tests"))]
 			let payment_relay = Self::default_relay();
 			#[cfg(not(any(test, feature = "_externalize_tests")))]
-			let payment_relay = Self::random_relay(entropy_source);
+			let payment_relay = Self::derived_relay(local_node_receive_key, introduction_node_id, _hop_idx);
 
 			let payment_constraints =
 				Self::derive_payment_constraints(&payment_relay, last_payment_constraints)?;
@@ -553,23 +569,30 @@ impl DummyTlvs {
 		PaymentRelay { cltv_expiry_delta: 40, fee_proportional_millionths: 1, fee_base_msat: 0 }
 	}
 
-	/// Selects dummy-hop relay parameters by independently sampling each value from common,
-	/// reasonably low network policies.
+	/// Derives stable dummy-hop relay parameters from common, reasonably low network policies.
 	///
-	/// Independent sampling avoids policy correlation between dummy hops and bounds their added fee
-	/// and CLTV requirements.
+	/// The secret key prevents payers from computing the dummy policies from the public
+	/// introduction node id. Including the hop's position gives each dummy its own policy while
+	/// keeping it consistent across paths through the same introduction node.
 	#[cfg(not(any(test, feature = "_externalize_tests")))]
-	fn random_relay<ES: EntropySource>(entropy_source: &ES) -> PaymentRelay {
+	fn derived_relay(
+		local_node_receive_key: ReceiveAuthKey, introduction_node_id: PublicKey, hop_idx: usize,
+	) -> PaymentRelay {
 		// Selects one candidate using entropy from the dummy-hop policy seed.
 		fn choose<T: Copy>(values: &[T], byte: u8) -> T {
 			values[byte as usize % values.len()]
 		}
 
-		let random_bytes = entropy_source.get_secure_random_bytes();
+		// The tag separates this derivation from other uses of the receive-auth key.
+		let mut hmac = HmacEngine::<Sha256>::new(&local_node_receive_key.0);
+		hmac.input(b"LDK Dummy Hop Relay Policy");
+		hmac.input(&introduction_node_id.serialize());
+		hmac.input(&(hop_idx as u64).to_be_bytes());
+		let policy_bytes = Hmac::from_engine(hmac).to_byte_array();
 		PaymentRelay {
-			cltv_expiry_delta: choose(DUMMY_CLTV_EXPIRY_DELTAS, random_bytes[0]),
-			fee_proportional_millionths: choose(DUMMY_FEE_PROPORTIONAL_MILLIONTHS, random_bytes[1]),
-			fee_base_msat: choose(DUMMY_FEE_BASE_MSATS, random_bytes[2]),
+			cltv_expiry_delta: choose(DUMMY_CLTV_EXPIRY_DELTAS, policy_bytes[0]),
+			fee_proportional_millionths: choose(DUMMY_FEE_PROPORTIONAL_MILLIONTHS, policy_bytes[1]),
+			fee_base_msat: choose(DUMMY_FEE_BASE_MSATS, policy_bytes[2]),
 		}
 	}
 }
